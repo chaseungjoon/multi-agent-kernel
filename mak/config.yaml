@@ -1,0 +1,30 @@
+session:
+  work_dir: "."
+  mak_dir: ".mak"
+  max_concurrent_agents: 3
+
+planner:
+  model: "claude-sonnet-4-6"
+  max_retries: 3
+  temperature: 0.0
+
+agents:
+  - type: "claude_code"
+    max_instances: 2
+    timeout: 300
+  - type: "codex"
+    max_instances: 1
+    timeout: 300
+
+git:
+  auto_commit: true
+  auto_push: false
+  commit_prefix: "[MAK]"
+
+node_store:
+  include_patterns:
+    - "**/*.py"
+  exclude_patterns:
+    - "**/node_modules/**"
+    - "**/.venv/**"
+    - "**/__pycache__/**"

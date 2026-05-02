@@ -19,3 +19,23 @@ class ConflictDetectionError(MakError):
 
 class GitIntegrationError(MakError):
     """Raised when Git audit-log integration fails."""
+
+
+class NodeStoreError(MakError):
+    """Raised when node store operations fail."""
+
+
+class PlannerFailedError(MakError):
+    """Raised when planner exhausts retries."""
+
+
+class AgentError(MakError):
+    """Raised when agent execution fails."""
+
+
+class UnknownAgentTypeError(AgentError):
+    """Raised when an unregistered agent type is requested."""
+
+
+class ConfigError(MakError):
+    """Raised when configuration loading or validation fails."""

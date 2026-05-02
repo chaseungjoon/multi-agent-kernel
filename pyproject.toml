@@ -8,13 +8,16 @@ version = "0.1.0"
 description = "A shared-memory-inspired orchestration kernel for concurrent multi-agent software development."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 dev = [
     "mypy>=1.10",
     "pytest>=8.2",
     "ruff>=0.5",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.setuptools.packages.find]
