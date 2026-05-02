@@ -6,16 +6,18 @@
 
 ---
 
-## Wave 0 — Foundation
+## Wave 0 — Foundation ✅ COMPLETE
 
 Expand the core contracts and infrastructure that every downstream module imports.
 Three independent foundation pieces that share no code dependencies.
 
-| Agent | Task | Files | Depends On |
-|-------|------|-------|------------|
-| A | Expand core types: add `NodeId`, `NodeFragment`, `LockEntry`, `TaskBundle`, `TaskResult`, `SubTask` dataclasses. Add `intent_write` to `LockMode`. Add missing exceptions: `NodeStoreError`, `PlannerFailedError`, `AgentError`, `UnknownAgentTypeError`. Write tests for all new types and serialization contracts. | `mak/core/types.py`, `mak/core/exceptions.py`, `mak/core/__init__.py`, `tests/core/test_types.py`, `tests/core/test_exceptions.py` | — |
-| B | Create config module: load `mak/config.yaml`, define `MakConfig` dataclass tree (session, planner, agents, git, node_store sections), validate required fields, provide defaults. Write tests with sample YAML fixtures. | `mak/config.py`, `tests/test_config.py`, `mak/config.yaml` | — |
-| C | Create structured session logger: append-only JSON-lines log to `.mak/session.log`, event types (`task_started`, `task_completed`, `lock_acquired`, `lock_released`, `conflict_detected`, `agent_spawned`, `session_started`, `session_ended`), timestamp + event_type + payload schema. Write tests. | `mak/core/logging.py`, `tests/core/test_logging.py` | — |
+**Status**: All 58 tests pass. `mypy --strict` clean. `pyyaml>=6.0` added to dependencies.
+
+| Agent | Task | Files | Status |
+|-------|------|-------|--------|
+| A | Expand core types: added `NodeId` (NewType), `NodeFragment`, `LockEntry`, `TaskBundle`, `TaskResult`, `SubTask` frozen dataclasses. Added `INTENT_WRITE` to `LockMode`. Added exceptions: `NodeStoreError`, `PlannerFailedError`, `AgentError`, `UnknownAgentTypeError`. 16 tests for types, 6 for exceptions (incl. parametrized). Round-trip serialization via `dataclasses.asdict()` tested. | `mak/core/types.py`, `mak/core/exceptions.py`, `mak/core/__init__.py`, `tests/core/test_types.py`, `tests/core/test_exceptions.py` | ✅ Done |
+| B | Created config module: `MakConfig` dataclass tree with `SessionConfig`, `PlannerConfig`, `AgentConfig`, `GitConfig`, `NodeStoreConfig` (all frozen, slots). `load_config()` loads YAML, validates required fields (agents must be non-empty, each agent needs `type`), applies defaults. Added `ConfigError` exception. 11 tests with YAML fixtures. | `mak/config.py`, `tests/test_config.py`, `mak/config.yaml`, `pyproject.toml` | ✅ Done |
+| C | Created structured session logger: `EventType` StrEnum (8 event types), `LogEntry` frozen dataclass with `to_json()`/`from_json()` round-trip, `SessionLogger` with append-only JSON Lines writes, `read_log()`, `clear()`. 10 tests covering serialization, append behavior, directory creation, edge cases. | `mak/core/logging.py`, `tests/core/test_logging.py` | ✅ Done |
 
 ---
 
@@ -104,7 +106,7 @@ Each agent builds expertise in its track across waves, reducing context-switchin
 
 ## Completion Criteria per Wave
 
-- **Wave 0**: `pytest tests/core/ tests/test_config.py` all green. All shared types importable.
+- **Wave 0**: ✅ `pytest tests/core/ tests/test_config.py` — 58 tests pass. `mypy --strict` clean. All shared types importable from `mak.core`.
 - **Wave 1**: `pytest tests/node_store/ tests/lock_manager/ tests/agent_runner/test_protocol.py tests/agent_runner/test_registry.py` all green. Round-trip ingestion test passes.
 - **Wave 2**: `pytest tests/scheduler/ tests/conflict_detector/ tests/agent_runner/test_runner.py` all green. DAG topological sort verified.
 - **Wave 3**: `pytest` full suite green. Session can initialize, ingest, and tear down.
