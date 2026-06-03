@@ -25,27 +25,32 @@ def _frag(kind: str, name: str, source: str) -> NodeFragment:
 
 
 class TestAssembleFragments:
-    def test_header_first(self) -> None:
+    def test_preserves_input_order(self) -> None:
+        # Assembly must NOT reorder: fragments are supplied in source order
+        # (regression guard for the kind-bucket re-sort that scrambled output).
         frags = [
-            _frag("function", "foo", "def foo(): ..."),
             _frag("module_header", "__header__", "import os"),
-        ]
-        result = assemble_fragments(frags)
-        lines = result.strip().split("\n")
-        assert lines[0].strip() == "import os"
-
-    def test_functions_after_classes(self) -> None:
-        frags = [
             _frag("function", "foo", "def foo(): ..."),
             _frag("class", "Bar", "class Bar: ..."),
         ]
         result = assemble_fragments(frags)
-        assert result.index("class Bar") < result.index("def foo")
+        assert result.index("import os") < result.index("def foo")
+        assert result.index("def foo") < result.index("class Bar")
 
-    def test_body_last(self) -> None:
+    def test_does_not_alphabetize(self) -> None:
+        # zebra defined before apple must stay before apple after assembly.
         frags = [
-            _frag("module_body", "__body__", "print('hello')"),
+            _frag("function", "zebra", "def zebra(): ..."),
+            _frag("function", "apple", "def apple(): ..."),
+        ]
+        result = assemble_fragments(frags)
+        assert result.index("def zebra") < result.index("def apple")
+
+    def test_body_can_precede_function(self) -> None:
+        frags = [
             _frag("module_header", "__header__", "import os"),
+            _frag("module_body", "__body__", "print('hello')"),
+            _frag("function", "foo", "def foo(): ..."),
         ]
         result = assemble_fragments(frags)
         assert result.index("import os") < result.index("print")

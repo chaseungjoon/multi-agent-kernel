@@ -166,6 +166,43 @@ def test_non_mapping_yaml_raises_config_error(tmp_path: Path) -> None:
         load_config(path)
 
 
+def test_session_timeout_keys_parsed(tmp_path: Path) -> None:
+    """Documented session keys are loaded, not silently ignored (risk M6)."""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "session:\n"
+        "  lock_timeout_s: 120.0\n"
+        "  deadlock_check_interval_s: 2.5\n"
+        "agents:\n"
+        "  - type: a\n"
+    )
+    cfg = load_config(path)
+    assert cfg.session.lock_timeout_s == 120.0
+    assert cfg.session.deadlock_check_interval_s == 2.5
+
+
+def test_invalid_int_raises_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("agents:\n  - type: a\n    max_instances: not_a_number\n")
+    with pytest.raises(ConfigError, match="must be an integer"):
+        load_config(path)
+
+
+def test_string_boolean_is_coerced(tmp_path: Path) -> None:
+    # bool("false") is True in Python; the loader must read it as False.
+    path = tmp_path / "config.yaml"
+    path.write_text('git:\n  auto_commit: "false"\nagents:\n  - type: a\n')
+    cfg = load_config(path)
+    assert cfg.git.auto_commit is False
+
+
+def test_invalid_boolean_raises_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("git:\n  auto_push: maybe\nagents:\n  - type: a\n")
+    with pytest.raises(ConfigError, match="must be a boolean"):
+        load_config(path)
+
+
 def test_frozen_dataclasses_are_immutable() -> None:
     """Config dataclasses reject attribute mutation."""
     cfg = MakConfig()

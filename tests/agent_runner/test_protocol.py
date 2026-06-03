@@ -6,13 +6,21 @@ import json
 
 import pytest
 
-from mak.core.types import NodeId, TaskBundle, TaskResult
 from mak.agent_runner.protocol import (
     PROTOCOL_VERSION,
     decode_task_bundle,
     decode_task_result,
     encode_task_bundle,
     encode_task_result,
+)
+from mak.core.types import (
+    LockEntry,
+    LockMode,
+    NodeId,
+    ResourceKind,
+    ResourceRef,
+    TaskBundle,
+    TaskResult,
 )
 
 
@@ -74,6 +82,20 @@ class TestTaskBundleProtocol:
         bundle = decode_task_bundle(json.dumps(data))
         assert bundle.target_nodes == []
         assert bundle.context == {}
+
+    def test_locks_round_trip_as_lock_entries(self) -> None:
+        # Risk M2: decoded locks must be LockEntry objects, not raw dicts.
+        lock = LockEntry(
+            resource=ResourceRef(kind=ResourceKind.SYMBOL, path="a.py", symbol="foo"),
+            mode=LockMode.WRITE,
+            holder="agent-1",
+            acquired_at=1234.5,
+        )
+        bundle = TaskBundle(task_id="t1", description="d", locks=[lock])
+        decoded = decode_task_bundle(encode_task_bundle(bundle))
+        assert decoded.locks == [lock]
+        assert isinstance(decoded.locks[0], LockEntry)
+        assert decoded.locks[0].resource.symbol == "foo"
 
 
 class TestTaskResultProtocol:

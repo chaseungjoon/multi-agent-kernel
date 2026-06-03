@@ -17,6 +17,38 @@ _DEFAULT_EXCLUDE: list[str] = [
     "**/__pycache__/**",
 ]
 
+_TRUE_STRINGS = {"true", "1", "yes", "on"}
+_FALSE_STRINGS = {"false", "0", "no", "off"}
+
+
+def _as_int(raw: dict[str, Any], key: str, default: int) -> int:
+    value = raw.get(key, default)
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"'{key}' must be an integer, got {value!r}") from exc
+
+
+def _as_float(raw: dict[str, Any], key: str, default: float) -> float:
+    value = raw.get(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"'{key}' must be a number, got {value!r}") from exc
+
+
+def _as_bool(raw: dict[str, Any], key: str, default: bool) -> bool:
+    value = raw.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUE_STRINGS:
+            return True
+        if lowered in _FALSE_STRINGS:
+            return False
+    raise ConfigError(f"'{key}' must be a boolean, got {value!r}")
+
 
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
@@ -34,6 +66,8 @@ class SessionConfig:
     work_dir: str = "."
     mak_dir: str = ".mak"
     max_concurrent_agents: int = 3
+    lock_timeout_s: float = 300.0
+    deadlock_check_interval_s: float = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,9 +114,9 @@ def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
     if "type" not in raw:
         raise ConfigError("each agent entry must have a 'type' field")
     return AgentConfig(
-        type=raw["type"],
-        max_instances=int(raw.get("max_instances", 2)),
-        timeout=int(raw.get("timeout", 300)),
+        type=str(raw["type"]),
+        max_instances=_as_int(raw, "max_instances", 2),
+        timeout=_as_int(raw, "timeout", 300),
     )
 
 
@@ -90,22 +124,24 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
     return SessionConfig(
         work_dir=str(raw.get("work_dir", ".")),
         mak_dir=str(raw.get("mak_dir", ".mak")),
-        max_concurrent_agents=int(raw.get("max_concurrent_agents", 3)),
+        max_concurrent_agents=_as_int(raw, "max_concurrent_agents", 3),
+        lock_timeout_s=_as_float(raw, "lock_timeout_s", 300.0),
+        deadlock_check_interval_s=_as_float(raw, "deadlock_check_interval_s", 5.0),
     )
 
 
 def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
     return PlannerConfig(
         model=str(raw.get("model", "claude-sonnet-4-6")),
-        max_retries=int(raw.get("max_retries", 3)),
-        temperature=float(raw.get("temperature", 0.0)),
+        max_retries=_as_int(raw, "max_retries", 3),
+        temperature=_as_float(raw, "temperature", 0.0),
     )
 
 
 def _parse_git(raw: dict[str, Any]) -> GitConfig:
     return GitConfig(
-        auto_commit=bool(raw.get("auto_commit", True)),
-        auto_push=bool(raw.get("auto_push", False)),
+        auto_commit=_as_bool(raw, "auto_commit", True),
+        auto_push=_as_bool(raw, "auto_push", False),
         commit_prefix=str(raw.get("commit_prefix", "[MAK]")),
     )
 

@@ -4,11 +4,16 @@ __pycache__
 .idea
 .claude
 
-AGENTS.md
+# Personal/local notes (not design-of-record)
 CLAUDE.md
-PLANS.md
-TASKS.md
 
+# Build artifacts
+*.egg-info/
+build/
+dist/
+
+# Runtime state
+.mak/
 graphify-out
 .mypy_cache
 .pytest_cache

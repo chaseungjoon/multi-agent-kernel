@@ -106,3 +106,23 @@ def test_read_empty_log_returns_empty(tmp_path: Path) -> None:
     logger = SessionLogger(log_file)
 
     assert logger.read_log() == []
+
+
+def test_concurrent_logging_writes_intact_lines(tmp_path: Path) -> None:
+    """Risk L5: concurrent writers must not interleave or truncate lines."""
+    import threading
+
+    logger = SessionLogger(tmp_path / "session.jsonl")
+
+    def worker(agent: str) -> None:
+        for i in range(200):
+            logger.log(EventType.LOCK_ACQUIRED, agent=agent, i=i)
+
+    threads = [threading.Thread(target=worker, args=(f"a{n}",)) for n in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    entries = logger.read_log()  # parses every line; a torn line would raise
+    assert len(entries) == 8 * 200

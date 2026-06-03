@@ -44,6 +44,26 @@ class TestRWLock:
         assert lock.acquire(LockMode.WRITE, "agent_a")
         assert not lock.acquire(LockMode.INTENT_WRITE, "agent_b")
 
+    def test_write_blocked_by_intent_write(self) -> None:
+        # Regression for risk H2: intent_write must actually exclude writers.
+        lock = RWLock()
+        assert lock.acquire(LockMode.INTENT_WRITE, "agent_a")
+        assert not lock.acquire(LockMode.WRITE, "agent_b")
+
+    def test_same_holder_escalates_intent_to_write(self) -> None:
+        lock = RWLock()
+        assert lock.acquire(LockMode.INTENT_WRITE, "agent_a")
+        assert lock.acquire(LockMode.WRITE, "agent_a")
+
+    def test_write_blocked_by_other_reader_not_self(self) -> None:
+        lock = RWLock()
+        assert lock.acquire(LockMode.READ, "agent_a")
+        assert lock.acquire(LockMode.WRITE, "agent_a")  # self escalation ok
+        lock.release(LockMode.WRITE, "agent_a")
+        lock.release(LockMode.READ, "agent_a")
+        assert lock.acquire(LockMode.READ, "agent_b")
+        assert not lock.acquire(LockMode.WRITE, "agent_a")  # other reader blocks
+
     def test_multiple_intent_writers(self) -> None:
         lock = RWLock()
         assert lock.acquire(LockMode.INTENT_WRITE, "agent_a")

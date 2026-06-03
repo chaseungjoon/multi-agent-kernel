@@ -2,6 +2,8 @@ session:
   work_dir: "."
   mak_dir: ".mak"
   max_concurrent_agents: 3
+  lock_timeout_s: 300.0
+  deadlock_check_interval_s: 5.0
 
 planner:
   model: "claude-sonnet-4-6"

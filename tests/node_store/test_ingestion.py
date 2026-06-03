@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
 import pytest
 
 from mak.node_store.ingestion import parse_file_into_fragments, walk_and_parse
-from pathlib import Path
-
 
 SAMPLE_SOURCE = textwrap.dedent("""\
     import os
