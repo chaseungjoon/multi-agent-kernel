@@ -4,8 +4,11 @@ __pycache__
 .idea
 .claude
 
-# Personal/local notes (not design-of-record)
-CLAUDE.md
+# Personal/local notes
+PLANS.md
+AGENTS.md
+TASKS.md
+RISK_ASSESSMENT.md
 
 # Build artifacts
 *.egg-info/
