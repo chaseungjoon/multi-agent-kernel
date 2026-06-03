@@ -35,7 +35,16 @@ src = ["mak", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ANN", "D"]
-ignore = ["D203", "D213"]
+# D203/D213: conflicting docstring conventions. D107: __init__ is documented by
+# the class docstring, not a separate one.
+ignore = ["D203", "D213", "D107"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mak"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test methods are self-documenting via descriptive names; docstrings not required.
+"tests/**" = ["D100", "D101", "D102", "D103", "D104"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

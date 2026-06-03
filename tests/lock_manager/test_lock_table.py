@@ -98,3 +98,32 @@ class TestLockTable:
         table = LockTable()
         nid = NodeId("mod.py::function::foo")
         assert not table.release(nid, LockMode.WRITE, "agent_a")
+
+    def test_expiry_is_observable(self) -> None:
+        # Risk H3: an expiring lease must be reported, not silently stolen.
+        expired: list[str] = []
+        table = LockTable(
+            default_timeout=0.01, on_expire=lambda e: expired.append(e.holder)
+        )
+        nid = NodeId("mod.py::function::foo")
+        table.try_acquire(nid, LockMode.WRITE, "agent_a")
+        time.sleep(0.02)
+        reported = table.expire_stale()
+        assert [e.holder for e in reported] == ["agent_a"]
+        assert expired == ["agent_a"]
+
+    def test_renew_keeps_lease_alive(self) -> None:
+        # A heartbeat resets the clock so a live-but-slow holder is not expired.
+        table = LockTable(default_timeout=0.05)
+        nid = NodeId("mod.py::function::foo")
+        table.try_acquire(nid, LockMode.WRITE, "agent_a")
+        for _ in range(4):
+            time.sleep(0.03)
+            assert table.renew(nid, LockMode.WRITE, "agent_a")
+        # Still held by agent_a; a peer cannot take it.
+        assert not table.try_acquire(nid, LockMode.WRITE, "agent_b")
+
+    def test_renew_unknown_lease_returns_false(self) -> None:
+        table = LockTable()
+        nid = NodeId("mod.py::function::foo")
+        assert not table.renew(nid, LockMode.WRITE, "ghost")

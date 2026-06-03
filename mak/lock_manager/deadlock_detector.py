@@ -1,15 +1,17 @@
-"""Wait graph construction and DFS cycle detection for deadlock resolution."""
+"""Wait graph construction and iterative cycle detection for deadlock resolution."""
 
 from __future__ import annotations
 
-from mak.core.types import LockMode, NodeId
+from collections.abc import Iterator
 
+from mak.core.types import LockMode, NodeId
+from mak.lock_manager.conflicts import conflicts
 
 WaitQueue = list[tuple[str, NodeId, LockMode]]
 
 
 class DeadlockDetector:
-    """Build a wait graph and detect deadlock cycles via DFS."""
+    """Build a wait graph and detect deadlock cycles via iterative DFS."""
 
     def build_wait_graph(
         self,
@@ -19,58 +21,69 @@ class DeadlockDetector:
         """Build a directed graph: waiter -> set of holders blocking it."""
         graph: dict[str, set[str]] = {}
         for waiter, node_id, wait_mode in waiting:
-            if waiter not in graph:
-                graph[waiter] = set()
-            holders = held.get(node_id, [])
-            for holder, held_mode in holders:
-                if holder == waiter:
-                    continue
-                if self._conflicts(wait_mode, held_mode):
+            graph.setdefault(waiter, set())
+            for holder, held_mode in held.get(node_id, []):
+                if holder != waiter and conflicts(wait_mode, held_mode):
                     graph[waiter].add(holder)
         return graph
 
     @staticmethod
-    def _conflicts(requested: LockMode, held: LockMode) -> bool:
-        if requested == LockMode.READ:
-            return held == LockMode.WRITE
-        if requested == LockMode.WRITE:
-            return True
-        if requested == LockMode.INTENT_WRITE:
-            return held == LockMode.WRITE
-        return False  # pragma: no cover
+    def _canonical(cycle: list[str]) -> tuple[str, ...]:
+        """Rotate a cycle to start at its smallest member so rotations dedupe."""
+        pivot = min(range(len(cycle)), key=cycle.__getitem__)
+        return tuple(cycle[pivot:] + cycle[:pivot])
 
     def find_cycles(self, graph: dict[str, set[str]]) -> list[list[str]]:
-        """Find all cycles in the wait graph using DFS."""
+        """Find all distinct cycles in the wait graph using iterative DFS.
+
+        Iterative (no recursion limit on deep graphs) and deduplicated: each
+        directed cycle is reported once regardless of which rotation is found.
+        """
+        all_nodes = set(graph) | {t for targets in graph.values() for t in targets}
         visited: set[str] = set()
-        on_stack: set[str] = set()
-        path: list[str] = []
+        seen_cycles: set[tuple[str, ...]] = set()
         cycles: list[list[str]] = []
 
-        def dfs(node: str) -> None:
-            visited.add(node)
-            on_stack.add(node)
-            path.append(node)
-
-            for neighbor in graph.get(node, set()):
-                if neighbor not in visited:
-                    dfs(neighbor)
-                elif neighbor in on_stack:
-                    idx = path.index(neighbor)
-                    cycle = path[idx:]
-                    cycles.append(cycle)
-
-            path.pop()
-            on_stack.discard(node)
-
-        all_nodes: set[str] = set(graph.keys())
-        for targets in graph.values():
-            all_nodes.update(targets)
-
-        for node in all_nodes:
-            if node not in visited:
-                dfs(node)
-
+        for root in all_nodes:
+            if root in visited:
+                continue
+            self._walk(root, graph, visited, seen_cycles, cycles)
         return cycles
+
+    def _walk(
+        self,
+        root: str,
+        graph: dict[str, set[str]],
+        visited: set[str],
+        seen_cycles: set[tuple[str, ...]],
+        cycles: list[list[str]],
+    ) -> None:
+        """Run iterative DFS from `root`, recording any cycles reached."""
+        stack: list[tuple[str, Iterator[str]]] = [(root, iter(graph.get(root, set())))]
+        path: list[str] = [root]
+        on_path: set[str] = {root}
+
+        while stack:
+            node, neighbors = stack[-1]
+            descended = False
+            for neighbor in neighbors:
+                if neighbor in on_path:
+                    cycle = path[path.index(neighbor):]
+                    key = self._canonical(cycle)
+                    if key not in seen_cycles:
+                        seen_cycles.add(key)
+                        cycles.append(list(cycle))
+                elif neighbor not in visited:
+                    stack.append((neighbor, iter(graph.get(neighbor, set()))))
+                    path.append(neighbor)
+                    on_path.add(neighbor)
+                    descended = True
+                    break
+            if not descended:
+                visited.add(node)
+                on_path.discard(node)
+                path.pop()
+                stack.pop()
 
     def resolve(
         self,
@@ -78,5 +91,4 @@ class DeadlockDetector:
         task_start_times: dict[str, float],
     ) -> str:
         """Wound-wait resolution: abort the youngest task in the cycle."""
-        youngest = max(cycle, key=lambda t: task_start_times.get(t, 0.0))
-        return youngest
+        return max(cycle, key=lambda t: task_start_times.get(t, 0.0))

@@ -11,7 +11,6 @@ from mak.core.exceptions import NodeStoreError
 from mak.core.types import NodeFragment, NodeId
 from mak.node_store.store import NodeStore
 
-
 SAMPLE_SOURCE = textwrap.dedent("""\
     import os
 
@@ -22,6 +21,10 @@ SAMPLE_SOURCE = textwrap.dedent("""\
         def add(self, a: int, b: int) -> int:
             return a + b
 """)
+
+
+def _frag(nid: NodeId, source: str, version: int = 1) -> NodeFragment:
+    return NodeFragment(node_id=nid, kind="function", source=source, version=version)
 
 
 class TestNodeStore:
@@ -47,8 +50,7 @@ class TestNodeStore:
     def test_put_and_commit(self, tmp_path: Path) -> None:
         store = NodeStore(tmp_path / "ns")
         nid = NodeId("test.py::function::foo")
-        frag = NodeFragment(node_id=nid, kind="function", source="def foo(): ...", version=1)
-        store.put_node(nid, frag)
+        store.put_node(nid, _frag(nid, "def foo(): ..."))
         store.commit_node(nid)
         assert store.get_node(nid).source == "def foo(): ..."
 
@@ -60,8 +62,7 @@ class TestNodeStore:
     def test_rollback_discards_pending(self, tmp_path: Path) -> None:
         store = NodeStore(tmp_path / "ns")
         nid = NodeId("test.py::function::foo")
-        frag = NodeFragment(node_id=nid, kind="function", source="def foo(): ...", version=1)
-        store.put_node(nid, frag)
+        store.put_node(nid, _frag(nid, "def foo(): ..."))
         store.rollback_node(nid)
         with pytest.raises(NodeStoreError, match="not found"):
             store.get_node(nid)
@@ -69,11 +70,9 @@ class TestNodeStore:
     def test_put_updates_version(self, tmp_path: Path) -> None:
         store = NodeStore(tmp_path / "ns")
         nid = NodeId("test.py::function::foo")
-        v1 = NodeFragment(node_id=nid, kind="function", source="def foo(): ...", version=1)
-        store.put_node(nid, v1)
+        store.put_node(nid, _frag(nid, "def foo(): ..."))
         store.commit_node(nid)
-        v2 = NodeFragment(node_id=nid, kind="function", source="def foo(): return 1", version=2)
-        store.put_node(nid, v2)
+        store.put_node(nid, _frag(nid, "def foo(): return 1"))
         store.commit_node(nid)
         assert store.get_node(nid).version == 2
 
@@ -111,3 +110,56 @@ class TestNodeStore:
     def test_rollback_nonexistent_is_noop(self, tmp_path: Path) -> None:
         store = NodeStore(tmp_path / "ns")
         store.rollback_node(NodeId("fake::function::nope"))
+
+    def test_store_owns_version_assignment(self, tmp_path: Path) -> None:
+        # Risk H4: the store stamps the next version; the caller's value is ignored.
+        store = NodeStore(tmp_path / "ns")
+        nid = NodeId("test.py::function::foo")
+        first = store.put_node(nid, _frag(nid, "def foo(): ...", version=99))
+        store.commit_node(nid)
+        assert first.version == 1  # not 99
+        second = store.put_node(nid, _frag(nid, "def foo(): return 1", version=0))
+        store.commit_node(nid)
+        assert second.version == 2
+
+    def test_prior_versions_are_retained(self, tmp_path: Path) -> None:
+        store = NodeStore(tmp_path / "ns")
+        nid = NodeId("test.py::function::foo")
+        store.put_node(nid, _frag(nid, "v1 body"))
+        store.commit_node(nid)
+        store.put_node(nid, _frag(nid, "v2 body"))
+        store.commit_node(nid)
+        assert store.list_versions(nid) == [1, 2]
+        assert store.get_node(nid, version=1).source == "v1 body"
+        assert store.get_node(nid).source == "v2 body"
+
+    def test_revert_to_previous_version(self, tmp_path: Path) -> None:
+        store = NodeStore(tmp_path / "ns")
+        nid = NodeId("test.py::function::foo")
+        store.put_node(nid, _frag(nid, "original"))
+        store.commit_node(nid)
+        store.put_node(nid, _frag(nid, "edited"))
+        store.commit_node(nid)
+        reverted = store.revert_node(nid)
+        assert reverted.source == "original"
+        assert store.get_node(nid).source == "original"
+        assert store.get_node(nid).version == 1
+
+    def test_get_unknown_version_raises(self, tmp_path: Path) -> None:
+        store = NodeStore(tmp_path / "ns")
+        nid = NodeId("test.py::function::foo")
+        store.put_node(nid, _frag(nid, "x"))
+        store.commit_node(nid)
+        with pytest.raises(NodeStoreError, match="version"):
+            store.get_node(nid, version=5)
+
+    def test_committed_fragments_in_source_order(self, tmp_path: Path) -> None:
+        # Order must survive a reload from disk (reconstruction depends on it).
+        source = "import os\n\ndef alpha(): ...\n\ndef beta(): ...\n"
+        NodeStore(tmp_path / "ns").parse_file_into_nodes("m.py", source)
+        reopened = NodeStore(tmp_path / "ns")
+        frags = reopened.get_committed_fragments("m.py")
+        assert frags[0].kind == "module_header"
+        alpha_idx = next(i for i, f in enumerate(frags) if "alpha" in f.source)
+        beta_idx = next(i for i, f in enumerate(frags) if "beta" in f.source)
+        assert alpha_idx < beta_idx

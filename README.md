@@ -1,6 +1,6 @@
 # Multi Agent Kernel
 
-> **Work in progress.** Foundation and core subsystems are implemented and tested (148 tests passing). Scheduler, planner, and session orchestration are next.
+> **Work in progress.** Foundation and core subsystems are implemented, hardened, and tested (199 tests passing). Scheduler, planner, and session orchestration are next.
 
 A kernel for concurrent multi-agent software development. Agents edit a shared codebase simultaneously — no worktrees, no merge conflicts, no reconciliation step.
 
@@ -42,7 +42,7 @@ User Task → Planner (LLM) → DAG → Scheduler → Agent Runner → Agents
 
 **How does concurrent file editing actually work?** Each agent receives only the AST nodes it has write locks on, edits them in isolation, and returns the modified fragments. The kernel reconstructs the file from all committed node versions. Agents never see or touch the full file.
 
-**Why `libcst` for reconstruction?** `ast.unparse()` silently strips all inline comments — a fatal developer-experience flaw. MAK uses `libcst` (a Concrete Syntax Tree library) for file reconstruction so comments are always preserved. `ast` is still used internally for fast analysis (parse + walk). `ruff format` normalizes style after reconstruction.
+**How are comments and formatting preserved?** `ast.unparse()` silently strips all inline comments — a fatal developer-experience flaw. MAK never re-renders code through `ast.unparse()` (or a CST). Ingestion tiles a file into fragments that retain their **raw source text**, and reconstruction concatenates those fragments in their original order, so comments, decorators, blank lines, and statement ordering survive a round trip by construction. `ast` is used only for analysis (locating node spans); `ruff format` normalizes style at the end. A round-trip property test asserts AST-level equivalence and comment preservation over a corpus — and that MAK round-trips its own source.
 
 ---
 
@@ -50,15 +50,15 @@ User Task → Planner (LLM) → DAG → Scheduler → Agent Runner → Agents
 
 | Module | Status | Notes |
 |---|---|---|
-| `mak/core/` | Complete | Types, exceptions, structured session logger |
-| `mak/config.py` | Complete | YAML config loading with validation |
-| `mak/node_store/` | Partial | Ingestion + store complete; reconstruction requires `libcst` migration (pre-Wave 2) |
-| `mak/lock_manager/` | Complete | RW locks, lock table, deadlock detection |
-| `mak/agent_runner/` | Partial | Protocol + registry + base adapter done; API adapters (Anthropic, OpenAI) next |
+| `mak/core/` | Complete | Types, exceptions, thread-safe session logger |
+| `mak/config.py` | Complete | YAML config loading with validation and safe coercion |
+| `mak/node_store/` | Complete | Span-tiling ingestion (decorators/comments/order preserved), method-level nodes, versioned store with revert |
+| `mak/lock_manager/` | Complete | RW locks with a canonical conflict matrix, thread-safe lock table, lease renewal, deadlock detection |
+| `mak/agent_runner/` | Partial | Protocol + injectable registry + adapter ABCs done; API adapters (Anthropic, OpenAI) next |
 | `mak/scheduler/` | Not started | DAG builder and dispatch loop |
 | `mak/conflict_detector/` | Not started | Signature, import, and name collision checks |
 | `mak/planner/` | Not started | LLM task decomposition |
 | `mak/git_integration/` | Not started | Commit helpers and push coordination |
 | `mak/session.py` | Not started | Full pipeline orchestration and crash recovery |
 
-**148 tests passing.** `mypy --strict` clean on completed modules.
+**199 tests passing.** `mypy --strict mak` clean. `ruff check mak tests` clean. CI runs all three on push. See `RISK_ASSESSMENT.md` and `PLANS.md §15` for the hardening pass that got here.

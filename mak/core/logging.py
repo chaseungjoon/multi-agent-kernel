@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -57,16 +58,23 @@ class SessionLogger:
     def __init__(self, log_path: Path) -> None:
         self._path = log_path
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
 
     def log(self, event_type: EventType, **payload: object) -> None:
-        """Append a timestamped event to the log file."""
+        """Append a timestamped event to the log file.
+
+        Thread-safe: concurrent agents serialize on a lock and each line is
+        flushed, so events never interleave or truncate (risk L5).
+        """
         entry = LogEntry(
             timestamp=time.time(),
             event_type=event_type,
             payload=payload,
         )
-        with self._path.open("a") as f:
-            f.write(entry.to_json() + "\n")
+        line = entry.to_json() + "\n"
+        with self._lock, self._path.open("a") as f:
+            f.write(line)
+            f.flush()
 
     def read_log(self) -> list[LogEntry]:
         """Read all entries from the log file."""

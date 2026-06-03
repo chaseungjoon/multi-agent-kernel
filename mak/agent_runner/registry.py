@@ -1,32 +1,36 @@
-"""Adapter registry: register and look up agent adapters by type."""
+"""Adapter registry: register and look up agent adapters by type.
+
+``AdapterRegistry`` is an instance, not module-global mutable state (AGENTS.md):
+the kernel owns one registry and passes it explicitly, so tests and concurrent
+sessions never share a hidden dict.
+"""
 
 from __future__ import annotations
 
-from mak.core.exceptions import UnknownAgentTypeError
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
-
-ADAPTER_REGISTRY: dict[str, type[AgentAdapter]] = {}
-
-
-def register_adapter(agent_type: str, adapter_cls: type[AgentAdapter]) -> None:
-    """Register an adapter class for a given agent type."""
-    ADAPTER_REGISTRY[agent_type] = adapter_cls
+from mak.core.exceptions import UnknownAgentTypeError
 
 
-def get_adapter(agent_type: str) -> AgentAdapter:
-    """Look up and instantiate an adapter by agent type."""
-    if agent_type not in ADAPTER_REGISTRY:
-        raise UnknownAgentTypeError(
-            f"no adapter registered for '{agent_type}'"
-        )
-    return ADAPTER_REGISTRY[agent_type]()
+class AdapterRegistry:
+    """A collection of agent adapters keyed by agent type."""
 
+    def __init__(self) -> None:
+        self._adapters: dict[str, type[AgentAdapter]] = {}
 
-def list_adapters() -> list[str]:
-    """Return all registered agent type names."""
-    return list(ADAPTER_REGISTRY.keys())
+    def register(self, agent_type: str, adapter_cls: type[AgentAdapter]) -> None:
+        """Register an adapter class for a given agent type."""
+        self._adapters[agent_type] = adapter_cls
 
+    def get(self, agent_type: str) -> AgentAdapter:
+        """Look up and instantiate an adapter by agent type."""
+        if agent_type not in self._adapters:
+            raise UnknownAgentTypeError(f"no adapter registered for '{agent_type}'")
+        return self._adapters[agent_type]()
 
-def clear_registry() -> None:
-    """Remove all registered adapters (useful for testing)."""
-    ADAPTER_REGISTRY.clear()
+    def list_types(self) -> list[str]:
+        """Return all registered agent type names."""
+        return list(self._adapters)
+
+    def clear(self) -> None:
+        """Remove all registered adapters."""
+        self._adapters.clear()

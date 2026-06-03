@@ -45,7 +45,9 @@ def test_node_id_is_a_string() -> None:
 def test_node_fragment_creation() -> None:
     """NodeFragment stores AST fragment metadata."""
     nid = NodeId("mak/core/types.py::ResourceRef")
-    frag = NodeFragment(node_id=nid, kind="class", source="class ResourceRef: ...", version=1)
+    frag = NodeFragment(
+        node_id=nid, kind="class", source="class ResourceRef: ...", version=1
+    )
 
     assert frag.node_id == nid
     assert frag.kind == "class"
@@ -56,7 +58,9 @@ def test_node_fragment_creation() -> None:
 def test_lock_entry_creation() -> None:
     """LockEntry captures all lock metadata."""
     ref = ResourceRef(kind=ResourceKind.FILE, path="foo.py")
-    entry = LockEntry(resource=ref, mode=LockMode.WRITE, holder="agent-1", acquired_at=1000.0)
+    entry = LockEntry(
+        resource=ref, mode=LockMode.WRITE, holder="agent-1", acquired_at=1000.0
+    )
 
     assert entry.resource is ref
     assert entry.mode is LockMode.WRITE
@@ -79,7 +83,9 @@ def test_task_bundle_with_values() -> None:
     """TaskBundle accepts explicit values for all fields."""
     nid = NodeId("a.py::foo")
     ref = ResourceRef(kind=ResourceKind.SYMBOL, path="a.py", symbol="foo")
-    lock = LockEntry(resource=ref, mode=LockMode.READ, holder="agent-2", acquired_at=2000.0)
+    lock = LockEntry(
+        resource=ref, mode=LockMode.READ, holder="agent-2", acquired_at=2000.0
+    )
     bundle = TaskBundle(
         task_id="t2",
         description="refactor foo",
@@ -144,7 +150,12 @@ def test_node_fragment_round_trip() -> None:
     frag = NodeFragment(node_id=nid, kind="class", source="class Cls: pass", version=3)
     d = dataclasses.asdict(frag)
 
-    assert d == {"node_id": "x.py::Cls", "kind": "class", "source": "class Cls: pass", "version": 3}
+    assert d == {
+        "node_id": "x.py::Cls",
+        "kind": "class",
+        "source": "class Cls: pass",
+        "version": 3,
+    }
 
     restored = NodeFragment(**d)
     assert restored == frag

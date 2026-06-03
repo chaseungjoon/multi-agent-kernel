@@ -82,3 +82,38 @@ class TestDeadlockDetector:
     def test_empty_graph(self) -> None:
         cycles = self.detector.find_cycles({})
         assert cycles == []
+
+    def test_cycle_reported_once(self) -> None:
+        # Risk L7: a single directed cycle must not be reported once per rotation.
+        graph: dict[str, set[str]] = {
+            "agent_a": {"agent_b"},
+            "agent_b": {"agent_c"},
+            "agent_c": {"agent_a"},
+        }
+        cycles = self.detector.find_cycles(graph)
+        assert len(cycles) == 1
+        assert set(cycles[0]) == {"agent_a", "agent_b", "agent_c"}
+
+    def test_deep_chain_no_recursion_error(self) -> None:
+        # Iterative DFS must handle graphs deeper than the recursion limit.
+        graph: dict[str, set[str]] = {f"a{i}": {f"a{i + 1}"} for i in range(5000)}
+        cycles = self.detector.find_cycles(graph)
+        assert cycles == []
+
+    def test_two_distinct_cycles(self) -> None:
+        graph: dict[str, set[str]] = {
+            "a": {"b"},
+            "b": {"a"},
+            "c": {"d"},
+            "d": {"c"},
+        }
+        cycles = self.detector.find_cycles(graph)
+        assert len(cycles) == 2
+
+    def test_write_blocked_by_intent_write_edge(self) -> None:
+        # The wait graph now reflects the H2 fix: a writer waits on an intent_writer.
+        nid = NodeId("mod.py::function::foo")
+        held = {nid: [("agent_a", LockMode.INTENT_WRITE)]}
+        waiting = [("agent_b", nid, LockMode.WRITE)]
+        graph = self.detector.build_wait_graph(held, waiting)
+        assert "agent_a" in graph.get("agent_b", set())
