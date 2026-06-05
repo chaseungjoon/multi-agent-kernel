@@ -15,7 +15,10 @@ agents:
     max_instances: 2
     timeout: 300
   - type: "codex"
-    max_instances: 1
+    max_instances: 2
+    timeout: 300
+  - type: "antigravity"
+    max_instances: 2
     timeout: 300
 
 git:

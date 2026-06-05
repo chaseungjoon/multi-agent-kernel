@@ -1,7 +1,6 @@
 """Configuration loading and validation for MAK."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,7 +25,8 @@ def _as_int(raw: dict[str, Any], key: str, default: int) -> int:
     try:
         return int(value)
     except (TypeError, ValueError) as exc:
-        raise ConfigError(f"'{key}' must be an integer, got {value!r}") from exc
+        raise ConfigError(
+            f"'{key}' must be an integer, got {value!r}") from exc
 
 
 def _as_float(raw: dict[str, Any], key: str, default: float) -> float:
@@ -105,6 +105,7 @@ class MakConfig:
     agents: tuple[AgentConfig, ...] = (
         AgentConfig(type="claude_code"),
         AgentConfig(type="codex", max_instances=1),
+        AgentConfig(type="antigravity", max_instances=2),
     )
     git: GitConfig = field(default_factory=GitConfig)
     node_store: NodeStoreConfig = field(default_factory=NodeStoreConfig)
@@ -126,7 +127,8 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
         mak_dir=str(raw.get("mak_dir", ".mak")),
         max_concurrent_agents=_as_int(raw, "max_concurrent_agents", 3),
         lock_timeout_s=_as_float(raw, "lock_timeout_s", 300.0),
-        deadlock_check_interval_s=_as_float(raw, "deadlock_check_interval_s", 5.0),
+        deadlock_check_interval_s=_as_float(
+            raw, "deadlock_check_interval_s", 5.0),
     )
 
 
@@ -170,7 +172,8 @@ def load_config(path: Path | str) -> MakConfig:
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise ConfigError(f"invalid YAML in configuration file: {exc}") from exc
+        raise ConfigError(
+            f"invalid YAML in configuration file: {exc}") from exc
 
     if not isinstance(data, dict):
         raise ConfigError("configuration file must contain a YAML mapping")
@@ -181,7 +184,8 @@ def load_config(path: Path | str) -> MakConfig:
             raise ConfigError("'agents' must be a non-empty list")
         agents = tuple(_parse_agent(a) for a in raw_agents)
     else:
-        raise ConfigError("'agents' section is required with at least one entry")
+        raise ConfigError(
+            "'agents' section is required with at least one entry")
 
     return MakConfig(
         session=_parse_session(data.get("session", {})),

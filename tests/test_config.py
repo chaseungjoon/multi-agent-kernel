@@ -38,6 +38,9 @@ agents:
   - type: "codex"
     max_instances: 1
     timeout: 120
+  - type: "antigravity"
+    max_instances: 2
+    timeout: 300
 
 git:
   auto_commit: false
@@ -55,7 +58,8 @@ node_store:
 
 def test_load_bundled_config() -> None:
     """The bundled mak/config.yaml loads without error."""
-    config_path = Path(__file__).resolve().parent.parent / "mak" / "config.yaml"
+    config_path = Path(__file__).resolve().parent.parent / \
+        "mak" / "config.yaml"
     cfg = load_config(config_path)
 
     assert len(cfg.agents) >= 1
@@ -82,6 +86,8 @@ def test_load_full_yaml(tmp_path: Path) -> None:
     assert cfg.agents == (
         AgentConfig(type="claude_code", max_instances=3, timeout=600),
         AgentConfig(type="codex", max_instances=1, timeout=120),
+        AgentConfig(type="antigravity", max_instances=2, timeout=300),
+
     )
     assert cfg.git == GitConfig(
         auto_commit=False,
