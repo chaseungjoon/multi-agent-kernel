@@ -5,6 +5,7 @@ __pycache__
 .claude
 
 # Personal/local notes
+.env
 PLANS.md
 AGENTS.md
 TASKS.md
