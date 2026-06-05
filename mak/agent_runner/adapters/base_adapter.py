@@ -8,9 +8,8 @@ meaningless subprocess method (risk M3).
 """
 
 from __future__ import annotations
-
-import subprocess
 from abc import ABC, abstractmethod
+import subprocess
 
 from mak.core.types import TaskBundle, TaskResult
 
