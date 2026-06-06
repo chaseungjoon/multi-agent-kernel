@@ -88,6 +88,11 @@ class Scheduler:
         """Return ids of tasks currently dispatched (in flight)."""
         return set(self._dispatched)
 
+    @property
+    def dag(self) -> DAG:
+        """The underlying dependency graph (read-only access to task state)."""
+        return self._dag
+
     def _lock_requests(self, task: SubTask) -> list[tuple[NodeId, LockMode]]:
         """Build a write-lock request for each of the task's target nodes."""
         return [(node_id, LockMode.WRITE) for node_id in task.target_nodes]

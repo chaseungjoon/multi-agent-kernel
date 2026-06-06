@@ -75,10 +75,17 @@ class TaskResult:
 
 @dataclass(frozen=True, slots=True)
 class SubTask:
-    """A decomposed sub-task with dependency tracking."""
+    """A decomposed sub-task with dependency tracking.
+
+    ``target_nodes`` are the nodes the task will *write*; ``context_nodes`` are
+    nodes it needs to *read* to do the work (sibling methods, class attributes,
+    imports). The runner ships the current source of both to the agent so it is
+    not editing blind (PLANS.md §8).
+    """
 
     task_id: str
     description: str
     target_nodes: list[NodeId] = field(default_factory=list)
+    context_nodes: list[NodeId] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
     agent_type: str = ""

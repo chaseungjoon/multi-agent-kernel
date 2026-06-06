@@ -9,7 +9,9 @@ from mak.core.exceptions import (
     MakError,
     NodeStoreError,
     PlannerFailedError,
+    PlanReviewAborted,
     SchedulingError,
+    SessionError,
     UnknownAgentTypeError,
 )
 from mak.core.types import (
@@ -36,10 +38,12 @@ __all__ = [
     "NodeFragment",
     "NodeId",
     "NodeStoreError",
+    "PlanReviewAborted",
     "PlannerFailedError",
     "ResourceKind",
     "ResourceRef",
     "SchedulingError",
+    "SessionError",
     "SubTask",
     "TaskBundle",
     "TaskResult",

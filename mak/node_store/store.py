@@ -191,3 +191,13 @@ class NodeStore:
         """Return all committed fragments for a file, in original source order."""
         with self._lock:
             return [self._nodes[nid] for nid in self.list_nodes(file_path)]
+
+    def get_staged(self, node_id: NodeId) -> NodeFragment | None:
+        """Return the pending (staged, uncommitted) fragment for a node, if any.
+
+        Lets a caller inspect a new fragment version *before* committing it — e.g.
+        the conflict detector, which must validate the proposed source before it is
+        promoted (PLANS.md §11 collection phase).
+        """
+        with self._lock:
+            return self._pending.get(node_id)

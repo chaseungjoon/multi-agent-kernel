@@ -1,3 +1,8 @@
-"""git_integration subsystem package."""
+"""Git integration subsystem: structured commit audit log for validated changes."""
 
-__all__: list[str] = []
+from mak.git_integration.git import CommitInfo, GitHelper
+
+__all__ = [
+    "CommitInfo",
+    "GitHelper",
+]

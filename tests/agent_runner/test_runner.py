@@ -97,6 +97,30 @@ _FAIL_CODE = (
 # Never reads or replies — used to trigger the runner's read timeout.
 _HANG_CODE = "import time\ntime.sleep(30)\n"
 
+# Emits non-JSON debug/progress preamble before the result line.
+_NOISY_CODE = (
+    "import sys, json\n"
+    "for line in sys.stdin:\n"
+    "    d = json.loads(line)\n"
+    "    sys.stdout.write('INFO: starting work\\n')\n"
+    "    sys.stdout.write('progress: 50%\\n')\n"
+    "    out = {'protocol_version': '1.0', 'task_id': d['task_id'],"
+    " 'success': True, 'modified_nodes': []}\n"
+    "    sys.stdout.write(json.dumps(out) + '\\n')\n"
+    "    sys.stdout.flush()\n"
+)
+
+# Pretty-prints the result JSON across multiple lines.
+_MULTILINE_CODE = (
+    "import sys, json\n"
+    "for line in sys.stdin:\n"
+    "    d = json.loads(line)\n"
+    "    out = {'protocol_version': '1.0', 'task_id': d['task_id'],"
+    " 'success': True, 'modified_nodes': []}\n"
+    "    sys.stdout.write(json.dumps(out, indent=2) + '\\n')\n"
+    "    sys.stdout.flush()\n"
+)
+
 
 class _ScriptSubprocessAdapter(SubprocessAgentAdapter):
     code = ""
@@ -139,6 +163,16 @@ class FailAdapter(_ScriptSubprocessAdapter):
 class HangAdapter(_ScriptSubprocessAdapter):
     code = _HANG_CODE
     agent_type = "hang"
+
+
+class NoisyAdapter(_ScriptSubprocessAdapter):
+    code = _NOISY_CODE
+    agent_type = "noisy"
+
+
+class MultilineAdapter(_ScriptSubprocessAdapter):
+    code = _MULTILINE_CODE
+    agent_type = "multiline"
 
 
 def _bundle(task_id: str = "t1") -> TaskBundle:
@@ -232,6 +266,28 @@ class TestSubprocessDispatch:
         runner.assign(adapter, _bundle("t2"))
         assert adapter.spawned == 2
         runner.shutdown()
+
+    def test_skips_noisy_preamble(self) -> None:
+        # RA-6: debug/progress lines before the JSON result must not break parsing.
+        runner = AgentRunner()
+        adapter = NoisyAdapter()
+        try:
+            result = runner.assign(adapter, _bundle("t1"))
+            assert result.success is True
+            assert result.task_id == "t1"
+        finally:
+            runner.shutdown()
+
+    def test_accepts_multiline_json(self) -> None:
+        # RA-6: a result pretty-printed across several lines is accumulated.
+        runner = AgentRunner()
+        adapter = MultilineAdapter()
+        try:
+            result = runner.assign(adapter, _bundle("t1"))
+            assert result.success is True
+            assert result.task_id == "t1"
+        finally:
+            runner.shutdown()
 
 
 class TestConfiguration:

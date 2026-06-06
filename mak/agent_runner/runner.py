@@ -19,6 +19,7 @@ adapter that is neither API- nor subprocess-shaped — raises ``AgentError``.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import threading
 from typing import Protocol, runtime_checkable
@@ -111,7 +112,7 @@ class AgentRunner:
         # output) mean the process is in an unknown state and is always dropped.
         try:
             self._write_task(proc, adapter.format_task(task))
-            line = self._read_line(proc, self._timeout_s)
+            line = self._read_result(proc, self._timeout_s)
         except Exception as exc:
             self._drop(adapter.agent_type, proc)
             return TaskResult(
@@ -190,15 +191,34 @@ class AgentRunner:
         proc.stdin.flush()
 
     @staticmethod
-    def _read_line(proc: subprocess.Popen[str], timeout: float) -> str | None:
-        """Read one stdout line, returning None on timeout (process unresponsive)."""
+    def _read_result(proc: subprocess.Popen[str], timeout: float) -> str | None:
+        """Read stdout until a complete JSON object is found (RA-6).
+
+        Tolerates noisy CLI agents: non-JSON preamble lines (logs, progress) are
+        skipped, and a result printed across multiple lines is accumulated until
+        the buffer parses as a JSON object. Returns the JSON text, ``None`` on
+        timeout (process unresponsive), or ``""`` on EOF without a result.
+        """
         if proc.stdout is None:
             raise AgentError("subprocess has no stdout pipe")
         box: list[str] = []
 
         def reader() -> None:
             assert proc.stdout is not None
-            box.append(proc.stdout.readline())
+            buffer = ""
+            for line in proc.stdout:
+                if not line.strip():
+                    continue
+                single = _as_json_object(line)
+                if single is not None:
+                    box.append(single)
+                    return
+                buffer += line
+                accumulated = _as_json_object(buffer)
+                if accumulated is not None:
+                    box.append(accumulated)
+                    return
+            box.append("")  # EOF without a parseable result
 
         thread = threading.Thread(target=reader, daemon=True)
         thread.start()
@@ -225,3 +245,20 @@ class AgentRunner:
         for pool in pools:
             for proc in pool:
                 self._terminate(proc)
+
+
+def _as_json_object(text: str) -> str | None:
+    """Return ``text`` stripped if it parses as a JSON object, else ``None``.
+
+    Used to pick the result line out of noisy agent stdout: a debug log or a JSON
+    array/number is not a ``TaskResult`` and is rejected; only a JSON object
+    (``{...}``) is accepted.
+    """
+    candidate = text.strip()
+    if not candidate:
+        return None
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    return candidate if isinstance(parsed, dict) else None

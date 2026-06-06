@@ -140,8 +140,24 @@ def test_sub_task_defaults() -> None:
     sub = SubTask(task_id="s2", description="review")
 
     assert sub.target_nodes == []
+    assert sub.context_nodes == []
     assert sub.depends_on == []
     assert sub.agent_type == ""
+
+
+def test_sub_task_context_nodes() -> None:
+    """SubTask tracks read-context nodes separately from write targets."""
+    write = NodeId("m.py::method::C.m")
+    read = NodeId("m.py::class::C")
+    sub = SubTask(
+        task_id="s3",
+        description="implement C.m",
+        target_nodes=[write],
+        context_nodes=[read],
+    )
+
+    assert sub.target_nodes == [write]
+    assert sub.context_nodes == [read]
 
 
 def test_node_fragment_round_trip() -> None:

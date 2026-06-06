@@ -29,6 +29,14 @@ class PlannerFailedError(MakError):
     """Raised when planner exhausts retries."""
 
 
+class PlanReviewAborted(MakError):
+    """Raised when a user aborts the human-in-the-loop plan review."""
+
+
+class SessionError(MakError):
+    """Raised when the session lifecycle cannot proceed."""
+
+
 class AgentError(MakError):
     """Raised when agent execution fails."""
 
