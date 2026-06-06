@@ -28,6 +28,13 @@ python_version = "3.11"
 strict = true
 warn_unused_configs = true
 
+# Optional agent SDKs: imported lazily inside API adapters and only required when
+# a real call is made. They are not declared dependencies, so silence the missing
+# stub/import errors rather than forcing every dev to install them.
+[[tool.mypy.overrides]]
+module = ["anthropic", "openai"]
+ignore_missing_imports = true
+
 [tool.ruff]
 target-version = "py311"
 line-length = 88
@@ -43,8 +50,14 @@ ignore = ["D203", "D213", "D107"]
 known-first-party = ["mak"]
 
 [tool.ruff.lint.per-file-ignores]
-# Test methods are self-documenting via descriptive names; docstrings not required.
-"tests/**" = ["D100", "D101", "D102", "D103", "D104"]
+# Test methods are self-documenting via descriptive names; docstrings not
+# required. ANN401: test doubles for untyped SDKs mirror their **kwargs surface.
+"tests/**" = ["D100", "D101", "D102", "D103", "D104", "ANN401"]
+# The API adapters wrap third-party SDKs (anthropic, openai) that ship no type
+# stubs; the client and response objects are genuinely dynamic at this boundary,
+# so typing.Any is the honest annotation. ANN401 is suppressed only here.
+"mak/agent_runner/adapters/anthropic_api_adapter.py" = ["ANN401"]
+"mak/agent_runner/adapters/openai_api_adapter.py" = ["ANN401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

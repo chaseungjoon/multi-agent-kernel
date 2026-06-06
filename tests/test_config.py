@@ -79,7 +79,7 @@ def test_load_full_yaml(tmp_path: Path) -> None:
         max_concurrent_agents=5,
     )
     assert cfg.planner == PlannerConfig(
-        model="claude-sonnet-4.6",
+        model="claude-opus-4",
         max_retries=5,
         temperature=0.7,
     )

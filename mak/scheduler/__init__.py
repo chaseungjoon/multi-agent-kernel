@@ -1,3 +1,9 @@
-"""scheduler subsystem package."""
+"""Scheduler subsystem: dependency DAG construction and task dispatch."""
 
-__all__: list[str] = []
+from mak.scheduler.dag import DAG
+from mak.scheduler.scheduler import Scheduler
+
+__all__ = [
+    "DAG",
+    "Scheduler",
+]
