@@ -60,5 +60,3 @@ User Task → Planner (LLM) → DAG → Scheduler → Agent Runner → Agents
 | `mak/planner/` | Not started | LLM task decomposition |
 | `mak/git_integration/` | Not started | Commit helpers and push coordination |
 | `mak/session.py` | Not started | Full pipeline orchestration and crash recovery |
-
-**199 tests passing.** `mypy --strict mak` clean. `ruff check mak tests` clean. CI runs all three on push. See `RISK_ASSESSMENT.md` and `PLANS.md §15` for the hardening pass that got here.
