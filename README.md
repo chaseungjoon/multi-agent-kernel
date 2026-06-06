@@ -64,3 +64,9 @@ Each agent receives only the **AST nodes** it has write locks on, edits them in 
 | `mak/planner/` | In Progress |
 | `mak/git_integration/` | Complete | 
 | `mak/session.py` | In Progress |
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Seungjoon Cha
