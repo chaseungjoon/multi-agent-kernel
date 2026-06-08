@@ -1,9 +1,9 @@
 """Name-collision detection across symbols introduced by different agents.
 
 If two agents each introduce a new symbol with the *same qualified name* in the
-*same file* during the *same round*, only one can survive reconstruction (PLANS.md
-§5.1). This check extracts the top-level and method-level symbols each agent
-defines and reports any qualified name claimed by more than one agent.
+*same file* during the *same round*, only one can survive reconstruction. This
+check extracts the top-level and method-level symbols each agent defines and
+reports any qualified name claimed by more than one agent.
 
 The unit of comparison is the *agent*: a single agent legitimately defining a
 symbol once is fine; the same qualified name defined by two different agents is the

@@ -48,7 +48,7 @@ class TestCommitTask:
 
     def test_empty_diff_commit_returns_none(self, repo: Path) -> None:
         # Committing a file whose content is byte-identical to HEAD is a no-op,
-        # not an error: commit_task returns None instead of crashing (RA-8).
+        # not an error: commit_task returns None instead of crashing.
         helper = GitHelper(repo)
         f = _write(repo, "a.py", "x = 1\n")
         first = helper.commit_task("1", [f], "first", "x", "s1")

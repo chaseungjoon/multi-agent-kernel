@@ -1,6 +1,6 @@
 """Session: orchestrate the full MAK pipeline over a node store and lock table.
 
-A ``Session`` drives the end-to-end flow (PLANS.md §11): **init** ingests the
+A ``Session`` drives the end-to-end flow: **init** ingests the
 codebase into the node store; **run** plans the work (optionally with HitL review),
 then loops the scheduler — dispatching tasks, validating each agent's staged
 fragments with the conflict detector, committing on success, reconstructing the
@@ -125,7 +125,7 @@ class SessionResult:
 
     ``blocked`` lists tasks that were neither completed nor explicitly failed —
     they were stranded by an unsatisfiable DAG or locks that never freed. A run
-    with any blocked tasks ends in ``FAILED``, never ``COMPLETED`` (RA-7).
+    with any blocked tasks ends in ``FAILED``, never ``COMPLETED``.
     """
 
     state: SessionState
@@ -146,7 +146,7 @@ class SessionResult:
 class _RecordingRunner:
     """Wraps an agent runner: enriches each bundle, then captures its result.
 
-    The Wave-2 scheduler builds a skeletal ``TaskBundle`` (target node ids only).
+    The scheduler builds a skeletal ``TaskBundle`` (target node ids only).
     This wrapper — which the session owns and which has the node store — enriches
     the bundle with source context before the agent sees it, and records the
     (enriched bundle, result) pair for the session's collection phase.
@@ -187,9 +187,11 @@ class Session:
         logger: SessionLogger | None = None,
         test_runner: TestRunner | None = None,
         max_attempts: int = 3,
+        default_agent_type: str | None = None,
     ) -> None:
         self.session_id = session_id
         self._config = config
+        self._default_agent_type = default_agent_type
         self._node_store = node_store
         self._lock_table = lock_table
         self._registry = registry
@@ -275,6 +277,7 @@ class Session:
         """Build the DAG + scheduler from a ready plan (bypasses the planner)."""
         if self.state not in (SessionState.INITIALIZED, SessionState.PLANNED):
             raise SessionError(f"cannot install a plan from state {self.state}")
+        subtasks = self._apply_default_agent(subtasks)
         dag = DAG(subtasks)
         runner = _RecordingRunner(
             self._agent_runner, self._pending_results, self._enrich_bundle
@@ -291,6 +294,19 @@ class Session:
             for t in subtasks
         }
         self.state = SessionState.PLANNED
+
+    def _apply_default_agent(self, subtasks: list[SubTask]) -> list[SubTask]:
+        """Route tasks with no explicit ``agent_type`` to the configured default.
+
+        Without this a planner output that omits ``agent_type`` would reach
+        ``registry.get("")`` and crash dispatch with ``UnknownAgentTypeError``.
+        """
+        if self._default_agent_type is None:
+            return subtasks
+        return [
+            t if t.agent_type else replace(t, agent_type=self._default_agent_type)
+            for t in subtasks
+        ]
 
     # -- phase 3: run ------------------------------------------------------
 
@@ -354,7 +370,7 @@ class Session:
             self._handle_incomplete(progress)
 
     def _validate_and_commit(self, task_id: str, staged: list[NodeId]) -> list[NodeId]:
-        """Validate, then transactionally commit staged fragments (RA-2).
+        """Validate, then transactionally commit staged fragments.
 
         Order matters: conflict detection → *prospective* reconstruction validated
         against ``ast.parse`` → commit → write files. The store is only advanced
@@ -514,7 +530,7 @@ class Session:
         The agent receives the source of every node it will modify (so it edits
         with full sight of the current code) plus the source of the task's
         ``context_nodes`` (sibling methods, attributes, imports) as read-only
-        context — addresses the "blind edits" risk (RA-5 / PLANS §8).
+        context — so the agent never edits blind.
         """
         task = self._dag_task(bundle.task_id)
         context = dict(bundle.context)

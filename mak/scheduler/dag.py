@@ -1,6 +1,6 @@
 """DAG: dependency graph over the planner's ``SubTask`` list.
 
-The DAG is built from ``SubTask.depends_on`` edges (PLANS.md §9.1). It validates
+The DAG is built from ``SubTask.depends_on`` edges. It validates
 at construction time — unique task ids, every dependency references a known
 task, and the graph is acyclic — raising ``SchedulingError`` otherwise, so a
 malformed plan is rejected before any locks or agents are touched.

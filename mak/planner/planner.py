@@ -1,6 +1,6 @@
 """Planner: decompose a user task into a validated ``SubTask`` DAG via an LLM.
 
-The planner is the only module that calls an LLM (PLANS.md §8). It builds a prompt
+The planner is the only module that calls an LLM. It builds a prompt
 containing the user's task and the current node inventory (qualified names only,
 never source), asks the model for a JSON plan, and validates that JSON against the
 ``SubTask`` schema before accepting it. A malformed or schema-invalid response is

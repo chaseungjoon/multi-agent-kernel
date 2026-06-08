@@ -64,7 +64,7 @@ class SessionLogger:
         """Append a timestamped event to the log file.
 
         Thread-safe: concurrent agents serialize on a lock and each line is
-        flushed, so events never interleave or truncate (risk L5).
+        flushed, so events never interleave or truncate.
         """
         entry = LogEntry(
             timestamp=time.time(),

@@ -1,11 +1,10 @@
 """Signature compatibility between call sites and a function's new signature.
 
 When agent A rewrites ``func_b`` and agent B's fragment calls ``func_b``, the call
-sites in B's fragment must still be compatible with A's *new* signature (PLANS.md
-§5.1). This is a deliberately shallow static check (§5.2): it extracts each
-definition's parameter shape, parses the call expressions, and compares arity and
-keyword-argument names. It is not a type checker — argument *types* are never
-inspected.
+sites in B's fragment must still be compatible with A's *new* signature. This is a
+deliberately shallow static check: it extracts each definition's parameter shape,
+parses the call expressions, and compares arity and keyword-argument names. It is
+not a type checker — argument *types* are never inspected.
 
 The check is conservative about uncertainty: a call that splats ``*args`` or
 ``**kwargs`` suppresses the arity / missing-argument checks for the dimension it

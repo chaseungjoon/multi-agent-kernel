@@ -1,11 +1,11 @@
 """ConflictDetector: orchestrate the shallow cross-node validation checks.
 
 The detector runs between an agent's output being committed to the node store and
-that output being accepted (PLANS.md §5). It composes the three structural checks —
-signature compatibility, import consistency, and name collision — plus a parse
-gate, and returns a single pass/fail ``ConflictReport`` with human-readable
-reasons. It is intentionally shallow (§5.2): it gates on ``ast.parse`` success and
-the structural checks only; full correctness is the test suite's responsibility.
+that output being accepted. It composes the three structural checks — signature
+compatibility, import consistency, and name collision — plus a parse gate, and
+returns a single pass/fail ``ConflictReport`` with human-readable reasons. It is
+intentionally shallow: it gates on ``ast.parse`` success and the structural checks
+only; full correctness is the test suite's responsibility.
 """
 
 from __future__ import annotations

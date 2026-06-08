@@ -1,19 +1,18 @@
 """Scheduler: drives DAG traversal, lock pre-allocation, and agent dispatch.
 
-The scheduler converts a ``DAG`` of ``SubTask`` nodes into running work (PLANS.md
-§9). Its safety property is **atomic lock pre-allocation** (§9.2): before a task
-is dispatched, *all* of its write locks are acquired in one ``try_acquire_all``
-call. If any lock is unavailable, the task stays in the ready queue and is retried
-on the next ``tick`` — partial acquisition (the classic deadlock setup) never
-happens.
+The scheduler converts a ``DAG`` of ``SubTask`` nodes into running work. Its safety
+property is **atomic lock pre-allocation**: before a task is dispatched, *all* of
+its write locks are acquired in one ``try_acquire_all`` call. If any lock is
+unavailable, the task stays in the ready queue and is retried on the next ``tick``
+— partial acquisition (the classic deadlock setup) never happens.
 
 The scheduler depends only on injected collaborators (a lock manager, an adapter
 registry, and an agent runner), described by the ``Protocol`` classes below, so it
-can be unit-tested with mocks and is decoupled from the concrete Wave-2 lock and
-runner implementations.
+can be unit-tested with mocks and is decoupled from the concrete lock and runner
+implementations.
 
 DAG execution state is persisted to ``.mak/task_graph.json`` after every state
-transition so a crashed session can be recovered (Wave 3).
+transition so a crashed session can be recovered.
 """
 
 from __future__ import annotations

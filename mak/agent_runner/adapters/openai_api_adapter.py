@@ -1,4 +1,4 @@
-"""OpenAI API adapter — a secondary first-party API backend (PLANS.md §6).
+"""OpenAI API adapter — a secondary first-party API backend.
 
 Like the Anthropic adapter, this talks to the API directly and forces structured
 output, here via OpenAI's JSON mode (``response_format={"type": "json_object"}``).

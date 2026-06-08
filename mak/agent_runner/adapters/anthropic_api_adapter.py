@@ -1,7 +1,7 @@
-"""Anthropic API adapter — MAK's PRIMARY agent backend (funding condition #2).
+"""Anthropic API adapter — MAK's PRIMARY agent backend.
 
 This adapter talks to the Anthropic Messages API directly via the official SDK
-rather than scraping a CLI's stdout (PLANS.md §6). Structured output is *forced*:
+rather than scraping a CLI's stdout. Structured output is *forced*:
 the request pins ``tool_choice`` to a single ``submit_task_result`` tool whose
 ``input_schema`` is exactly the ``TaskResult`` shape, so the model cannot reply
 with prose — it must return a well-formed result object. No stdout parsing, no

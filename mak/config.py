@@ -38,6 +38,11 @@ def _as_float(raw: dict[str, Any], key: str, default: float) -> float:
         raise ConfigError(f"'{key}' must be a number, got {value!r}") from exc
 
 
+def _opt_str(raw: dict[str, Any], key: str) -> str | None:
+    value = raw.get(key)
+    return None if value is None else str(value)
+
+
 def _as_bool(raw: dict[str, Any], key: str, default: bool) -> bool:
     value = raw.get(key, default)
     if isinstance(value, bool):
@@ -53,11 +58,19 @@ def _as_bool(raw: dict[str, Any], key: str, default: bool) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
-    """Configuration for a single agent type."""
+    """Configuration for a single agent type.
+
+    ``model`` / ``api_key_env`` parameterize API adapters (the env var is read at
+    composition time so a key is never persisted in config). ``cmd`` points a CLI
+    adapter at its binary. All three are optional.
+    """
 
     type: str
     max_instances: int = 2
     timeout: int = 300
+    model: str | None = None
+    api_key_env: str | None = None
+    cmd: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,9 +117,9 @@ class MakConfig:
     session: SessionConfig = field(default_factory=SessionConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     agents: tuple[AgentConfig, ...] = (
-        AgentConfig(type="claude_code"),
-        AgentConfig(type="codex", max_instances=1),
-        AgentConfig(type="antigravity", max_instances=2),
+        AgentConfig(type="anthropic_api"),
+        AgentConfig(type="openai_api"),
+        AgentConfig(type="gemini_api"),
     )
     git: GitConfig = field(default_factory=GitConfig)
     node_store: NodeStoreConfig = field(default_factory=NodeStoreConfig)
@@ -119,6 +132,9 @@ def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
         type=str(raw["type"]),
         max_instances=_as_int(raw, "max_instances", 2),
         timeout=_as_int(raw, "timeout", 300),
+        model=_opt_str(raw, "model"),
+        api_key_env=_opt_str(raw, "api_key_env"),
+        cmd=_opt_str(raw, "cmd"),
     )
 
 

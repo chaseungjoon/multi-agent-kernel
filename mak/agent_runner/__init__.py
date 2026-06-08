@@ -5,6 +5,7 @@ from mak.agent_runner.adapters.base_adapter import (
     AgentAdapter,
     SubprocessAgentAdapter,
 )
+from mak.agent_runner.adapters.gemini_api_adapter import GeminiApiAdapter
 from mak.agent_runner.adapters.openai_api_adapter import OpenAiApiAdapter
 from mak.agent_runner.protocol import (
     PROTOCOL_VERSION,
@@ -23,6 +24,7 @@ __all__ = [
     "AgentRunner",
     "AnthropicApiAdapter",
     "ApiAdapter",
+    "GeminiApiAdapter",
     "OpenAiApiAdapter",
     "SubprocessAgentAdapter",
     "decode_task_bundle",

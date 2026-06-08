@@ -1,6 +1,6 @@
 """NodeStore: versioned AST fragment storage with commit/rollback semantics.
 
-The store owns version assignment (risk H4): ``put_node`` ignores any version on
+The store owns version assignment: ``put_node`` ignores any version on
 the incoming fragment and stamps it ``current_committed + 1``, so callers never
 have to guess the next version. Prior versions are retained on disk, enabling
 ``revert_node`` (roll a committed node back to its previous version). Fragment
@@ -197,7 +197,7 @@ class NodeStore:
 
         Lets a caller inspect a new fragment version *before* committing it — e.g.
         the conflict detector, which must validate the proposed source before it is
-        promoted (PLANS.md §11 collection phase).
+        promoted during the collection phase.
         """
         with self._lock:
             return self._pending.get(node_id)

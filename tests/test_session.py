@@ -409,11 +409,11 @@ class TestRecovery:
         assert expired >= 1
 
 
-# --- Wave 3.5 hardening ------------------------------------------------------
+# --- session hardening -------------------------------------------------------
 
 
 class TestBundleEnrichment:
-    """RA-5: agents must receive write + read source, not just node ids."""
+    """Agents must receive write + read source, not just node ids."""
 
     def test_bundle_carries_write_and_read_source(self, tmp_path: Path) -> None:
         (tmp_path / "m.py").write_text(_TWO_FUNCS)
@@ -446,7 +446,7 @@ class TestBundleEnrichment:
 
 
 class TestTransactionalCommit:
-    """RA-2: the store must not advance unless reconstruction is valid."""
+    """The store must not advance unless reconstruction is valid."""
 
     def test_invalid_staged_source_not_committed(self, tmp_path: Path) -> None:
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
@@ -509,7 +509,7 @@ class TestTransactionalCommit:
 
 
 class TestStallReporting:
-    """RA-7: a stalled run must report FAILED + blocked, never COMPLETED."""
+    """A stalled run must report FAILED + blocked, never COMPLETED."""
 
     def test_stalled_run_reports_failed_not_completed(self, tmp_path: Path) -> None:
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
@@ -532,3 +532,53 @@ class TestStallReporting:
         assert result.state is SessionState.FAILED
         assert result.blocked == ("a",)
         assert not result.ok
+
+
+class TestDefaultAgentRouting:
+    def _session_with_default(
+        self, tmp_path: Path, store: NodeStore, default: str | None
+    ) -> Session:
+        return Session(
+            session_id="s1",
+            config=_config(tmp_path),
+            node_store=store,
+            lock_table=LockTable(),
+            registry=FakeRegistry(),  # type: ignore[arg-type]
+            agent_runner=StagingRunner(store),  # type: ignore[arg-type]
+            default_agent_type=default,
+        )
+
+    def test_empty_agent_type_routed_to_default(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        session = self._session_with_default(tmp_path, store, "anthropic_api")
+        session.initialize()
+        bare = SubTask(
+            task_id="a",
+            description="task a",
+            target_nodes=[NodeId("m.py::function::a")],
+        )
+        assert bare.agent_type == ""
+        session.install_plan([bare])
+        assert session._dag_task("a").agent_type == "anthropic_api"
+
+    def test_explicit_agent_type_preserved(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        session = self._session_with_default(tmp_path, store, "anthropic_api")
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        assert session._dag_task("a").agent_type == "fake"
+
+    def test_no_default_leaves_agent_type_unchanged(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        session = self._session_with_default(tmp_path, store, None)
+        session.initialize()
+        bare = SubTask(
+            task_id="a",
+            description="task a",
+            target_nodes=[NodeId("m.py::function::a")],
+        )
+        session.install_plan([bare])
+        assert session._dag_task("a").agent_type == ""

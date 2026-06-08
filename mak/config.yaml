@@ -10,16 +10,31 @@ planner:
   max_retries: 3
   temperature: 0.0
 
+# The first entry is the default agent: tasks whose plan omits an explicit
+# agent_type are routed to it. The API adapters below are implemented. CLI
+# adapter types (e.g. claude_code, codex) are accepted but not yet implemented —
+# they resolve to a clear "not implemented" error if selected. API keys are read
+# from the named env var, never stored here.
 agents:
-  - type: "claude_code"
+  - type: "anthropic_api"
+    model: "claude-sonnet-4-6"
+    api_key_env: "ANTHROPIC_API_KEY"
     max_instances: 2
     timeout: 300
-  - type: "codex"
+  - type: "openai_api"
+    model: "gpt-4o"
+    api_key_env: "OPENAI_API_KEY"
     max_instances: 2
     timeout: 300
-  - type: "antigravity"
+  - type: "gemini_api"
+    model: "gemini-3-pro"
+    api_key_env: "GEMINI_API_KEY"
     max_instances: 2
     timeout: 300
+  # - type: "claude_code"   # CLI fallback (not yet implemented)
+  #   cmd: "claude"
+  #   max_instances: 2
+  #   timeout: 300
 
 git:
   auto_commit: true

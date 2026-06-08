@@ -2,10 +2,9 @@
 
 The base ``AgentAdapter`` is transport-agnostic — it only translates between
 MAK's ``TaskBundle``/``TaskResult`` and a backend, which is all an API-based
-adapter (Anthropic/OpenAI SDK/Google Antigravity) needs.
-``SubprocessAgentAdapter`` adds the ``spawn`` hook for CLI adapters, so API
-adapters are not forced to implement a
-meaningless subprocess method (risk M3).
+adapter (Anthropic/OpenAI/Gemini SDK) needs. ``SubprocessAgentAdapter`` adds the
+``spawn`` hook for CLI adapters, so API adapters are not forced to implement a
+meaningless subprocess method.
 """
 
 from __future__ import annotations

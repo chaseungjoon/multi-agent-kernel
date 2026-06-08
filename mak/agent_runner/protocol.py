@@ -1,9 +1,9 @@
 """TaskBundle and TaskResult JSON serialization for the agent protocol.
 
 The wire schema is exactly the ``TaskBundle`` / ``TaskResult`` dataclasses (the
-single canonical schema — see PLANS.md §6.1). ``decode_task_bundle`` rebuilds
-nested ``LockEntry`` / ``ResourceRef`` objects rather than leaving raw dicts in a
-field typed ``list[LockEntry]`` (risk M2).
+single canonical schema). ``decode_task_bundle`` rebuilds nested ``LockEntry`` /
+``ResourceRef`` objects rather than leaving raw dicts in a field typed
+``list[LockEntry]``.
 """
 
 from __future__ import annotations

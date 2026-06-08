@@ -1,4 +1,4 @@
-"""Human-in-the-loop review of a planner-generated DAG (PLANS.md §8).
+"""Human-in-the-loop review of a planner-generated DAG.
 
 Before a plan is dispatched to the scheduler, the user sees the sub-task list and
 its dependency edges and chooses to **approve**, **edit** (paste a corrected JSON

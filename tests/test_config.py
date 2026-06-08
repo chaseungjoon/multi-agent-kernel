@@ -38,7 +38,7 @@ agents:
   - type: "codex"
     max_instances: 1
     timeout: 120
-  - type: "antigravity"
+  - type: "gemini_api"
     max_instances: 2
     timeout: 300
 
@@ -86,7 +86,7 @@ def test_load_full_yaml(tmp_path: Path) -> None:
     assert cfg.agents == (
         AgentConfig(type="claude_code", max_instances=3, timeout=600),
         AgentConfig(type="codex", max_instances=1, timeout=120),
-        AgentConfig(type="antigravity", max_instances=2, timeout=300),
+        AgentConfig(type="gemini_api", max_instances=2, timeout=300),
 
     )
     assert cfg.git == GitConfig(
@@ -173,7 +173,7 @@ def test_non_mapping_yaml_raises_config_error(tmp_path: Path) -> None:
 
 
 def test_session_timeout_keys_parsed(tmp_path: Path) -> None:
-    """Documented session keys are loaded, not silently ignored (risk M6)."""
+    """Documented session keys are loaded, not silently ignored."""
     path = tmp_path / "config.yaml"
     path.write_text(
         "session:\n"
@@ -207,6 +207,30 @@ def test_invalid_boolean_raises_config_error(tmp_path: Path) -> None:
     path.write_text("git:\n  auto_push: maybe\nagents:\n  - type: a\n")
     with pytest.raises(ConfigError, match="must be a boolean"):
         load_config(path)
+
+
+def test_agent_adapter_params_parsed(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "agents:\n"
+        "  - type: anthropic_api\n"
+        "    model: claude-sonnet-4-6\n"
+        "    api_key_env: ANTHROPIC_API_KEY\n"
+        "  - type: claude_code\n"
+        "    cmd: claude\n"
+    )
+    cfg = load_config(path)
+    assert cfg.agents[0].model == "claude-sonnet-4-6"
+    assert cfg.agents[0].api_key_env == "ANTHROPIC_API_KEY"
+    assert cfg.agents[0].cmd is None
+    assert cfg.agents[1].cmd == "claude"
+
+
+def test_agent_adapter_params_default_to_none() -> None:
+    agent = AgentConfig(type="x")
+    assert agent.model is None
+    assert agent.api_key_env is None
+    assert agent.cmd is None
 
 
 def test_frozen_dataclasses_are_immutable() -> None:

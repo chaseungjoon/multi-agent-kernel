@@ -1,4 +1,4 @@
-"""Round-trip property tests for the node store (PLANS.md §15.2).
+"""Round-trip property tests for the node store.
 
 The load-bearing invariant: ``ingest(file) -> reconstruct`` yields source that is
 *semantically equivalent* to the original, with decorators, statement ordering,

@@ -80,7 +80,7 @@ class SubTask:
     ``target_nodes`` are the nodes the task will *write*; ``context_nodes`` are
     nodes it needs to *read* to do the work (sibling methods, class attributes,
     imports). The runner ships the current source of both to the agent so it is
-    not editing blind (PLANS.md §8).
+    not editing blind.
     """
 
     task_id: str

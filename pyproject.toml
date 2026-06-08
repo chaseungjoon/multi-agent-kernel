@@ -32,7 +32,7 @@ warn_unused_configs = true
 # a real call is made. They are not declared dependencies, so silence the missing
 # stub/import errors rather than forcing every dev to install them.
 [[tool.mypy.overrides]]
-module = ["anthropic", "openai"]
+module = ["anthropic", "openai", "google"]
 ignore_missing_imports = true
 
 [tool.ruff]
@@ -58,6 +58,7 @@ known-first-party = ["mak"]
 # so typing.Any is the honest annotation. ANN401 is suppressed only here.
 "mak/agent_runner/adapters/anthropic_api_adapter.py" = ["ANN401"]
 "mak/agent_runner/adapters/openai_api_adapter.py" = ["ANN401"]
+"mak/agent_runner/adapters/gemini_api_adapter.py" = ["ANN401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

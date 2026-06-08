@@ -1,7 +1,7 @@
 """Import consistency across concurrent ``__header__`` edits.
 
 When several agents edit a module's header region in the same round, their import
-additions can collide (PLANS.md §5.1). Two failure modes matter:
+additions can collide. Two failure modes matter:
 
 - **conflicting import** — two agents bind the *same name* to *different* targets
   (e.g. one writes ``from a import config`` and another ``from b import config``).

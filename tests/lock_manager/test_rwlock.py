@@ -45,7 +45,7 @@ class TestRWLock:
         assert not lock.acquire(LockMode.INTENT_WRITE, "agent_b")
 
     def test_write_blocked_by_intent_write(self) -> None:
-        # Regression for risk H2: intent_write must actually exclude writers.
+        # intent_write must actually exclude writers.
         lock = RWLock()
         assert lock.acquire(LockMode.INTENT_WRITE, "agent_a")
         assert not lock.acquire(LockMode.WRITE, "agent_b")

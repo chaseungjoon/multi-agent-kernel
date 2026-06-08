@@ -1,4 +1,4 @@
-"""Concurrency stress tests for the lock table (PLANS.md §15.3, risk H1).
+"""Concurrency stress tests for the lock table.
 
 Drives many threads at a shared set of nodes and asserts the core safety
 invariant never breaks: a node is never simultaneously write-held by two holders,

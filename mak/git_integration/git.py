@@ -1,7 +1,7 @@
 """Git integration — an audit log of validated changes, not an isolation layer.
 
-Git is *not* used for isolation or conflict resolution in MAK (PLANS.md §7); lock
-discipline already prevents conflicting concurrent writes. Git is a linear,
+Git is *not* used for isolation or conflict resolution in MAK; lock discipline
+already prevents conflicting concurrent writes. Git is a linear,
 task-ordered audit trail: after MAK validates an agent's output, the change is
 committed with a structured ``[MAK-<task_id>]`` message recording the agent and
 session. A push is coordinated once at session end after the full suite is green.
@@ -82,7 +82,7 @@ class GitHelper:
 
         Returns the new commit's full hash, or ``None`` if the staged content is
         byte-identical to HEAD (an empty diff) — that is a no-op, not an error, so
-        a reconstruction that changed nothing does not crash the session (RA-8).
+        a reconstruction that changed nothing does not crash the session.
         """
         if not files:
             raise GitIntegrationError(

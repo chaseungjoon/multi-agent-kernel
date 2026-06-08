@@ -268,7 +268,7 @@ class TestSubprocessDispatch:
         runner.shutdown()
 
     def test_skips_noisy_preamble(self) -> None:
-        # RA-6: debug/progress lines before the JSON result must not break parsing.
+        # Debug/progress lines before the JSON result must not break parsing.
         runner = AgentRunner()
         adapter = NoisyAdapter()
         try:
@@ -279,7 +279,7 @@ class TestSubprocessDispatch:
             runner.shutdown()
 
     def test_accepts_multiline_json(self) -> None:
-        # RA-6: a result pretty-printed across several lines is accumulated.
+        # A result pretty-printed across several lines is accumulated.
         runner = AgentRunner()
         adapter = MultilineAdapter()
         try:

@@ -1,7 +1,6 @@
 """AgentRunner: dispatch a task to an adapter, API-first with a subprocess pool.
 
-``assign(adapter, task)`` is the single entry point. It routes by adapter type
-(PLANS.md §6.4):
+``assign(adapter, task)`` is the single entry point. It routes by adapter type:
 
 - **API adapters** (the primary path) implement a ``send`` method — the runner
   calls ``format_task → send → parse_result`` and returns the structured
@@ -192,7 +191,7 @@ class AgentRunner:
 
     @staticmethod
     def _read_result(proc: subprocess.Popen[str], timeout: float) -> str | None:
-        """Read stdout until a complete JSON object is found (RA-6).
+        """Read stdout until a complete JSON object is found.
 
         Tolerates noisy CLI agents: non-JSON preamble lines (logs, progress) are
         skipped, and a result printed across multiple lines is accumulated until

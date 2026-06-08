@@ -1,11 +1,11 @@
 """LockTable: thread-safe lock state with persistence and lease expiration.
 
-Concurrency model (PLANS.md §15.3, option B): every public mutation is guarded
-by one table-wide re-entrant lock, so ``try_acquire_all`` is genuinely atomic —
-the check pass and the acquire pass cannot be interleaved by another thread. The
-per-node ``RWLock`` objects are only ever touched while this lock is held.
+Concurrency model: every public mutation is guarded by one table-wide re-entrant
+lock, so ``try_acquire_all`` is genuinely atomic — the check pass and the acquire
+pass cannot be interleaved by another thread. The per-node ``RWLock`` objects are
+only ever touched while this lock is held.
 
-Lease expiry (risk H3) is *observable*, not silent: an expiring lease is logged
+Lease expiry is *observable*, not silent: an expiring lease is logged
 and reported to an optional ``on_expire`` callback so a scheduler can fail and
 roll back the holder's task, rather than having its lock vanish underneath it.
 Holders keep a lease alive by calling ``renew`` (heartbeat).
