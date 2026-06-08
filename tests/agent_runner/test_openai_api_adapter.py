@@ -137,8 +137,16 @@ class TestMisc:
         adapter, _ = _adapter(json.dumps({"task_id": "t", "success": True}))
         assert adapter.health_check() is True
 
-    def test_health_check_no_sdk(self) -> None:
-        assert OpenAiApiAdapter().health_check() is False
+    def test_unhealthy_when_client_cannot_be_built(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        adapter = OpenAiApiAdapter()
+
+        def boom() -> object:
+            raise AgentError("no client")
+
+        monkeypatch.setattr(adapter, "_get_client", boom)
+        assert adapter.health_check() is False
 
     def test_agent_type(self) -> None:
         adapter, _ = _adapter(json.dumps({"task_id": "t", "success": True}))

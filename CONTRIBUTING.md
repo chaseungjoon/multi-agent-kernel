@@ -38,6 +38,7 @@ roadmap, and design rationale.
   - [Git integration](#9-git-integration)
   - [Session lifecycle](#10-session-lifecycle)
   - [Configuration](#11-configuration)
+  - [Command-line interface](#12-command-line-interface)
 - [Part III — Developing](#part-iii--developing)
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
@@ -137,7 +138,7 @@ reconstruction, conflict detection — is deterministic and stays that way.
           ▼                    ▼                    ▼
    API adapter:          API adapter:         API adapter:
    anthropic_api         openai_api           gemini_api
-   (+ CLI fallbacks, planned)
+   (+ CLI fallbacks: claude_code / codex / copilot)
           │                    │                    │
           └────────────────────┼────────────────────┘
                                ▼
@@ -202,7 +203,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-MAK builds and is well-tested: **422 tests pass**, `mypy --strict mak` is clean, and
+MAK builds and is well-tested: **467 tests pass**, `mypy --strict mak` is clean, and
 `ruff check mak tests` is clean.
 
 The module-by-module state:
@@ -216,12 +217,13 @@ The module-by-module state:
 | `mak/agent_runner/` (runner, registry, protocol, API adapters) | Complete |
 | `mak/scheduler/` | Complete |
 | `mak/conflict_detector/` | Complete |
-| `mak/planner/` | Complete |
+| `mak/planner/` (planner, review, LLM backends) | Complete |
 | `mak/git_integration/` | Complete |
 | `mak/session.py` | Complete (sequential) |
 | `mak/bootstrap.py` (composition root) | Complete |
-| `mak/__main__.py` (CLI entry point) | **Not yet built** (in progress) |
-| CLI subprocess adapters, sandboxing | **Not yet built** |
+| `mak/__main__.py` (CLI entry point) | Complete |
+| CLI subprocess adapters (`claude_code`, `codex`, `copilot`) | Complete |
+| `mak/agent_runner/sandbox.py` (Docker isolation) | Complete |
 | **Concurrent execution** | **Not yet built** — see below |
 
 > ### ⚠️ The most important thing to understand before contributing
@@ -543,13 +545,16 @@ reply with prose:
 | `openai_api` | OpenAI Chat Completions | JSON mode (`response_format={"type": "json_object"}`) |
 | `gemini_api` | Google GenAI `generate_content` | function-calling config in `ANY` mode restricted to `submit_task_result` |
 
-Each imports its SDK **lazily** and accepts an **injectable client**, so neither the
-adapter nor its tests require the SDK installed unless a real call is made. The
-optional SDKs (`anthropic`, `openai`, `google-genai`) are **not** declared
-dependencies — install whichever you actually use.
+The SDKs (`anthropic`, `openai`, `google-genai`) are declared dependencies, but each
+adapter imports its SDK **lazily** and accepts an **injectable client** — so import
+time stays fast and the tests never make a real call (they inject fakes).
 
-CLI subprocess adapters (`claude_code`, `codex`, `copilot`) are a **planned**
-secondary fallback (see the [roadmap](#roadmap)); they are not yet implemented.
+CLI subprocess adapters (`claude_code`, `codex`, `copilot`) are a **secondary
+fallback**, implemented over a shared `CliSubprocessAdapter` base (`cli_adapter.py`):
+they speak MAK's newline-JSON wire protocol over a pooled subprocess, take a `cmd`
+override, and can run inside a Docker sandbox (see §7.6). Real CLIs typically need a
+thin wrapper to speak the line protocol, so the adapter does not hard-code any one
+CLI's flags. The API adapters remain primary.
 
 ### 7.3 Registry and composition root
 
@@ -562,10 +567,11 @@ secondary fallback (see the [roadmap](#roadmap)); they are not yet implemented.
 - `bootstrap.py` (the **composition root**) — `build_registry(config)` registers a
   config-bound factory per agent type (binding each agent's configured `model` and
   the API key resolved from its `api_key_env` at build time; SDK clients are still
-  built lazily, so this performs **no network call**). Configured-but-unbuilt types
-  resolve to a clear "not yet implemented" error. `default_agent_type(config)`
-  returns the routing default (the first configured agent). A CLI entry point is
-  meant to be a thin shell over these two functions.
+  built lazily, so this performs **no network call**). CLI types get a factory bound
+  to their `cmd` and an optional sandbox; an unknown type resolves to a clear error.
+  `default_agent_type(config)` returns the routing default (the first configured
+  agent), and `validate_config(config)` rejects unknown agent types at startup.
+  `mak/__main__.py` is the thin CLI shell over these functions.
 
 ### 7.4 The wire protocol
 
@@ -579,7 +585,7 @@ secondary fallback (see the [roadmap](#roadmap)); they are not yet implemented.
 `AgentRunner.assign(adapter, task)` (`runner.py`) is the single entry point and
 routes by adapter type:
 - **API adapters** (primary): `format_task → send → parse_result`.
-- **Subprocess adapters** (the planned CLI path): driven over an idle-process pool
+- **Subprocess adapters** (the CLI path): driven over an idle-process pool
   per agent type — write the task as a JSON line, read the result back under a
   timeout (the reader tolerates noisy preamble and multiline pretty-printed JSON),
   SIGTERM on timeout, discard a process on failure rather than returning it to the
@@ -588,6 +594,17 @@ routes by adapter type:
 Every path returns a `TaskResult`: backend failures become `success=False` (so the
 scheduler can re-queue); a genuinely misconfigured adapter raises `AgentError`.
 `shutdown()` drains the pool.
+
+### 7.6 Sandboxing CLI agents
+
+CLI agents are arbitrary external processes — an attack surface. `sandbox.py`'s
+`SandboxConfig.wrap(argv, working_dir)` builds the `docker run` argv that runs the
+agent in a container with its filesystem scoped to the working directory (bind-mount
++ workdir) and its network restricted (`--network none` by default). The CLI
+`--sandbox` flag threads a `SandboxConfig` into every CLI adapter (API adapters make
+no subprocess and ignore it); `docker_available()` lets the CLI fail fast with
+guidance if Docker is missing. The module only *builds* argv and probes the daemon,
+so it is unit-testable without Docker.
 
 ## 8. Planner & human-in-the-loop review
 
@@ -608,6 +625,11 @@ scheduler can re-queue); a genuinely misconfigured adapter raises `AgentError`.
   edge) causes agent collisions or needless serialization that are expensive to
   unwind mid-session, so this ~5-second human check removes the single point of
   failure in one-shot LLM DAG generation.
+- **`llm.py`** — concrete `PlannerLLM` completion backends (Anthropic / OpenAI /
+  Gemini), each a thin prompt-in/text-out wrapper with a lazy SDK and injectable
+  client (distinct from the agent adapters, which force a structured `TaskResult`).
+  `build_planner_llm(model)` picks the backend from the model-id prefix, so the CLI
+  can construct a working planner from `config.planner.model` alone.
 
 ## 9. Git integration
 
@@ -710,6 +732,27 @@ Rules and behaviors:
 - Type coercion is strict and wrapped in `ConfigError` (e.g. `"false"` parses to
   `False`, not Python's truthy `bool("false")`).
 
+## 12. Command-line interface
+
+`mak/__main__.py` is the entry point: `python -m mak --task "..."`. It is a thin
+shell over the composition root, split into testable functions:
+
+- `parse_args(argv)` — flags: `--task` (required), `--config` (default
+  `mak/config.yaml`), `--work-dir`, `--agent` (override the default agent type),
+  `--no-review`, `--sandbox`, `-v/-vv`.
+- `build_session(args, config, sandbox)` — assembles the `Session` and all its
+  collaborators (node store, lock table, registry via `build_registry`, agent runner,
+  planner via `build_planner_llm`, git helper, logger, default agent).
+- `main(argv, *, session_builder=build_session)` — loads + validates config, builds
+  the session, drives **initialize → plan → run → teardown**, and maps domain errors
+  to friendly messages and exit codes: `0` success, `1` for an aborted review /
+  planner failure / failed-or-blocked run / failing tests, `2` for a config error or
+  a missing Docker daemon under `--sandbox`. The `session_builder` seam lets tests
+  drive `main` end-to-end with a fully-faked session.
+
+Run end-to-end (sequentially): `python -m mak --task "..." --config mak/config.yaml`.
+Agent and planner backends are selected entirely by the config file.
+
 ---
 
 # Part III — Developing
@@ -718,8 +761,8 @@ Rules and behaviors:
 
 - **Python ≥ 3.11** (the project uses `match`/`StrEnum`/modern typing).
 - **git** on `PATH` (the git integration shells out to it).
-- Optionally, one of the agent SDKs (`anthropic`, `openai`, `google-genai`) if you
-  intend to make real agent calls. They are not required to run the test suite.
+- The agent SDKs (`anthropic`, `openai`, `google-genai`) install automatically as
+  dependencies; they're imported lazily, so the test suite never needs a live key.
 
 ## Setup
 
@@ -745,8 +788,8 @@ cp mak/.env.example mak/.env        # then fill in the keys you use
 
 ```
 mak/
-├── __main__.py            # CLI entry point  (planned — not yet present)
-├── bootstrap.py           # composition root: build_registry / default_agent_type
+├── __main__.py            # CLI entry point: python -m mak --task "..."
+├── bootstrap.py           # composition root: build_registry / default_agent_type / validate_config
 ├── config.py              # config loading + validation
 ├── config.yaml            # default configuration
 ├── session.py             # session lifecycle, transactional commit, recovery
@@ -777,15 +820,25 @@ mak/
 │   ├── import_check.py
 │   └── name_collision_check.py
 │
+├── planner/
+│   ├── planner.py         # LLM decomposition, SubTask schema, retry logic
+│   ├── llm.py             # PlannerLLM completion backends (build_planner_llm)
+│   └── review.py          # human-in-the-loop DAG review
+│
 ├── agent_runner/
 │   ├── runner.py          # routes to API/subprocess adapters; failure policy
 │   ├── registry.py        # AdapterRegistry (instance, not global)
 │   ├── protocol.py        # TaskBundle/TaskResult wire (de)serialization
+│   ├── sandbox.py         # Docker isolation for CLI agents (--sandbox)
 │   └── adapters/
 │       ├── base_adapter.py
 │       ├── anthropic_api_adapter.py   # primary
-│       ├── openai_api_adapter.py
-│       └── gemini_api_adapter.py
+│       ├── openai_api_adapter.py      # primary
+│       ├── gemini_api_adapter.py      # primary
+│       ├── cli_adapter.py             # shared CliSubprocessAdapter base
+│       ├── claude_code_adapter.py     # secondary (claude CLI)
+│       ├── codex_adapter.py           # secondary (codex CLI)
+│       └── copilot_adapter.py         # secondary (gh copilot CLI)
 │
 └── git_integration/
     └── git.py             # audit-log commits, log parsing, push
@@ -806,7 +859,7 @@ Tests mirror the source tree (`tests/core/`, `tests/node_store/`,
 Three gates must be green for every change — locally, in pre-commit, and in CI:
 
 ```bash
-pytest -q                  # the full suite (currently 422 tests)
+pytest -q                  # the full suite (currently 467 tests)
 mypy --strict mak          # zero errors
 ruff check mak tests       # zero findings
 ```
@@ -898,30 +951,29 @@ the foundation is solid. Completed waves:
 | 3 | Planner + HitL, git integration, session lifecycle | ✅ |
 | 3.5 | Session hardening: transactional commit, read-context enrichment, honest stall reporting, robust stdout read, empty-diff commits | ✅ |
 | HOTFIX | Pre-CLI wiring: config-bound adapter factories, `AgentConfig` model/key fields, the `bootstrap.py` composition root, default-agent routing | ✅ |
+| 4 | CLI entry point + planner LLM backends, secondary CLI adapters, Docker sandbox, config validation, end-to-end integration test | ✅ |
 
 ## Roadmap
 
-### Wave 4 — CLI, secondary adapters, integration tests (in progress)
+### Wave 4 — CLI, secondary adapters, integration tests ✅ DONE
 
-Makes the kernel **runnable end-to-end under sequential execution**. After this, a
-user can run `python -m mak --task "…"` and watch one agent at a time edit the node
-store, with comments preserved.
+The kernel is now **runnable end-to-end under sequential execution**: `python -m mak
+--task "…"` ingests, plans (with HitL review unless `--no-review`), dispatches one
+agent at a time, and reconstructs files with comments preserved. Delivered:
 
-- **CLI entry point + e2e tests** — `mak/__main__.py`: parse args (task, config path,
-  working dir, verbosity, `--no-review`, `--agent`), build collaborators via
-  `bootstrap.build_registry` + `default_agent_type`, construct and run a `Session`,
-  surface errors helpfully. End-to-end test: ingest a small project with inline
-  comments, run with a mock API agent, verify the reconstructed files **with all
-  comments intact**.
-- **Secondary CLI adapters** — `claude_code_adapter.py` (`claude` CLI),
-  `codex_adapter.py` (`codex` CLI), each extending `SubprocessAgentAdapter`. These
-  are fallbacks; the API adapters remain primary.
-- **Sandboxing + config validation + error UX** — Docker-based isolation for CLI-type
-  subprocesses (filesystem scoped to the working dir, network restricted), behind a
-  `--sandbox` flag; a `copilot_adapter.py` (`gh copilot`); config validation that
-  rejects unregistered adapter types; better error messages across modules.
+- **CLI entry point + planner backends** — `mak/__main__.py` (`parse_args` /
+  `build_session` / `main`, mapping domain errors to exit codes) and
+  `mak/planner/llm.py` (`build_planner_llm` selects an Anthropic/OpenAI/Gemini
+  completion backend by model prefix). End-to-end test reconstructs a commented
+  project with every comment intact.
+- **Secondary CLI adapters** — `cli_adapter.py` (shared `CliSubprocessAdapter`) with
+  `claude_code`, `codex`, and `copilot` subclasses, registered as config-bound
+  factories. Fallbacks; the API adapters remain primary.
+- **Sandboxing, config validation, error UX** — `sandbox.py` (Docker isolation behind
+  `--sandbox`), `bootstrap.validate_config` (rejects unknown agent types at startup),
+  and friendly error messages / exit codes throughout the CLI.
 
-### Wave 5 — Concurrency (the thesis gate)
+### Wave 5 — Concurrency (the thesis gate) — the active milestone
 
 **This is the heart of the project and it is not yet built.** It is where MAK's
 reason to exist — a concurrent shared-memory kernel — is finally made real and
@@ -957,6 +1009,12 @@ and discussion:
   decomposition degrades on large tasks with many interdependent nodes. Prompt
   engineering, few-shot examples, and a possible multi-step planner (outline →
   detail) are open.
+- **Planner context / token efficiency.** `Planner.decompose` embeds the *entire*
+  node inventory in the prompt on *every* task. For a large codebase that's many
+  tokens re-sent each time — slow and expensive — even though the inventory barely
+  changes between calls. Worth implementing: prompt caching of the stable inventory
+  prefix, retrieval (send only task-relevant nodes), a coarse→fine two-stage planner,
+  a module-level summarized inventory, and/or a template bypass for fixed task shapes.
 - **Evaluation.** A suite that runs MAK on real Python projects and measures
   correctness and throughput against a worktree baseline.
 
@@ -964,10 +1022,10 @@ and discussion:
 
 - Add test coverage for an edge case in an existing module (ingestion corner cases,
   conflict-detector splat handling, config coercion).
-- Improve error messages (Wave 4-C territory) — make failures point at the fix.
+- Improve error messages — make failures point at the fix.
 - Documentation: clarify a subsystem in this file, or add module-level examples.
-- A secondary CLI adapter (Wave 4-B) — they have a clear interface and mockable
-  tests.
+- Harden a CLI adapter: add a real wrapper that makes `claude`/`codex`/`gh copilot`
+  speak the MAK line protocol, or extend the sandbox (host allowlisting).
 
 Before starting something large (Wave 5 pieces, a `LanguageBackend`), open an issue
 to align on the approach first.

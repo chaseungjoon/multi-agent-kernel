@@ -20,22 +20,38 @@ from collections.abc import Callable
 
 from mak.agent_runner.adapters.anthropic_api_adapter import AnthropicApiAdapter
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
+from mak.agent_runner.adapters.claude_code_adapter import ClaudeCodeAdapter
+from mak.agent_runner.adapters.codex_adapter import CodexAdapter
+from mak.agent_runner.adapters.copilot_adapter import CopilotAdapter
 from mak.agent_runner.adapters.gemini_api_adapter import GeminiApiAdapter
 from mak.agent_runner.adapters.openai_api_adapter import OpenAiApiAdapter
 from mak.agent_runner.registry import AdapterRegistry
+from mak.agent_runner.sandbox import SandboxConfig
 from mak.config import AgentConfig, MakConfig
 from mak.core.exceptions import AgentError, ConfigError
 
 # Agent types with a built, first-party API adapter — each takes ``model`` +
-# ``api_key`` kwargs. Other (e.g. CLI) types parse and validate here but resolve
-# to a clear "not yet implemented" error rather than crashing wiring.
-# ``Callable[..., AgentAdapter]`` keeps the generic factory below honest without
-# naming each constructor's full (and differing) signature.
+# ``api_key`` kwargs. ``Callable[..., AgentAdapter]`` keeps the generic factory
+# below honest without naming each constructor's full (and differing) signature.
 _API_ADAPTER_CLASSES: dict[str, Callable[..., AgentAdapter]] = {
     "anthropic_api": AnthropicApiAdapter,
     "openai_api": OpenAiApiAdapter,
     "gemini_api": GeminiApiAdapter,
 }
+
+# Secondary CLI adapter types — each takes a ``cmd`` override and an optional
+# ``sandbox``. They are fallbacks; the API adapters above are primary.
+_CLI_ADAPTER_CLASSES: dict[str, Callable[..., AgentAdapter]] = {
+    "claude_code": ClaudeCodeAdapter,
+    "codex": CodexAdapter,
+    "copilot": CopilotAdapter,
+}
+
+# Every agent type the kernel knows how to build. Config validation rejects
+# anything outside this set (catches typos before a run starts).
+KNOWN_AGENT_TYPES: frozenset[str] = frozenset(_API_ADAPTER_CLASSES) | frozenset(
+    _CLI_ADAPTER_CLASSES
+)
 
 
 def _resolve_api_key(agent: AgentConfig) -> str | None:
@@ -58,31 +74,66 @@ def _api_factory(agent: AgentConfig) -> Callable[[], AgentAdapter]:
     return make
 
 
-def _unimplemented_factory(agent_type: str) -> Callable[[], AgentAdapter]:
-    """Make a factory for a configured but not-yet-built agent type."""
+def _cli_factory(
+    agent: AgentConfig, sandbox: SandboxConfig | None
+) -> Callable[[], AgentAdapter]:
+    """Build a zero-arg factory for a configured CLI adapter (cmd + sandbox)."""
+    cls = _CLI_ADAPTER_CLASSES[agent.type]
 
     def make() -> AgentAdapter:
+        if agent.cmd is not None:
+            return cls(cmd=agent.cmd, sandbox=sandbox)
+        return cls(sandbox=sandbox)
+
+    return make
+
+
+def _unimplemented_factory(agent_type: str) -> Callable[[], AgentAdapter]:
+    """Make a factory for a configured but unknown agent type."""
+
+    def make() -> AgentAdapter:
+        known = ", ".join(sorted(KNOWN_AGENT_TYPES))
         raise AgentError(
-            f"adapter '{agent_type}' is configured but not yet implemented; "
-            "use 'anthropic_api', 'openai_api', or 'gemini_api'"
+            f"adapter '{agent_type}' is not a known agent type; known types: {known}"
         )
 
     return make
 
 
-def build_registry(config: MakConfig) -> AdapterRegistry:
-    """Register a config-bound adapter factory for every configured agent type."""
+def build_registry(
+    config: MakConfig, *, sandbox: SandboxConfig | None = None
+) -> AdapterRegistry:
+    """Register a config-bound adapter factory for every configured agent type.
+
+    ``sandbox`` (when set) is threaded into CLI adapters so their subprocesses run
+    inside a Docker container; API adapters ignore it (they make no subprocess).
+    """
     if not config.agents:
         raise ConfigError("no agents configured; cannot build an adapter registry")
     registry = AdapterRegistry()
     for agent in config.agents:
         if agent.type in _API_ADAPTER_CLASSES:
             registry.register_factory(agent.type, _api_factory(agent))
+        elif agent.type in _CLI_ADAPTER_CLASSES:
+            registry.register_factory(agent.type, _cli_factory(agent, sandbox))
         else:
-            registry.register_factory(
-                agent.type, _unimplemented_factory(agent.type)
-            )
+            registry.register_factory(agent.type, _unimplemented_factory(agent.type))
     return registry
+
+
+def validate_config(config: MakConfig) -> None:
+    """Raise ``ConfigError`` if any agent names a type the kernel cannot build.
+
+    Catches a misspelled or unsupported ``type`` at startup instead of at dispatch
+    time (where it would surface as a mid-run ``UnknownAgentTypeError``).
+    """
+    unknown = sorted({a.type for a in config.agents if a.type not in KNOWN_AGENT_TYPES})
+    if unknown:
+        known = ", ".join(sorted(KNOWN_AGENT_TYPES))
+        raise ConfigError(
+            f"unknown agent type(s) in config: {', '.join(unknown)}; "
+            f"known types: {known}"
+        )
 
 
 def default_agent_type(config: MakConfig) -> str:

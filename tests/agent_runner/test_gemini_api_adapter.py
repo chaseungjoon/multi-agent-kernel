@@ -136,10 +136,17 @@ class TestHealthCheck:
         adapter, _ = _adapter_with_result(task_id="t", success=True)
         assert adapter.health_check() is True
 
-    def test_no_client_no_sdk_is_unhealthy(self) -> None:
-        # google-genai is not installed in the test env, so lazy construction
-        # fails and health_check reports False rather than raising.
+    def test_unhealthy_when_client_cannot_be_built(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Forced deterministically so the test does not depend on whether the SDK
+        # (or an API key) happens to be present in the environment.
         adapter = GeminiApiAdapter()
+
+        def boom() -> object:
+            raise AgentError("no client")
+
+        monkeypatch.setattr(adapter, "_get_client", boom)
         assert adapter.health_check() is False
 
     def test_agent_type(self) -> None:

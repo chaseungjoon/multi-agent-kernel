@@ -5,9 +5,16 @@ from __future__ import annotations
 import pytest
 
 from mak.agent_runner.adapters.anthropic_api_adapter import AnthropicApiAdapter
+from mak.agent_runner.adapters.claude_code_adapter import ClaudeCodeAdapter
+from mak.agent_runner.adapters.copilot_adapter import CopilotAdapter
 from mak.agent_runner.adapters.gemini_api_adapter import GeminiApiAdapter
 from mak.agent_runner.adapters.openai_api_adapter import OpenAiApiAdapter
-from mak.bootstrap import build_registry, default_agent_type
+from mak.agent_runner.sandbox import SandboxConfig
+from mak.bootstrap import (
+    build_registry,
+    default_agent_type,
+    validate_config,
+)
 from mak.config import AgentConfig, MakConfig
 from mak.core.exceptions import AgentError, ConfigError
 
@@ -80,17 +87,50 @@ class TestBuildRegistry:
         assert isinstance(adapter, AnthropicApiAdapter)
         assert adapter._api_key == "sk-test"
 
-    def test_unimplemented_cli_type_validates_but_errors_on_use(self) -> None:
+    def test_cli_adapter_built_with_cmd_override(self) -> None:
         registry = build_registry(
-            _config(AgentConfig(type="claude_code", cmd="claude"))
+            _config(AgentConfig(type="claude_code", cmd="my-claude"))
         )
-        assert "claude_code" in registry.list_types()
-        with pytest.raises(AgentError, match="not yet implemented"):
-            registry.get("claude_code")
+        adapter = registry.get("claude_code")
+        assert isinstance(adapter, ClaudeCodeAdapter)
+        assert adapter.command == ["my-claude"]
+
+    def test_cli_adapter_threads_sandbox(self) -> None:
+        sandbox = SandboxConfig(image="busybox")
+        registry = build_registry(
+            _config(AgentConfig(type="copilot")), sandbox=sandbox
+        )
+        adapter = registry.get("copilot")
+        assert isinstance(adapter, CopilotAdapter)
+        # The configured sandbox is threaded in (its argv wrapping is used on spawn).
+        assert adapter._sandbox is sandbox
+
+    def test_unknown_type_errors_on_use(self) -> None:
+        registry = build_registry(_config(AgentConfig(type="bogus_backend")))
+        assert "bogus_backend" in registry.list_types()
+        with pytest.raises(AgentError, match="not a known agent type"):
+            registry.get("bogus_backend")
 
     def test_empty_agents_raises(self) -> None:
         with pytest.raises(ConfigError, match="no agents"):
             build_registry(MakConfig(agents=()))
+
+
+class TestValidateConfig:
+    def test_known_types_pass(self) -> None:
+        validate_config(
+            _config(
+                AgentConfig(type="anthropic_api"),
+                AgentConfig(type="claude_code"),
+                AgentConfig(type="gemini_api"),
+            )
+        )  # does not raise
+
+    def test_unknown_type_raises(self) -> None:
+        with pytest.raises(ConfigError, match="unknown agent type"):
+            validate_config(
+                _config(AgentConfig(type="anthropic_api"), AgentConfig(type="typo"))
+            )
 
 
 class TestDefaultAgentType:
