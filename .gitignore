@@ -1,15 +1,17 @@
+# Dotfile and cache
 __pycache__
+.mypy_cache
+.pytest_cache
+.ruff_cache
 .venv
 .DS_Store
 .idea
-.claude
+.env
 
 # Personal/local notes
-.env
 PLANS.md
 AGENTS.md
 TASKS.md
-RISK_ASSESSMENT.md
 
 # Build artifacts
 *.egg-info/
@@ -18,7 +20,3 @@ dist/
 
 # Runtime state
 .mak/
-graphify-out
-.mypy_cache
-.pytest_cache
-.ruff_cache
