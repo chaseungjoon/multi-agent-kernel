@@ -973,11 +973,11 @@ agent at a time, and reconstructs files with comments preserved. Delivered:
   `--sandbox`), `bootstrap.validate_config` (rejects unknown agent types at startup),
   and friendly error messages / exit codes throughout the CLI.
 
-### Wave 5 — Concurrency (the thesis gate) — the active milestone
+### Wave 5 — Concurrency (the thesis gate)
 
-**This is the heart of the project and it is not yet built.** It is where MAK's
-reason to exist — a concurrent shared-memory kernel — is finally made real and
-proven. Three pieces:
+**This is the active milestone — the heart of the project, and it is not yet
+built.** It is where MAK's reason to exist — a concurrent shared-memory kernel — is
+finally made real and proven. Three pieces:
 
 - **Concurrent dispatch** — replace the synchronous tick→assign loop with a bounded
   thread pool (`max_concurrent_agents`): `tick()` dispatches all lock-satisfiable
