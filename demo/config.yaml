@@ -1,0 +1,32 @@
+# MAK configuration scoped to the demo project.
+# Run from the repository root:
+#   python -m mak --task "..." --config demo/config.yaml
+
+session:
+  work_dir: "demo/project"      # MAK ingests + reconstructs files here
+  mak_dir: "demo/.mak"          # runtime state (node store, locks, task graph, log)
+  max_concurrent_agents: 4
+  lock_timeout_s: 300.0
+  deadlock_check_interval_s: 5.0
+
+planner:
+  model: "claude-sonnet-4-6"
+  max_retries: 3
+
+agents:
+  - type: "anthropic_api"
+    model: "claude-sonnet-4-6"
+    api_key_env: "ANTHROPIC_API_KEY"
+
+git:
+  auto_commit: false            # a demo run leaves no commits in your repo
+  auto_push: false
+
+node_store:
+  include_patterns: ["**/*.py"]
+  exclude_patterns:
+    # MAK develops the library only — never the spec or test scaffolding.
+    - "**/tests/**"
+    - "**/conftest.py"
+    - "**/__pycache__/**"
+    - "**/.venv/**"
