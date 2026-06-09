@@ -11,10 +11,8 @@ architecture, not just the file layout. Read Part I for the mental model, Part I
 when you need subsystem detail, and Parts III–V for the day-to-day workflow,
 roadmap, and design rationale.
 
-> **A note on honesty.** Where the implementation does not yet match the ambition,
-> this guide says so plainly (see [Current status](#current-status) and
-> [Open problems](#open-problems)). Please keep that standard: document the gap,
-> don't paper over it.
+> [Current status](#current-status)
+> [Open problems](#open-problems)
 
 ---
 

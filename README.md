@@ -19,6 +19,38 @@ dependency graph is still explicit. Each agent receives only the nodes it holds 
 locks on, edits them in isolation, and returns the modified fragments; the kernel
 reassembles the file. Git is used only as an audit log.
 
+## Run it
+
+### 1. Clone from source (Python ≥ 3.11):
+
+```bash
+git clone https://github.com/chaseungjoon/multi-agent-kernel
+cd multi-agent-kernel
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+### 2. Set api keys for the default agents `mak/.env`, then point MAK at a project:
+
+```bash
+touch mak/.env
+echo 'ANTHROPIC_API_KEY=...' >> mak/.env
+echo 'OPENAI_API_KEY=...' >> mak/.env
+echo 'GEMINI_API_KEY=...' >> mak/.env
+
+python3 -m mak --task "your task here" --work-dir path/to/project
+```
+
+MAK shows the plan for approval before editing (`--no-review` skips it); agents and
+models are configured in `mak/config.yaml`. For a ready-made target, try the bundled
+[demo](demo/):
+
+```bash
+python3 -m mak --task "Implement every function in the dataforge package per its docstring." \
+  --config demo/config.yaml
+python3 -m pytest demo/project   # verify the result
+```
+
 ## Status
 
 The **kernel is functionally complete and well-tested.** The remaining work is
