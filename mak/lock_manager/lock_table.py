@@ -143,6 +143,36 @@ class LockTable:
                 self._persist()
             return renewed
 
+    def holds(self, node_id: NodeId, mode: LockMode, holder: str) -> bool:
+        """Whether ``holder`` currently holds a ``mode`` lease on ``node_id``.
+
+        Stale leases are expired first, so a lease that timed out mid-call reads
+        as *not held* — this is the commit-time re-validation primitive (RA-3):
+        a task must confirm it still owns its write locks before committing, lest
+        it write through a lock that was reclaimed underneath it.
+        """
+        with self._lock:
+            self._expire_stale()
+            return any(
+                entry.holder == holder and entry.mode == mode
+                for entry in self._entries.get(node_id, [])
+            )
+
+    def holds_all(
+        self, requests: list[tuple[NodeId, LockMode]], holder: str
+    ) -> bool:
+        """Whether ``holder`` still holds every requested lease (expiry-aware)."""
+        with self._lock:
+            self._expire_stale()
+            for node_id, mode in requests:
+                entries = self._entries.get(node_id, [])
+                if not any(
+                    entry.holder == holder and entry.mode == mode
+                    for entry in entries
+                ):
+                    return False
+            return True
+
     def get_entries(self, node_id: NodeId) -> list[LockEntry]:
         """Return all lock entries for a node."""
         with self._lock:
