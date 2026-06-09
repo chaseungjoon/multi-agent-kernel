@@ -71,10 +71,7 @@ pass `--keep` to inspect them.
 
 ## Results
 
-> The recorded run below used **three Claude `claude-sonnet-4-6` agents** (the same
-> three on both sides). It was meant to run Claude + GPT-4o + Gemini, but the OpenAI
-> and Gemini accounts on hand had no active billing/credits — so all three agents are
-> Claude here. The harness takes any provider mix via `--models`; supply your own keys
+> All three agents are Claude. The harness takes any provider mix via `--models`; supply your own keys
 > and re-run to compare across models.
 
 <!-- RESULTS:START -->
