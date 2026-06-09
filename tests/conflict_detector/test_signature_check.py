@@ -144,3 +144,15 @@ class TestCheckSignatureCompatibility:
         calling = "def caller(svc):\n    return svc.run(1)\n"
         reasons = check_signature_compatibility(defining, calling)
         assert reasons and "run" in reasons[0]
+
+    def test_method_call_does_not_match_top_level_function(self) -> None:
+        # A bare ``def upper(s)`` must not be matched against the *method* call
+        # ``s.upper()`` (the str method) just because the names coincide.
+        source = "def upper(s):\n    return s.upper()\n"
+        assert check_signature_compatibility(source, source) == []
+
+    def test_bare_call_does_not_match_method_of_same_name(self) -> None:
+        # ``cleanup()`` (a bare call) must not resolve to the method ``X.cleanup``.
+        defining = "class X:\n    def cleanup(self, path): pass\n"
+        calling = "def caller():\n    return cleanup()\n"
+        assert check_signature_compatibility(defining, calling) == []

@@ -28,6 +28,7 @@ class Signature:
     keyword_only_required: tuple[str, ...]
     keyword_only_optional: tuple[str, ...]
     has_kwarg: bool  # def f(**kwargs)
+    is_method: bool  # defined inside a class (called as obj.name(...))
 
     @property
     def accepted_keywords(self) -> frozenset[str]:
@@ -46,6 +47,7 @@ class CallSite:
     has_star_args: bool  # foo(*xs)
     keywords: tuple[str, ...]  # explicit keyword names (excludes **kwargs)
     has_double_star: bool  # foo(**kw)
+    is_attribute: bool  # obj.foo(...) rather than a bare foo(...)
 
 
 def _build_signature(
@@ -75,6 +77,7 @@ def _build_signature(
         keyword_only_required=tuple(kw_required),
         keyword_only_optional=tuple(kw_optional),
         has_kwarg=args.kwarg is not None,
+        is_method=is_method,
     )
 
 
@@ -102,12 +105,13 @@ def extract_signatures(source: str) -> dict[str, Signature]:
     return signatures
 
 
-def _call_name(node: ast.Call) -> str | None:
+def _call_target(node: ast.Call) -> tuple[str, bool] | None:
+    """Return ``(name, is_attribute)`` for a call, or None if it is not a name/attr."""
     func = node.func
     if isinstance(func, ast.Name):
-        return func.id
+        return func.id, False
     if isinstance(func, ast.Attribute):
-        return func.attr
+        return func.attr, True
     return None
 
 
@@ -118,9 +122,10 @@ def extract_calls(source: str) -> list[CallSite]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        name = _call_name(node)
-        if name is None:
+        target = _call_target(node)
+        if target is None:
             continue
+        name, is_attribute = target
         positional = [a for a in node.args if not isinstance(a, ast.Starred)]
         has_star = any(isinstance(a, ast.Starred) for a in node.args)
         keywords = tuple(kw.arg for kw in node.keywords if kw.arg is not None)
@@ -132,6 +137,7 @@ def extract_calls(source: str) -> list[CallSite]:
                 has_star_args=has_star,
                 keywords=keywords,
                 has_double_star=has_double_star,
+                is_attribute=is_attribute,
             )
         )
     return calls
@@ -191,6 +197,12 @@ def check_signature_compatibility(
     for call in extract_calls(calling_source):
         signature = signatures.get(call.func_name)
         if signature is None:
+            continue
+        # A bare ``foo(...)`` call resolves to a top-level function; an
+        # ``obj.foo(...)`` call resolves to a method. Never cross the two — e.g.
+        # the string method call ``s.upper()`` must not be matched against a
+        # module-level ``def upper(s)``.
+        if call.is_attribute != signature.is_method:
             continue
         reason = check_call(signature, call)
         if reason is not None:
