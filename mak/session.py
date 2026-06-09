@@ -7,6 +7,20 @@ fragments with the conflict detector, committing on success, reconstructing the
 affected files, and recording an audit commit; **teardown** runs the test suite and
 pushes if green.
 
+**Concurrency (Wave 5).** ``run`` dispatches every lock-satisfiable ready task onto
+a bounded thread pool (``max_concurrent_agents``) instead of running one agent to
+completion before the next. Results are collected as they arrive and **batched**:
+all results that complete around the same time are validated together so the
+conflict detector finally sees *cross-agent* edits (a signature change in one task
+versus a call in another, a symbol two tasks both introduce). Within a batch,
+commits are applied in a deterministic order — topological index, then task id —
+and each task is validated against the fragments already committed earlier in the
+same batch, so when two tasks genuinely conflict the earlier one wins and the later
+one is rejected and retried. Two safety nets run alongside the loop: a **heartbeat**
+renews every in-flight task's leases so a slow-but-alive agent is never expired, and
+a **deadlock watchdog** scans the wait graph (atomic lock pre-allocation makes a
+cycle impossible, so this is defense in depth).
+
 Two robustness features sit on top of the basic loop:
 
 - **Crash recovery** (``recover``): on startup a stale ``.mak/lock_table.json`` is
@@ -26,7 +40,11 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import queue
+import threading
+import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -46,6 +64,7 @@ from mak.core.types import (
     TaskResult,
 )
 from mak.git_integration.git import GitHelper
+from mak.lock_manager.deadlock_detector import DeadlockDetector
 from mak.node_store.reconstruction import assemble_fragments, reconstruct_file
 from mak.node_store.store import NodeStore
 from mak.planner.planner import Planner
@@ -84,6 +103,20 @@ class _LockTableLike(Protocol):
 
     def expire_stale(self) -> list[LockEntry]:
         """Expire and return timed-out leases."""
+        ...
+
+    def holds_all(
+        self, requests: list[tuple[NodeId, LockMode]], holder: str
+    ) -> bool:
+        """Whether ``holder`` still holds every requested lease (expiry-aware)."""
+        ...
+
+    def renew_all(self, holder: str) -> int:
+        """Heartbeat every lease held by ``holder``; return the count renewed."""
+        ...
+
+    def all_entries(self) -> dict[NodeId, list[LockEntry]]:
+        """Return a copy of the full lock table."""
         ...
 
 
@@ -143,30 +176,56 @@ class SessionResult:
         )
 
 
-class _RecordingRunner:
-    """Wraps an agent runner: enriches each bundle, then captures its result.
+@dataclass(frozen=True, slots=True)
+class _Completion:
+    """One finished agent call: the bundle that was dispatched and its result."""
 
-    The scheduler builds a skeletal ``TaskBundle`` (target node ids only).
-    This wrapper — which the session owns and which has the node store — enriches
-    the bundle with source context before the agent sees it, and records the
-    (enriched bundle, result) pair for the session's collection phase.
+    bundle: TaskBundle
+    result: TaskResult
+
+
+class _ConcurrentRunner:
+    """Enriches a bundle, runs the agent on a worker thread, queues the result.
+
+    The scheduler calls ``assign`` synchronously during ``tick``; this wrapper
+    makes it non-blocking by submitting the real agent call to a thread pool, so a
+    single ``tick`` fans out every lock-satisfiable ready task concurrently. The
+    bundle is enriched with source context on the *calling* thread (the node store
+    read happens before the agent runs, and the write targets are write-locked, so
+    the snapshot is stable); the agent then runs on a pool thread, and the finished
+    ``(bundle, result)`` pair is pushed onto ``completions`` for the session to
+    collect. An agent that raises is converted into a failed ``TaskResult`` so a
+    crash never strands the collector waiting on a result that never comes.
     """
 
     def __init__(
         self,
         inner: _Assigner,
-        sink: list[tuple[TaskBundle, TaskResult]],
+        executor: ThreadPoolExecutor,
+        completions: queue.Queue[_Completion],
         enrich: Callable[[TaskBundle], TaskBundle],
     ) -> None:
         self._inner = inner
-        self._sink = sink
+        self._executor = executor
+        self._completions = completions
         self._enrich = enrich
 
     def assign(self, adapter: object, task: object) -> object:
         bundle = self._enrich(cast(TaskBundle, task))
-        result = cast(TaskResult, self._inner.assign(adapter, bundle))
-        self._sink.append((bundle, result))
-        return result
+        self._executor.submit(self._run, adapter, bundle)
+        return None
+
+    def _run(self, adapter: object, bundle: TaskBundle) -> None:
+        try:
+            result = cast(TaskResult, self._inner.assign(adapter, bundle))
+        except Exception as exc:  # surface any agent failure as a result, not a hang
+            result = TaskResult(
+                task_id=bundle.task_id,
+                success=False,
+                modified_nodes=[],
+                error=str(exc),
+            )
+        self._completions.put(_Completion(bundle, result))
 
 
 class Session:
@@ -182,12 +241,15 @@ class Session:
         registry: AdapterRegistry,
         agent_runner: _Assigner,
         conflict_detector: ConflictDetector | None = None,
+        deadlock_detector: DeadlockDetector | None = None,
         planner: Planner | None = None,
         git_helper: GitHelper | None = None,
         logger: SessionLogger | None = None,
         test_runner: TestRunner | None = None,
         max_attempts: int = 3,
         default_agent_type: str | None = None,
+        heartbeat_interval_s: float | None = None,
+        collect_timeout_s: float = 300.0,
     ) -> None:
         self.session_id = session_id
         self._config = config
@@ -197,16 +259,28 @@ class Session:
         self._registry = registry
         self._agent_runner = agent_runner
         self._conflict_detector = conflict_detector or ConflictDetector()
+        self._deadlock_detector = deadlock_detector or DeadlockDetector()
         self._planner = planner
         self._git = git_helper
         self._logger = logger
         self._test_runner = test_runner
         self._max_attempts = max_attempts
 
+        self._max_concurrent = max(1, config.session.max_concurrent_agents)
+        self._collect_timeout = collect_timeout_s
+        self._deadlock_interval = config.session.deadlock_check_interval_s
+        self._heartbeat_interval = (
+            heartbeat_interval_s
+            if heartbeat_interval_s is not None
+            else max(1.0, config.session.lock_timeout_s / 3.0)
+        )
+
         self.state = SessionState.CREATED
         self._scheduler: Scheduler | None = None
         self._progress: dict[str, SubTaskProgress] = {}
-        self._pending_results: list[tuple[TaskBundle, TaskResult]] = []
+        self._completions: queue.Queue[_Completion] = queue.Queue()
+        self._executor: ThreadPoolExecutor | None = None
+        self._concurrent_runner: _ConcurrentRunner | None = None
         self._partial_queue: list[str] = []
         self._completed: list[str] = []
         self._failed: list[str] = []
@@ -224,6 +298,28 @@ class Session:
     @property
     def _mak_dir(self) -> Path:
         return Path(self._config.session.mak_dir)
+
+    def _runner(self) -> _ConcurrentRunner:
+        """Lazily build the thread-pool-backed runner (and its executor)."""
+        if self._concurrent_runner is None:
+            self._executor = ThreadPoolExecutor(
+                max_workers=self._max_concurrent,
+                thread_name_prefix=f"mak-{self.session_id}",
+            )
+            self._concurrent_runner = _ConcurrentRunner(
+                self._agent_runner,
+                self._executor,
+                self._completions,
+                self._enrich_bundle,
+            )
+        return self._concurrent_runner
+
+    def close(self) -> None:
+        """Shut down the worker pool. Safe to call repeatedly."""
+        if self._executor is not None:
+            self._executor.shutdown(wait=True)
+            self._executor = None
+            self._concurrent_runner = None
 
     # -- phase 1: initialize ----------------------------------------------
 
@@ -279,15 +375,13 @@ class Session:
             raise SessionError(f"cannot install a plan from state {self.state}")
         subtasks = self._apply_default_agent(subtasks)
         dag = DAG(subtasks)
-        runner = _RecordingRunner(
-            self._agent_runner, self._pending_results, self._enrich_bundle
-        )
         self._scheduler = Scheduler(
             dag,
             self._lock_table,
-            runner,
+            self._runner(),
             self._registry,
             persist_path=self._mak_dir / "task_graph.json",
+            max_concurrent=self._max_concurrent,
         )
         self._progress = {
             t.task_id: SubTaskProgress(t.task_id, list(t.target_nodes))
@@ -311,26 +405,56 @@ class Session:
     # -- phase 3: run ------------------------------------------------------
 
     def run(self, max_iterations: int = 1000) -> SessionResult:
-        """Drive the scheduler loop until the DAG is done or progress stalls."""
+        """Drive the concurrent scheduler loop until done or progress stalls."""
         if self.state is not SessionState.PLANNED:
             raise SessionError(f"cannot run from state {self.state}")
         scheduler = self._require_scheduler()
         self.state = SessionState.RUNNING
 
-        for _iteration in range(max_iterations):
-            progressed = bool(scheduler.tick())
-            while self._pending_results:
-                bundle, result = self._pending_results.pop(0)
-                self._process_result(bundle, result)
-                progressed = True
-            if self._partial_queue:
-                self._dispatch_partials()
-                progressed = True
-            if scheduler.is_done() and not self._partial_queue:
-                break
-            if not progressed:
-                break  # stalled: blocked on locks or an unrecoverable failure
+        stop = threading.Event()
+        heartbeat = threading.Thread(
+            target=self._run_heartbeat,
+            args=(stop,),
+            name=f"mak-heartbeat-{self.session_id}",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            self._run_loop(scheduler, max_iterations)
+        finally:
+            stop.set()
+            heartbeat.join(timeout=self._heartbeat_interval + 1.0)
+            self.close()
 
+        return self._finalize(scheduler)
+
+    def _run_loop(self, scheduler: Scheduler, max_iterations: int) -> None:
+        """Dispatch concurrently, collect batches, and process them to completion."""
+        last_deadlock_scan = time.monotonic()
+        for _iteration in range(max_iterations):
+            scheduler.tick()
+            self._submit_partials()
+
+            now = time.monotonic()
+            if now - last_deadlock_scan >= self._deadlock_interval:
+                self._check_deadlocks()
+                last_deadlock_scan = now
+
+            if scheduler.is_done():
+                break
+            if not scheduler.dispatched:
+                # Nothing is in flight and the DAG is not done — the remaining
+                # tasks are blocked on locks that never freed, or stranded.
+                break
+
+            batch = self._collect_batch()
+            if not batch:
+                # Collection timed out with work in flight: a worker is wedged.
+                break
+            self._process_batch(batch)
+
+    def _finalize(self, scheduler: Scheduler) -> SessionResult:
+        """Compute the terminal state and result after the loop exits."""
         # A task that is neither completed nor explicitly failed was stranded
         # (unsatisfiable deps or locks that never freed). It must NOT be reported
         # as success — the run is COMPLETED only when the DAG is genuinely done.
@@ -351,41 +475,115 @@ class Session:
             blocked=tuple(blocked),
         )
 
+    # -- collection & batch processing ------------------------------------
+
+    def _collect_batch(self) -> list[_Completion]:
+        """Block for the first completion, then drain every result already done.
+
+        Batching is what lets the conflict detector see *cross-agent* edits: all
+        results that finished around the same time are validated together.
+        """
+        try:
+            first = self._completions.get(timeout=self._collect_timeout)
+        except queue.Empty:
+            return []
+        batch = [first]
+        while True:
+            try:
+                batch.append(self._completions.get_nowait())
+            except queue.Empty:
+                break
+        return batch
+
+    def _process_batch(self, batch: list[_Completion]) -> None:
+        """Validate and commit a batch of results in a deterministic order.
+
+        Tasks are committed in topological order (then by id). Each task is
+        validated against the fragments already committed earlier in *this* batch
+        (``peers``), so a genuine cross-agent conflict is attributed to the later
+        task, which is rejected and retried while the earlier one stands.
+        """
+        by_id = {c.bundle.task_id: c for c in batch}
+        peers: dict[str, str] = {}
+        for task_id in self._batch_order(list(by_id)):
+            completion = by_id[task_id]
+            committed = self._process_one(
+                completion.bundle, completion.result, peers
+            )
+            peers.update(committed)
+
+    def _batch_order(self, task_ids: list[str]) -> list[str]:
+        """Order a batch's task ids by topological index, then id (deterministic)."""
+        order = self._require_scheduler().dag.topological_order()
+        index = {tid: i for i, tid in enumerate(order)}
+        return sorted(set(task_ids), key=lambda t: (index.get(t, len(index)), t))
+
     def _process_result(self, bundle: TaskBundle, result: TaskResult) -> None:
-        """Validate, commit, and account one agent result (complete/partial/fail)."""
+        """Validate, commit, and account a single result (no batch peers)."""
+        self._process_one(bundle, result, {})
+
+    def _process_one(
+        self, bundle: TaskBundle, result: TaskResult, peers: dict[str, str]
+    ) -> dict[str, str]:
+        """Validate/commit one result; return the sources it committed (for peers)."""
         task_id = bundle.task_id
         progress = self._progress[task_id]
         progress.attempts += 1
         in_scope = set(progress.target_nodes)
         staged = [n for n in result.modified_nodes if n in in_scope]
 
-        committed = self._validate_and_commit(task_id, staged) if result.success else []
+        committed = (
+            self._validate_and_commit(task_id, staged, peers)
+            if result.success
+            else []
+        )
+        committed_sources: dict[str, str] = {}
         for node_id in committed:
             progress.completed_nodes.add(node_id)
             self._release_lock(task_id, node_id)
+            source = self._node_source(node_id)
+            if source is not None:
+                committed_sources[str(node_id)] = source
 
         if progress.is_complete:
             self._finish_task(task_id)
         else:
             self._handle_incomplete(progress)
+        return committed_sources
 
-    def _validate_and_commit(self, task_id: str, staged: list[NodeId]) -> list[NodeId]:
+    def _validate_and_commit(
+        self, task_id: str, staged: list[NodeId], peers: dict[str, str] | None = None
+    ) -> list[NodeId]:
         """Validate, then transactionally commit staged fragments.
 
-        Order matters: conflict detection → *prospective* reconstruction validated
-        against ``ast.parse`` → commit → write files. The store is only advanced
-        once the would-be file is known to be valid Python, and a write failure
-        after commit reverts the commit so disk and store never diverge.
+        Order matters: conflict detection (against this batch's already-committed
+        peers) → *prospective* reconstruction validated against ``ast.parse`` →
+        commit-time lock re-validation → commit → write files. The store is only
+        advanced once the would-be file is valid Python and we still own every
+        write lock, and a write failure after commit reverts the commit so disk
+        and store never diverge.
         """
         if not staged:
             return []
-        report = self._conflict_detector.detect(self._build_edit_round(staged))
+        report = self._conflict_detector.detect(
+            self._build_edit_round(staged, peers or {})
+        )
         if not report.ok:
             self._reject(task_id, staged, report.reasons)
             return []
         if not self._preview_is_valid(staged):
             self._reject(
                 task_id, staged, ["reconstruction would produce invalid Python"]
+            )
+            return []
+        # RA-3: a lease may have expired during a long agent call (and the node
+        # reclaimed by another holder). Confirm we still own every write lock
+        # before advancing the store, so we never commit through a stolen lock.
+        if not self._lock_table.holds_all(
+            [(node_id, LockMode.WRITE) for node_id in staged], task_id
+        ):
+            self._reject(
+                task_id, staged, ["write lock lost before commit (lease expired)"]
             )
             return []
 
@@ -455,16 +653,38 @@ class Session:
                 fragments.append(staged_fragment)
         return assemble_fragments(fragments)
 
-    def _build_edit_round(self, staged: list[NodeId]) -> EditRound:
-        """Collect staged fragment sources into an EditRound for the detector."""
-        sources: dict[str, str] = {}
+    def _build_edit_round(
+        self, staged: list[NodeId], peers: dict[str, str] | None = None
+    ) -> EditRound:
+        """Assemble an EditRound from staged fragments plus this batch's peers.
+
+        ``definitions`` spans every staged source in the batch (this task's plus
+        the peers already committed), so a signature change anywhere is the
+        authority for this task's call sites — the cross-agent signature check.
+        ``symbol_edits`` / ``header_edits`` are scoped to the *files this task
+        touches*: name collisions and import conflicts are file-local, so feeding
+        unrelated files would only invent false positives.
+        """
+        peers = peers or {}
+        own: dict[str, str] = {}
         for node_id in staged:
             fragment = self._node_store.get_staged(node_id)
             if fragment is not None:
-                sources[str(node_id)] = fragment.source
+                own[str(node_id)] = fragment.source
+        own_files = {_file_of(k) for k in own}
+        definitions = {**peers, **own}
+        same_file = {
+            k: v for k, v in definitions.items() if _file_of(k) in own_files
+        }
+        headers = {k: v for k, v in same_file.items() if _is_header_id(k)}
         # Each staged source is both a definition authority and a caller, so the
-        # detector validates the task's new calls against its own new signatures.
-        return EditRound(definitions=dict(sources), callers=dict(sources))
+        # detector validates this task's new calls against every new signature.
+        return EditRound(
+            definitions=definitions,
+            callers=own,
+            header_edits=headers,
+            symbol_edits=same_file,
+        )
 
     def _reconstruct_affected(self, nodes: list[NodeId]) -> list[str]:
         """Rewrite each file touched by ``nodes`` from its committed fragments."""
@@ -507,22 +727,22 @@ class Session:
             # a narrowed re-dispatch covering only what is left.
             self._partial_queue.append(progress.task_id)
 
-    def _dispatch_partials(self) -> None:
-        """Re-dispatch the narrowed remaining grants of each partial task."""
-        queue, self._partial_queue = self._partial_queue, []
-        for task_id in queue:
+    def _submit_partials(self) -> None:
+        """Re-dispatch the narrowed remaining grants of each partial task (async)."""
+        if not self._partial_queue:
+            return
+        queued, self._partial_queue = self._partial_queue, []
+        runner = self._runner()
+        for task_id in queued:
             progress = self._progress[task_id]
             task = self._dag_task(task_id)
             adapter = self._registry.get(task.agent_type)
-            bundle = self._enrich_bundle(
-                TaskBundle(
-                    task_id=task_id,
-                    description=task.description,
-                    target_nodes=progress.remaining,
-                )
+            bundle = TaskBundle(
+                task_id=task_id,
+                description=task.description,
+                target_nodes=progress.remaining,
             )
-            result = cast(TaskResult, self._agent_runner.assign(adapter, bundle))
-            self._pending_results.append((bundle, result))
+            runner.assign(adapter, bundle)
 
     def _enrich_bundle(self, bundle: TaskBundle) -> TaskBundle:
         """Attach current source for the task's write targets and read context.
@@ -557,6 +777,59 @@ class Session:
     def _dag_task(self, task_id: str) -> SubTask:
         return self._require_scheduler().dag.get_task(task_id)
 
+    # -- heartbeat & deadlock watchdog ------------------------------------
+
+    def _run_heartbeat(self, stop: threading.Event) -> None:
+        """Renew in-flight tasks' leases until ``stop`` is set (RA-3).
+
+        A long agent call must not let its lease lapse and get its lock stolen.
+        While the run loop is active, every in-flight holder's leases are renewed
+        each interval so a slow-but-alive agent keeps its grants.
+        """
+        while not stop.wait(self._heartbeat_interval):
+            scheduler = self._scheduler
+            if scheduler is None:
+                continue
+            for task_id in scheduler.dispatched:
+                self._lock_table.renew_all(task_id)
+
+    def _check_deadlocks(self) -> None:
+        """Scan the wait graph for cycles and resolve any via wound-wait.
+
+        With atomic lock pre-allocation a waiting task holds *no* locks, so the
+        wait graph can never contain a cycle — this watchdog is defense in depth.
+        Should a cycle ever arise (e.g. a future intent-write phase), the youngest
+        task in it is aborted and re-queued.
+        """
+        scheduler = self._scheduler
+        if scheduler is None:
+            return
+        waiting = [
+            (task.task_id, node_id, LockMode.WRITE)
+            for task in scheduler.ready_queue
+            for node_id in task.target_nodes
+        ]
+        if not waiting:
+            return
+        held: dict[NodeId, list[tuple[str, LockMode]]] = {}
+        start_times: dict[str, float] = {}
+        for node_id, entries in self._lock_table.all_entries().items():
+            for entry in entries:
+                held.setdefault(node_id, []).append((entry.holder, entry.mode))
+                prior = start_times.get(entry.holder)
+                start_times[entry.holder] = (
+                    entry.acquired_at
+                    if prior is None
+                    else min(prior, entry.acquired_at)
+                )
+        graph = self._deadlock_detector.build_wait_graph(held, waiting)
+        for cycle in self._deadlock_detector.find_cycles(graph):
+            victim = self._deadlock_detector.resolve(cycle, start_times)
+            scheduler.on_task_failed(victim, requeue=True)
+            self._log(
+                EventType.CONFLICT_DETECTED, deadlock=list(cycle), aborted=victim
+            )
+
     # -- phase 4: teardown -------------------------------------------------
 
     def teardown(self) -> bool:
@@ -588,14 +861,12 @@ class Session:
         expired = self._lock_table.expire_stale()
         graph_path = self._mak_dir / "task_graph.json"
         if graph_path.exists():
-            runner = _RecordingRunner(
-                self._agent_runner, self._pending_results, self._enrich_bundle
-            )
             scheduler = Scheduler.from_persisted(
                 graph_path,
                 self._lock_table,
-                runner,
+                self._runner(),
                 self._registry,
+                max_concurrent=self._max_concurrent,
             )
             self._scheduler = scheduler
             self._progress = {
@@ -627,3 +898,14 @@ def _is_excluded(rel: str, exclude_patterns: tuple[str, ...]) -> bool:
         or (pattern.startswith("**/") and fnmatch.fnmatch(rel, pattern[3:]))
         for pattern in exclude_patterns
     )
+
+
+def _file_of(node_id: str) -> str:
+    """Return the file path component of a ``file::kind::name`` node id."""
+    return node_id.split("::", 1)[0]
+
+
+def _is_header_id(node_id: str) -> bool:
+    """Whether a node id refers to a ``module_header`` fragment."""
+    parts = node_id.split("::")
+    return len(parts) >= 2 and parts[1] == "module_header"

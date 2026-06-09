@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,7 @@ from mak.core.types import (
 )
 from mak.lock_manager.lock_table import LockTable
 from mak.node_store.store import NodeStore
-from mak.session import Session, SessionState, SubTaskProgress
+from mak.session import Session, SessionState, SubTaskProgress, _Completion
 
 # --- fakes -------------------------------------------------------------------
 
@@ -372,10 +373,11 @@ class TestRecovery:
                 _task("b", ["m.py::function::b"], deps=["a"]),
             ]
         )
-        # Drive only the first task to completion, then stop (crash).
-        s1._scheduler.tick()  # dispatch a
-        bundle, result = s1._pending_results.pop(0)
-        s1._process_result(bundle, result)
+        # Drive only the first task to completion, then stop (crash). Only 'a' is
+        # ready ('b' depends on it), so the batch is exactly {a}.
+        s1._scheduler.tick()  # dispatch a onto the pool
+        s1._process_batch(s1._collect_batch())
+        s1.close()
         assert s1._completed == ["a"]
 
         # Second session recovers from the persisted task graph.
@@ -582,3 +584,160 @@ class TestDefaultAgentRouting:
         )
         session.install_plan([bare])
         assert session._dag_task("a").agent_type == ""
+
+
+# --- Wave 5: concurrency -----------------------------------------------------
+
+
+class _SlowStagingRunner:
+    """A staging agent that blocks for ``delay`` seconds before returning."""
+
+    def __init__(self, node_store: NodeStore, delay: float) -> None:
+        self._store = node_store
+        self._delay = delay
+
+    def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+        time.sleep(self._delay)
+        done: list[NodeId] = []
+        for node_id in task.target_nodes:
+            self._store.put_node(
+                node_id, NodeFragment(node_id, "function", "x = 1\n", 1)
+            )
+            done.append(node_id)
+        return TaskResult(
+            task_id=task.task_id, success=True, modified_nodes=list(done)
+        )
+
+
+class TestConcurrentDispatch:
+    def test_two_independent_tasks_both_complete(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        runner = StagingRunner(store)
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan(
+            [
+                _task("a", ["m.py::function::a"]),
+                _task("b", ["m.py::function::b"]),
+            ]
+        )
+        result = session.run()
+        assert result.ok
+        assert set(result.completed) == {"a", "b"}
+        # Both edits landed on disk.
+        rebuilt = (tmp_path / "m.py").read_text()
+        compile(rebuilt, "m.py", "exec")
+
+
+class TestCrossAgentConflictDetection:
+    """The headline Wave 5 behavior: one batch, one multi-task EditRound."""
+
+    def test_batch_detects_cross_agent_name_collision(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        lock_table = LockTable()
+        session = _session(
+            tmp_path,
+            runner=StagingRunner(store),
+            node_store=store,
+            lock_table=lock_table,
+            max_attempts=1,
+        )
+        session.initialize()
+        na = NodeId("m.py::function::a")
+        nb = NodeId("m.py::function::b")
+        session.install_plan([_task("a", [str(na)]), _task("b", [str(nb)])])
+
+        # Both agents, completing in the *same batch*, introduce a function named
+        # 'helper' into m.py — a genuine cross-agent collision.
+        lock_table.try_acquire_all([(na, LockMode.WRITE)], "a")
+        lock_table.try_acquire_all([(nb, LockMode.WRITE)], "b")
+        helper1 = "def helper():\n    return 1\n"
+        helper2 = "def helper():\n    return 2\n"
+        store.put_node(na, NodeFragment(na, "function", helper1, 1))
+        store.put_node(nb, NodeFragment(nb, "function", helper2, 1))
+        batch = [
+            _Completion(
+                TaskBundle(task_id="a", description="", target_nodes=[na]),
+                TaskResult(task_id="a", success=True, modified_nodes=[na]),
+            ),
+            _Completion(
+                TaskBundle(task_id="b", description="", target_nodes=[nb]),
+                TaskResult(task_id="b", success=True, modified_nodes=[nb]),
+            ),
+        ]
+        session._process_batch(batch)
+
+        # Deterministic order: 'a' commits first; 'b' collides with the now-committed
+        # 'helper' and is rejected — the detector saw a cross-agent edit at last.
+        assert session._completed == ["a"]
+        assert session._failed == ["b"]
+        assert "helper" in store.get_node(na).source
+        # 'b' was rolled back to the ingested definition.
+        assert store.get_node(nb).source.lstrip().startswith("def b")
+
+
+class TestCommitTimeLockRevalidation:
+    """RA-3: never commit through a write lock that was reclaimed mid-call."""
+
+    def test_commit_aborts_when_write_lock_not_held(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        session = _session(
+            tmp_path, runner=StagingRunner(store), node_store=store, max_attempts=1
+        )
+        session.initialize()
+        nid = NodeId("m.py::function::a")
+        session.install_plan([_task("a", [str(nid)])])
+        # Stage a valid edit but hold no write lock (a lapsed lease).
+        edited = "def a():\n    return 9\n"
+        store.put_node(nid, NodeFragment(nid, "function", edited, 1))
+        committed = session._validate_and_commit("a", [nid])
+        assert committed == []
+        assert store.get_node(nid).version == 1  # store never advanced
+
+    def test_heartbeat_keeps_slow_agent_lease_alive(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        lock_table = LockTable(default_timeout=0.4)  # lease lapses after 0.4s
+        session = Session(
+            session_id="s1",
+            config=_config(tmp_path),
+            node_store=store,
+            lock_table=lock_table,
+            registry=FakeRegistry(),  # type: ignore[arg-type]
+            agent_runner=_SlowStagingRunner(store, delay=0.8),  # type: ignore[arg-type]  # outlives the lease
+            heartbeat_interval_s=0.1,
+            max_attempts=1,
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        result = session.run()
+        # The heartbeat renewed the lease past the timeout, so the commit owned it.
+        assert result.ok
+        assert "x = 1" in (tmp_path / "m.py").read_text()
+
+    def test_expired_lease_without_heartbeat_fails_commit(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        lock_table = LockTable(default_timeout=0.4)
+        session = Session(
+            session_id="s1",
+            config=_config(tmp_path),
+            node_store=store,
+            lock_table=lock_table,
+            registry=FakeRegistry(),  # type: ignore[arg-type]
+            agent_runner=_SlowStagingRunner(store, delay=0.8),  # type: ignore[arg-type]
+            heartbeat_interval_s=100.0,  # never fires during the run
+            max_attempts=1,
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        result = session.run()
+        # No heartbeat: the lease expired mid-call, so the commit was refused.
+        assert not result.ok
+        assert result.failed == ("a",)
+        assert store.get_node(NodeId("m.py::function::a")).version == 1

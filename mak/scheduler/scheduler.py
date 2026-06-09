@@ -71,12 +71,14 @@ class Scheduler:
         agent_runner: AgentRunnerLike,
         registry: AdapterRegistryLike,
         persist_path: Path | None = None,
+        max_concurrent: int | None = None,
     ) -> None:
         self._dag = dag
         self._lock_manager = lock_manager
         self._agent_runner = agent_runner
         self._registry = registry
         self._persist_path = persist_path
+        self._max_concurrent = max_concurrent
 
         self._dispatched: set[str] = set()
         self.ready_queue: list[SubTask] = list(dag.newly_unblocked())
@@ -96,14 +98,25 @@ class Scheduler:
         """Build a write-lock request for each of the task's target nodes."""
         return [(node_id, LockMode.WRITE) for node_id in task.target_nodes]
 
+    def _free_slots(self) -> int | None:
+        """Concurrency budget remaining this tick, or ``None`` when unbounded."""
+        if self._max_concurrent is None:
+            return None
+        return max(0, self._max_concurrent - len(self._dispatched))
+
     def tick(self) -> list[str]:
         """Dispatch every ready task whose locks can be acquired now.
 
         Returns the ids of tasks dispatched during this tick. Tasks whose locks
-        are unavailable are left in the ready queue for a later tick.
+        are unavailable are left in the ready queue for a later tick. Under a
+        concurrency bound (``max_concurrent``) at most that many agents are ever
+        in flight, so locks are not pre-allocated for work that cannot yet run.
         """
         dispatched_now: list[str] = []
         for task in list(self.ready_queue):
+            slots = self._free_slots()
+            if slots is not None and slots <= 0:
+                break
             if self._lock_manager.try_acquire_all(
                 self._lock_requests(task), holder=task.task_id
             ):
@@ -220,6 +233,7 @@ class Scheduler:
         lock_manager: LockManager,
         agent_runner: AgentRunnerLike,
         registry: AdapterRegistryLike,
+        max_concurrent: int | None = None,
     ) -> Scheduler:
         """Reconstruct a scheduler from a persisted ``task_graph.json``.
 
@@ -256,6 +270,7 @@ class Scheduler:
         scheduler._agent_runner = agent_runner
         scheduler._registry = registry
         scheduler._persist_path = persist_path
+        scheduler._max_concurrent = max_concurrent
         scheduler._dispatched = set()
         # In-flight tasks at crash time are re-queued (locks were lost on crash).
         # Preserve order and avoid duplicates between the persisted ready set and

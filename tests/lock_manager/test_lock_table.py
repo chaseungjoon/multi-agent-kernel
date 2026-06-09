@@ -127,3 +127,33 @@ class TestLockTable:
         table = LockTable()
         nid = NodeId("mod.py::function::foo")
         assert not table.renew(nid, LockMode.WRITE, "ghost")
+
+
+class TestHoldsOwnership:
+    """Commit-time lock-ownership re-validation primitive (RA-3)."""
+
+    def test_holds_reports_current_owner(self) -> None:
+        table = LockTable()
+        nid = NodeId("mod.py::function::foo")
+        table.try_acquire(nid, LockMode.WRITE, "agent_a")
+        assert table.holds(nid, LockMode.WRITE, "agent_a")
+        assert not table.holds(nid, LockMode.WRITE, "agent_b")
+        assert not table.holds(nid, LockMode.READ, "agent_a")
+
+    def test_holds_all_requires_every_lease(self) -> None:
+        table = LockTable()
+        n1 = NodeId("a.py::function::a")
+        n2 = NodeId("b.py::function::b")
+        table.try_acquire_all([(n1, LockMode.WRITE), (n2, LockMode.WRITE)], "h")
+        assert table.holds_all([(n1, LockMode.WRITE), (n2, LockMode.WRITE)], "h")
+        table.release(n2, LockMode.WRITE, "h")
+        assert not table.holds_all([(n1, LockMode.WRITE), (n2, LockMode.WRITE)], "h")
+
+    def test_holds_false_after_lease_expiry(self) -> None:
+        # An expired lease reads as not-held: this is the gate that stops a task
+        # committing through a lock that was reclaimed underneath it.
+        table = LockTable(default_timeout=0.0)
+        nid = NodeId("mod.py::function::foo")
+        table.try_acquire(nid, LockMode.WRITE, "agent_a")
+        assert not table.holds(nid, LockMode.WRITE, "agent_a")
+        assert not table.holds_all([(nid, LockMode.WRITE)], "agent_a")

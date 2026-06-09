@@ -25,9 +25,12 @@ fragments. The kernel reassembles the file.
 ## Status
 
 The kernel builds and is well-tested (full suite + `mypy --strict` + `ruff` green).
-Execution is currently **sequential** — the concurrent shared-memory path is the
-next milestone, not yet exercised end-to-end. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for the detailed status and roadmap.
+Execution is **concurrent**: agents are dispatched onto a bounded thread pool and
+edit the shared node store in parallel, arbitrated by the node-level lock table,
+with batched cross-agent conflict detection, commit-time lock re-validation, and a
+lease heartbeat. The concurrency integration gate — real concurrent sessions over
+an overlapping-node corpus — is green. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+the detailed status and roadmap.
 
 ## Contributing
 

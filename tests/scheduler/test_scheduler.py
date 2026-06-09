@@ -149,6 +149,52 @@ class TestTickDispatch:
         assert set(sched.tick()) == {"a", "b"}
 
 
+class TestConcurrencyBound:
+    def test_max_concurrent_caps_in_flight_dispatch(self) -> None:
+        tasks = [
+            _task("a", nodes=["x.py::function::a"]),
+            _task("b", nodes=["y.py::function::b"]),
+            _task("c", nodes=["z.py::function::c"]),
+        ]
+        sched = Scheduler(
+            DAG(tasks), FakeLockManager(), FakeAgentRunner(), FakeRegistry(),
+            max_concurrent=2,
+        )
+        # Only two slots, so only two of the three ready tasks dispatch.
+        assert sched.tick() == ["a", "b"]
+        assert [t.task_id for t in sched.ready_queue] == ["c"]
+        # Still saturated — no further dispatch until one completes.
+        assert sched.tick() == []
+        sched.on_task_complete("a")
+        assert sched.tick() == ["c"]
+
+    def test_unbounded_dispatch_by_default(self) -> None:
+        sched, _, _, _ = _make(
+            [
+                _task("a", nodes=["x.py::function::a"]),
+                _task("b", nodes=["y.py::function::b"]),
+            ]
+        )
+        assert set(sched.tick()) == {"a", "b"}
+
+    def test_from_persisted_carries_concurrency_bound(self, tmp_path: Path) -> None:
+        path = tmp_path / ".mak" / "task_graph.json"
+        sched, _, _, _ = _make(
+            [
+                _task("a", nodes=["x.py::function::a"]),
+                _task("b", nodes=["y.py::function::b"]),
+            ],
+            persist_path=path,
+        )
+        sched.save()
+        restored = Scheduler.from_persisted(
+            path, FakeLockManager(), FakeAgentRunner(), FakeRegistry(),
+            max_concurrent=1,
+        )
+        assert restored.tick() == ["a"]  # bound preserved across recovery
+        assert [t.task_id for t in restored.ready_queue] == ["b"]
+
+
 class TestCompletionFlow:
     def test_completion_releases_locks_and_unblocks_dependent(self) -> None:
         sched, lm, runner, _ = _make(
