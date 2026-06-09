@@ -26,6 +26,7 @@ roadmap, and design rationale.
   - [Architecture at a glance](#architecture-at-a-glance)
   - [End-to-end data flow](#end-to-end-data-flow)
   - [Current status](#current-status)
+  - [Benchmark: MAK vs. git worktrees](#benchmark-mak-vs-git-worktrees)
 - [Part II — The subsystems in depth](#part-ii--the-subsystems-in-depth)
   - [Core types, exceptions, logging](#1-core-types-exceptions-logging)
   - [Node Store](#2-node-store)
@@ -250,6 +251,112 @@ The module-by-module state:
 > pipeline deadlock-free; a `DeadlockDetector` watchdog is defense in depth. The gate
 > is `tests/test_concurrency_integration.py`. A real model can drive the whole thing
 > given an API key (a live hosted-model call is simply not exercised in CI).
+
+## Benchmark: MAK vs. git worktrees
+
+[`benchmark/`](benchmark/) is a fair, reproducible head-to-head between MAK and the
+git-worktree multi-agent model it was designed to replace. Both sides run the **same
+workload** with the **same agents** (same models, same per-operation prompt, same
+task assignment); the only thing that differs is the coordination model, so any
+difference in the numbers is attributable to that.
+
+### The workload
+
+A small library, `toolkit`, with **9 operations** across three modules — each an
+unimplemented stub — plus a shared dispatch table, `registry._register_all`, that
+**every** operation must add one line to. A 30-test suite is the accuracy oracle.
+
+That shared `_register_all` is the whole point: it is the one symbol every agent must
+touch. Under MAK a node-level write lock serializes those edits and none are lost;
+under worktrees every branch edits it independently, so every merge after the first
+collides there and must be reconciled. Module files are assigned one-agent-per-module
+so they merge cleanly — the conflict is isolated to exactly the contended symbol.
+
+### Fairness controls
+
+- **Same agents/models** on both sides, and the **same agent layer** — identical
+  prompts, and the registry line itself is applied by a deterministic helper, so the
+  model's only creative job is the function body. The comparison isolates
+  *coordination*, not registry-editing skill.
+- **Same assignment** (operation → agent) and the **same 30-test oracle**, run the
+  same way.
+- **Parallel timing model.** The worktree side's agents work concurrently, so its
+  implementation phase is charged as `max` over agents of that agent's call time (not
+  the sum); the sequential merge+resolve phase is added on top. MAK is charged its real
+  end-to-end wall-clock. If anything this is generous to the worktree side.
+- The worktree baseline **resolves** each conflict with one model call (rather than
+  leaving conflict markers, which would fail import and collapse accuracy) — the fairer,
+  stronger baseline.
+
+### First real result
+
+Recorded run: **3 × `claude-sonnet-4-6`** (the same three agents on both sides), 9
+operations, 30 tests.
+
+| Metric | MAK | Traditional (worktrees) |
+|---|---|---|
+| Implementation time | 20.37s | **11.64s** |
+| Total tokens | **2,052** | 3,192 |
+| — input / output | 1,229 / 823 | 2,153 / 1,039 |
+| Model calls | 9 | 11 |
+| Accuracy (tests passed) | 30/30 (100%) | 30/30 (100%) |
+| Registry merge conflicts | **0** | 2 |
+| Conflict-resolution calls | **0** | 2 |
+
+### Reading it carefully
+
+- **Tokens — MAK wins by 36%.** Both sides make the same 9 implementation calls; the
+  entire ≈1,140-token gap is the worktree side's **two conflict-resolution calls** (the
+  registry collided on 2 of the 3 merges), which re-send the conflicted file as input.
+  MAK reconciles nothing, so it never makes those calls. This is the cleanest, most
+  robust signal in the benchmark.
+- **Merge conflicts — 0 vs 2, by construction.** MAK serializes the registry node under
+  one write lock; each task reads the latest committed version and appends, so a
+  collision is *impossible*. The worktree side hits `agents − 1` conflicts (the first
+  branch merges clean; each later branch collides on `_register_all`).
+- **Accuracy — tied at 100%, but read the asterisk.** The functions are small, the model
+  implements them correctly, and — critically — the resolver merged the 2 conflicts
+  *correctly this time*. The failure mode MAK removes is a resolver that drops or
+  garbles a `register(...)` line: that operation silently never enters the table and its
+  dispatch test fails. The tie reflects easy tasks plus a strong resolver, not the
+  absence of a difference; on larger or harder workloads the worktree accuracy is the
+  one that erodes.
+- **Time — the worktree side was faster here, and the *why* matters.** This workload is
+  **maximally contended**: all 9 tasks must edit the single shared node. MAK's
+  correctness on that node comes from serializing its writes, so the 9 tasks run
+  effectively sequentially (≈9 model calls back-to-back ≈ 20s). The worktree model lets
+  all three agents implement fully in parallel and defers the collision to a cheap merge
+  phase. In other words, worktrees win wall-clock *precisely because they do not
+  coordinate during implementation* — they pay for it afterward in tokens, conflicts,
+  and the risk of lost work. On a realistic workload where most edits are independent
+  (different files/symbols), MAK parallelizes that independent work just like worktrees
+  and serializes only the few contended writes, so the wall-clock gap shrinks while the
+  token and correctness advantages remain. **This benchmark is the worst case for MAK's
+  wall-clock and a strong case for its tokens and correctness** — that is the honest
+  shape of the trade.
+
+### Caveats
+
+- **Single model.** The recorded run used three Claude agents because the OpenAI account
+  had no active billing and the Gemini key's prepaid credits were depleted. Same model
+  on both sides keeps it fair, but it is not a cross-model comparison. Supply your own
+  keys and `--models` to compare across providers.
+- **Maximally contended, small.** Every task touches the shared node, and there are only
+  9 of them. Real projects are mostly independent work plus some contention; a larger,
+  *partially*-contended workload would show MAK's parallelism on the independent part and
+  widen the token/correctness gap on the contended part. Extending the benchmark in those
+  directions is [open problem #1](#1-extend-the-worktree-benchmark).
+
+### Running it
+
+```bash
+python benchmark/run_benchmark.py --mode mock     # keyless self-test
+python benchmark/run_benchmark.py --mode real     # real models (needs keys)
+```
+
+Results are written to `benchmark/README.md` (summary) and `benchmark/STATS.md`
+(detail); `--render-only` regenerates them from the last run without spending tokens.
+See [`benchmark/README.md`](benchmark/README.md) for the full guide.
 
 ---
 
@@ -969,12 +1076,17 @@ about **what's left**, ordered by leverage. Start here.
 The active tracks, highest-leverage first. These are research and tooling on top of a
 finished kernel — open an issue to align before starting a large one.
 
-### 1. Evaluation against a worktree baseline
+### 1. Extend the worktree benchmark
 
-There is no measured comparison yet of MAK against a git-worktree workflow. A harness
-that runs both on real Python projects with concurrent edits and scores them on edits
-preserved, file validity, correctness, and throughput is how the shared-memory thesis
-gets *quantified* rather than asserted. This is the highest-value next step.
+A first measured comparison of MAK against a git-worktree workflow now exists in
+[`benchmark/`](benchmark/) — see [Benchmark: MAK vs. git
+worktrees](#benchmark-mak-vs-git-worktrees) below for the methodology and the first
+real numbers. It is deliberately small and maximally-contended; the open work is to
+make it representative: more model mixes (the recorded run is single-model because of
+account/billing limits), larger and *partially*-contended workloads (where MAK's
+parallelism on independent work should show), harder tasks (where the accuracy gap
+should open), and a throughput-focused variant. This is still the highest-leverage
+track — turning one data point into a curve.
 
 ### 2. Planner context / token efficiency
 
