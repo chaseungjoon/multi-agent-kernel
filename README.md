@@ -21,19 +21,7 @@ reassembles the file. Git is used only as an audit log.
 
 ## Status
 
-The **kernel is functionally complete and well-tested**: 490 tests, `mypy --strict`
-clean, `ruff` clean. Concretely:
-
-- **Concurrent execution.** Agents are dispatched onto a bounded thread pool and edit
-  the shared node store in parallel, arbitrated by the lock table, with batched
-  cross-agent conflict detection, commit-time lock re-validation, a lease heartbeat,
-  and a deadlock watchdog. A concurrency integration test over an overlapping-node
-  corpus asserts no two conflicting holders coexist, no lost/corrupted fragments, no
-  deadlock, and store–disk consistency.
-- **Real agent edits land in the store.** An agent returns the rewritten source of
-  each node it changed; the kernel stages, validates, and commits it (rejecting
-  anything outside the agent's grant). `python -m mak --task "..."` can run against a
-  real model given an API key. (A live hosted-model call isn't exercised in CI.)
+The **kernel is functionally complete and well-tested**
 
 The remaining work is research and tooling, not core mechanism — see
 [CONTRIBUTING.md](CONTRIBUTING.md) (*Open problems*): evaluation against a worktree
