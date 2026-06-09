@@ -53,6 +53,12 @@ python3 -m mak --task "Implement every function in the dataforge package per its
 python3 -m pytest demo/project   # verify the result
 ```
 
+## Knowledge Graph
+
+MAK utilizes [graphify](https://github.com/safishamsi/graphify)'s knowledge graph system to improve LLM understanding and visualization of the project.
+
+check out [`graph.html`](graphify-out/graph.html) for a knowledge graph overview.
+
 
 ## Benchmark
 
