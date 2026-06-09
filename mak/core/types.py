@@ -65,11 +65,20 @@ class TaskBundle:
 
 @dataclass(frozen=True, slots=True)
 class TaskResult:
-    """Result of an agent task execution."""
+    """Result of an agent task execution.
+
+    ``new_sources`` carries the rewritten source for each node the agent changed
+    (``node_id -> full source``). This is how an agent's edit actually reaches the
+    node store: the session stages each entry via ``put_node`` before validating
+    and committing. ``modified_nodes`` lists the ids that changed (it is derivable
+    from ``new_sources`` but kept explicit for the wire and for agents that report
+    ids without re-sending source).
+    """
 
     task_id: str
     success: bool
     modified_nodes: list[NodeId] = field(default_factory=list)
+    new_sources: dict[NodeId, str] = field(default_factory=dict)
     error: str | None = None
 
 

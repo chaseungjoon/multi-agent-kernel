@@ -741,3 +741,119 @@ class TestCommitTimeLockRevalidation:
         assert not result.ok
         assert result.failed == ("a",)
         assert store.get_node(NodeId("m.py::function::a")).version == 1
+
+
+# --- Wave 6: agent source transport ------------------------------------------
+
+
+class WireRunner:
+    """An API-shaped agent: returns rewritten source over the wire (no put_node).
+
+    This mirrors what a real ``anthropic_api`` agent does — it never touches the
+    node store; it reports ``new_sources`` and the session stages them. ``sources``
+    maps node id -> the full rewritten source for that node.
+    """
+
+    def __init__(self, sources: dict[str, str]) -> None:
+        self._sources = sources
+
+    def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+        new = {
+            node_id: self._sources[str(node_id)]
+            for node_id in task.target_nodes
+            if str(node_id) in self._sources
+        }
+        return TaskResult(
+            task_id=task.task_id,
+            success=True,
+            modified_nodes=list(new),
+            new_sources=new,
+        )
+
+
+class TestSourceTransport:
+    def test_agent_returned_source_is_applied(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        runner = WireRunner({"m.py::function::a": "def a():\n    return 99\n"})
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        result = session.run()
+        assert result.ok
+        # The source the agent sent over the wire reached the store and disk.
+        assert "return 99" in store.get_node(NodeId("m.py::function::a")).source
+        assert "return 99" in (tmp_path / "m.py").read_text()
+
+    def test_concurrent_wire_agents_all_apply(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        runner = WireRunner(
+            {
+                "m.py::function::a": "def a():\n    return 1\n",
+                "m.py::function::b": "def b():\n    return 2\n",
+            }
+        )
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan(
+            [_task("a", ["m.py::function::a"]), _task("b", ["m.py::function::b"])]
+        )
+        result = session.run()
+        assert result.ok
+        assert set(result.completed) == {"a", "b"}
+        rebuilt = (tmp_path / "m.py").read_text()
+        assert "return 1" in rebuilt and "return 2" in rebuilt
+
+    def test_claimed_node_without_source_fails_cleanly(self, tmp_path: Path) -> None:
+        # A misbehaving agent: success=True, claims it changed a node, but sends no
+        # source and stages nothing. Must not crash the commit phase; the task is
+        # simply not applied and fails after its attempts are exhausted.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+
+        class HollowRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=True,
+                    modified_nodes=list(task.target_nodes),
+                )
+
+        session = _session(
+            tmp_path, runner=HollowRunner(), node_store=store, max_attempts=1
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        result = session.run()
+        assert not result.ok
+        assert "a" in result.failed
+        assert store.get_node(NodeId("m.py::function::a")).version == 1
+        assert (tmp_path / "m.py").read_text() == "def a():\n    return 0\n"
+
+    def test_out_of_scope_source_is_ignored(self, tmp_path: Path) -> None:
+        # An agent for task 'a' also tries to rewrite node 'b', outside its grant.
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+
+        class OverreachRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=True,
+                    modified_nodes=[NodeId("m.py::function::a")],
+                    new_sources={
+                        NodeId("m.py::function::a"): "def a():\n    return 1\n",
+                        NodeId("m.py::function::b"): "def b():\n    return 666\n",
+                    },
+                )
+
+        session = _session(tmp_path, runner=OverreachRunner(), node_store=store)
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])  # only 'a' granted
+        result = session.run()
+        assert result.ok
+        assert "return 1" in store.get_node(NodeId("m.py::function::a")).source
+        # The out-of-scope edit to 'b' was never staged or written.
+        assert "666" not in store.get_node(NodeId("m.py::function::b")).source
+        assert "666" not in (tmp_path / "m.py").read_text()

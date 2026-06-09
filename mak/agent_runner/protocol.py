@@ -75,12 +75,40 @@ def encode_task_result(result: TaskResult) -> str:
 
 
 def decode_task_result(raw: str) -> TaskResult:
-    """Deserialize a JSON string into a TaskResult."""
+    """Deserialize a JSON string into a TaskResult.
+
+    Accepts three shapes for the agent's rewritten source, in increasing
+    specificity, and merges them into ``new_sources`` + ``modified_nodes``:
+
+    - ``modified_nodes``: ids only (legacy / source already staged out-of-band);
+    - ``modified_fragments``: an array of ``{node_id, new_source}`` (what the API
+      adapters elicit from the model);
+    - ``new_sources``: an explicit ``{node_id: source}`` mapping (the canonical
+      field, e.g. from a re-encoded ``TaskResult``).
+    """
     data = json.loads(raw.strip())
     _check_version(data)
+
+    modified: list[NodeId] = [NodeId(n) for n in data.get("modified_nodes", [])]
+    new_sources: dict[NodeId, str] = {}
+
+    def _record(node_id: NodeId, source: str | None) -> None:
+        if node_id not in modified:
+            modified.append(node_id)
+        if source is not None:
+            new_sources[node_id] = source
+
+    for fragment in data.get("modified_fragments") or []:
+        node_id = NodeId(str(fragment["node_id"]))
+        raw_source = fragment.get("new_source")
+        _record(node_id, None if raw_source is None else str(raw_source))
+    for node_id_str, source in (data.get("new_sources") or {}).items():
+        _record(NodeId(str(node_id_str)), str(source))
+
     return TaskResult(
         task_id=data["task_id"],
         success=data["success"],
-        modified_nodes=[NodeId(n) for n in data.get("modified_nodes", [])],
+        modified_nodes=modified,
+        new_sources=new_sources,
         error=data.get("error"),
     )

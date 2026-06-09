@@ -116,6 +116,34 @@ class TestParseResult:
         assert result.success is False
         assert result.error == "boom"
 
+    def test_modified_fragments_become_new_sources(self) -> None:
+        # The real transport: the model returns full rewritten source per node,
+        # which must surface as TaskResult.new_sources for the session to stage.
+        adapter, _ = _adapter_with_result(
+            task_id="t1",
+            success=True,
+            modified_fragments=[
+                {
+                    "node_id": "m.py::function::f",
+                    "new_source": "def f():\n    return 42\n",
+                }
+            ],
+        )
+        result = adapter.parse_result(adapter.send("{}"))
+        assert result.modified_nodes == [NodeId("m.py::function::f")]
+        assert result.new_sources == {
+            NodeId("m.py::function::f"): "def f():\n    return 42\n"
+        }
+
+    def test_result_tool_schema_requests_new_source(self) -> None:
+        # The forced-output schema must actually ask the model for the rewritten
+        # source, or a real agent's edit could never reach the store.
+        adapter, client = _adapter_with_result(task_id="t", success=True)
+        adapter.send("{}")
+        schema = client.messages.calls[0]["tools"][0]["input_schema"]
+        fragments = schema["properties"]["modified_fragments"]
+        assert fragments["items"]["properties"]["new_source"]["type"] == "string"
+
 
 class TestHealthCheck:
     def test_injected_client_is_healthy(self) -> None:

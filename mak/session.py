@@ -58,6 +58,7 @@ from mak.core.logging import EventType, SessionLogger
 from mak.core.types import (
     LockEntry,
     LockMode,
+    NodeFragment,
     NodeId,
     SubTask,
     TaskBundle,
@@ -530,7 +531,19 @@ class Session:
         progress = self._progress[task_id]
         progress.attempts += 1
         in_scope = set(progress.target_nodes)
-        staged = [n for n in result.modified_nodes if n in in_scope]
+        if result.success:
+            self._stage_returned_sources(in_scope, result.new_sources)
+        # A node is committable only if a pending fragment actually exists for it —
+        # either staged here from the agent's returned source, or put directly by a
+        # test/local runner. An id the agent *claims* it changed but provided no
+        # source for is silently dropped (the task stays incomplete and retries),
+        # so a misbehaving agent can never crash the commit phase.
+        reported = dict.fromkeys([*result.modified_nodes, *result.new_sources])
+        staged = [
+            n
+            for n in reported
+            if n in in_scope and self._node_store.get_staged(n) is not None
+        ]
 
         committed = (
             self._validate_and_commit(task_id, staged, peers)
@@ -763,6 +776,31 @@ class Session:
             if source is not None:
                 context[f"read_source:{node_id}"] = source
         return replace(bundle, context=context)
+
+    def _stage_returned_sources(
+        self, in_scope: set[NodeId], new_sources: dict[NodeId, str]
+    ) -> None:
+        """Stage each rewritten source the agent returned over the wire.
+
+        This is the agent→store transport: an API/CLI agent reports the full new
+        source of each node it changed, and the session ``put_node``s it (as a new
+        pending version) so the normal validate→commit path applies it. Sources for
+        nodes outside the task's grant are ignored — an agent may not edit beyond
+        the nodes it was authorized to modify.
+        """
+        for node_id, source in new_sources.items():
+            if node_id not in in_scope:
+                continue
+            self._node_store.put_node(
+                node_id, NodeFragment(node_id, self._node_kind(node_id), source, 1)
+            )
+
+    def _node_kind(self, node_id: NodeId) -> str:
+        """Return a node's stored kind, defaulting to ``function`` if it is new."""
+        try:
+            return self._node_store.get_node(node_id).kind
+        except NodeStoreError:
+            return "function"
 
     def _node_source(self, node_id: NodeId) -> str | None:
         """Return a node's current committed source, or None if it does not exist."""

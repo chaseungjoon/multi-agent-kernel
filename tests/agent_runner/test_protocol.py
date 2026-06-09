@@ -138,3 +138,55 @@ class TestTaskResultProtocol:
         }
         with pytest.raises(ValueError, match="unsupported protocol version"):
             decode_task_result(json.dumps(data))
+
+    def test_decode_modified_fragments_into_new_sources(self) -> None:
+        # The shape the API adapters elicit: an array of {node_id, new_source}.
+        src_a = "def a():\n    return 1\n"
+        src_b = "def b():\n    return 2\n"
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_fragments": [
+                {"node_id": "m.py::function::a", "new_source": src_a},
+                {"node_id": "m.py::function::b", "new_source": src_b},
+            ],
+        }
+        result = decode_task_result(json.dumps(data))
+        assert result.modified_nodes == [
+            NodeId("m.py::function::a"),
+            NodeId("m.py::function::b"),
+        ]
+        assert result.new_sources[NodeId("m.py::function::a")] == src_a
+        assert result.new_sources[NodeId("m.py::function::b")] == src_b
+
+    def test_decode_explicit_new_sources_mapping(self) -> None:
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "new_sources": {"m.py::function::a": "x = 1\n"},
+        }
+        result = decode_task_result(json.dumps(data))
+        assert result.new_sources == {NodeId("m.py::function::a"): "x = 1\n"}
+        assert result.modified_nodes == [NodeId("m.py::function::a")]
+
+    def test_new_sources_round_trip(self) -> None:
+        result = TaskResult(
+            task_id="t1",
+            success=True,
+            modified_nodes=[NodeId("m.py::function::a")],
+            new_sources={NodeId("m.py::function::a"): "def a():\n    return 9\n"},
+        )
+        decoded = decode_task_result(encode_task_result(result))
+        assert decoded.new_sources == result.new_sources
+        assert decoded.modified_nodes == result.modified_nodes
+
+    def test_decode_ids_only_leaves_new_sources_empty(self) -> None:
+        # Legacy / ids-only result: no source on the wire, new_sources stays empty.
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_nodes": ["m.py::function::a"],
+        }
+        result = decode_task_result(json.dumps(data))
+        assert result.modified_nodes == [NodeId("m.py::function::a")]
+        assert result.new_sources == {}

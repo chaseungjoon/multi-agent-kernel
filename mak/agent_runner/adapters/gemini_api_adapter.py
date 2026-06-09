@@ -57,10 +57,26 @@ _RESULT_FUNCTION: dict[str, Any] = {
                 "type": "boolean",
                 "description": "True if the task was completed successfully.",
             },
-            "modified_nodes": {
+            "modified_fragments": {
                 "type": "array",
-                "items": {"type": "string"},
-                "description": "Node ids whose source this task modified.",
+                "description": (
+                    "For every node you changed, an object with its node_id and "
+                    "the FULL rewritten source of that node (not a diff)."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "node_id": {
+                            "type": "string",
+                            "description": "A node id you were authorized to modify.",
+                        },
+                        "new_source": {
+                            "type": "string",
+                            "description": "The complete rewritten source of the node.",
+                        },
+                    },
+                    "required": ["node_id", "new_source"],
+                },
             },
             "error": {
                 "type": "string",
@@ -75,9 +91,12 @@ _RESULT_FUNCTION: dict[str, Any] = {
 _SYSTEM_PROMPT = (
     "You are a MAK coding agent. You receive a single task as a JSON 'task "
     "bundle' describing a task_id, a description, the node ids you may modify, "
-    "and read-only context. Carry out the task, then report the outcome by "
-    f"calling the '{_RESULT_FN_NAME}' function. Echo back the same task_id. List "
-    "every node id you changed in modified_nodes. Do not reply with prose."
+    "and read-only context (the current source of each node is in 'context' "
+    "under 'write_source:<id>' / 'read_source:<id>'). Carry out the task, then "
+    f"report the outcome by calling the '{_RESULT_FN_NAME}' function. Echo back "
+    "the same task_id. For every node you changed, put its id and its FULL "
+    "rewritten source in 'modified_fragments' — complete node source, never a "
+    "diff, only for nodes you may modify. Do not reply with prose."
 )
 
 

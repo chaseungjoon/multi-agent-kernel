@@ -13,8 +13,8 @@ roadmap, and design rationale.
 
 > **A note on honesty.** Where the implementation does not yet match the ambition,
 > this guide says so plainly (see [Current status](#current-status) and
-> [Wave 5 — Concurrency](#wave-5--concurrency-the-thesis-gate)). Please keep that
-> standard: document the gap, don't paper over it.
+> [Open problems](#open-problems)). Please keep that standard: document the gap,
+> don't paper over it.
 
 ---
 
@@ -47,10 +47,9 @@ roadmap, and design rationale.
   - [Coding standards](#coding-standards)
   - [Commits, branches, and pull requests](#commits-branches-and-pull-requests)
 - [Part IV — Where to contribute](#part-iv--where-to-contribute)
-  - [The wave model](#the-wave-model)
-  - [Roadmap](#roadmap)
-  - [Open questions](#open-questions)
+  - [Open problems](#open-problems)
   - [Good first contributions](#good-first-contributions)
+  - [How MAK was built (history)](#how-mak-was-built-history)
 - [Part V — Design decisions & rationale](#part-v--design-decisions--rationale)
 - [Glossary](#glossary)
 - [License](#license)
@@ -203,8 +202,13 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-MAK builds and is well-tested: **467 tests pass**, `mypy --strict mak` is clean, and
-`ruff check mak tests` is clean.
+The **kernel is functionally complete and well-tested**: **490 tests pass**,
+`mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
+shared-memory pipeline — the project's reason to exist — runs end-to-end and is
+proven by an integration gate, and a real agent's rewritten source now reaches the
+node store over the wire. Primary development is done; the work now is the **open
+problems** in [Part IV](#part-iv--where-to-contribute) — evaluation, planner
+efficiency, and multi-language support.
 
 The module-by-module state:
 
@@ -226,27 +230,26 @@ The module-by-module state:
 | `mak/agent_runner/sandbox.py` (Docker isolation) | Complete |
 | **Concurrent execution** | **Complete (Wave 5)** — see below |
 
-> ### ⚠️ The most important thing to understand before contributing
+> ### ⚠️ The mental model to hold before contributing
 >
-> **The live pipeline is concurrent (Wave 5).** `Session.run` dispatches every
-> lock-satisfiable ready task onto a bounded thread pool (`max_concurrent_agents`)
-> and collects results as they arrive. Concurrently-completing results are
-> **batched** into a single multi-task conflict-detection round, so the conflict
-> detector's *cross-agent* checks finally fire in a real run. Commit order within a
-> batch is deterministic (topological index, then id), each task is validated
-> against the batch's already-committed peers (the earlier task wins a genuine
-> conflict), commits re-validate write-lock ownership (`LockTable.holds_all`), and a
-> heartbeat renews in-flight leases so a slow agent is never expired. Atomic lock
-> pre-allocation makes the pipeline deadlock-free; a `DeadlockDetector` watchdog
-> scans the wait graph each iteration as defense in depth.
+> **The node store, not the filesystem, is the source of truth, and an agent is a
+> pure fragment transform** — one node's source in, one node's rewritten source out.
+> An agent never roams the repo or edits disk directly; it returns the new source of
+> each node it was granted (`TaskResult.new_sources`), and the *kernel* stages,
+> validates, conflict-checks, commits, reconstructs, and writes. Anything an agent
+> returns outside its lock grant is ignored. Internalize this and the rest of the
+> codebase follows: the lock table, scheduler, conflict detector, and transactional
+> commit all exist to make that fragment-transform contract safe under concurrency.
 >
-> MAK's defining thesis — a *concurrent* shared-memory kernel — is now **exercised
-> end-to-end** by the concurrency integration gate
-> ([Wave 5](#wave-5--concurrency-the-thesis-gate),
-> `tests/test_concurrency_integration.py`): real concurrent sessions over a
-> multi-file, overlapping-node corpus, asserting no two conflicting holders coexist,
-> no lost/corrupted fragments, no deadlock/stall, and store-disk consistency. The
-> kernel is functionally complete.
+> The concurrency *is* done and proven. `Session.run` dispatches every
+> lock-satisfiable ready task onto a bounded thread pool (`max_concurrent_agents`),
+> **batches** concurrently-completing results into one multi-task conflict-detection
+> round (so the cross-agent checks fire), commits in a deterministic order against the
+> batch's already-committed peers, re-validates write-lock ownership at commit time,
+> and renews in-flight leases with a heartbeat. Atomic lock pre-allocation makes the
+> pipeline deadlock-free; a `DeadlockDetector` watchdog is defense in depth. The gate
+> is `tests/test_concurrency_integration.py`. A real model can drive the whole thing
+> given an API key (a live hosted-model call is simply not exercised in CI).
 
 ---
 
@@ -590,6 +593,15 @@ CLI's flags. The API adapters remain primary.
 `protocol_version` `"1.0"`. `decode_task_bundle` rebuilds nested `LockEntry` /
 `ResourceRef` objects rather than leaving raw dicts.
 
+**The agent's rewritten source travels on the result.** `TaskResult.new_sources` maps
+each changed node id to its full new source. `decode_task_result` accepts three
+shapes and normalizes them into that field: `modified_nodes` (ids only — source
+staged out of band, e.g. by a local test runner), a `modified_fragments` array of
+`{node_id, new_source}` (what the API adapters elicit from the model), or an explicit
+`new_sources` map. The session stages each returned source via `put_node` before the
+commit phase (§10), so a real agent's edit reaches the store through the normal
+transactional path; sources for nodes outside the task's grant are ignored.
+
 ### 7.5 The runner
 
 `AgentRunner.assign(adapter, task)` (`runner.py`) is the single entry point and
@@ -668,10 +680,13 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
 - **plan** — planner → optional HitL review → `install_plan` (builds the DAG +
   persisted `Scheduler`). Tasks whose `agent_type` is empty are normalized to the
   configured default agent.
-- **run** — loop the scheduler; capture each agent result through a recording
-  runner that enriches the bundle with write/read source; gate staged fragments
-  through the conflict detector; **transactionally** commit and reconstruct; write a
-  git audit commit on success.
+- **run** — dispatch lock-satisfiable ready tasks onto the thread pool (enriching
+  each bundle with write/read source); as results arrive, **stage the source each
+  agent returned** (`new_sources`, within the task's grant) via `put_node`; batch
+  concurrently-completing results; gate staged fragments through the conflict
+  detector; **transactionally** commit and reconstruct; write a git audit commit on
+  success. A node the agent claims it changed but provides no source for is dropped,
+  so a misbehaving agent fails its task cleanly rather than crashing the commit.
 - **teardown** — run the test suite; push if green and `auto_push` is enabled.
 
 Three robustness properties worth knowing:
@@ -870,7 +885,7 @@ Tests mirror the source tree (`tests/core/`, `tests/node_store/`,
 Three gates must be green for every change — locally, in pre-commit, and in CI:
 
 ```bash
-pytest -q                  # the full suite (currently 467 tests)
+pytest -q                  # the full suite (currently 480 tests)
 mypy --strict mak          # zero errors
 ruff check mak tests       # zero findings
 ```
@@ -946,93 +961,74 @@ Python throughout, with these conventions (enforced by `ruff` and `mypy --strict
 
 # Part IV — Where to contribute
 
-## The wave model
+Primary development is done — the kernel is built, gated, and proven. This part is
+about **what's left**, ordered by leverage. Start here.
 
-MAK was built in **waves**. Each wave is a set of independent tasks that complete
-before the next wave begins, and each wave is **gated**: the full suite, `mypy
---strict`, and `ruff` must be green before the next starts. This discipline is why
-the foundation is solid. Completed waves:
+## Open problems
 
-| Wave | Theme | Result |
-|---|---|---|
-| 0 | Foundation: core types, config, logging | ✅ |
-| 1 | Node store, lock manager, agent-runner base | ✅ |
-| H | Hardening: span-tiling ingestion (decorators/order/comments/methods), concurrency model + versioning, CI/gates | ✅ |
-| 2 | Scheduler, conflict detector, API adapters | ✅ |
-| 3 | Planner + HitL, git integration, session lifecycle | ✅ |
-| 3.5 | Session hardening: transactional commit, read-context enrichment, honest stall reporting, robust stdout read, empty-diff commits | ✅ |
-| HOTFIX | Pre-CLI wiring: config-bound adapter factories, `AgentConfig` model/key fields, the `bootstrap.py` composition root, default-agent routing | ✅ |
-| 4 | CLI entry point + planner LLM backends, secondary CLI adapters, Docker sandbox, config validation, end-to-end integration test | ✅ |
+The active tracks, highest-leverage first. These are research and tooling on top of a
+finished kernel — open an issue to align before starting a large one.
 
-## Roadmap
+### 1. Evaluation against a worktree baseline
 
-### Wave 4 — CLI, secondary adapters, integration tests ✅ DONE
+There is no measured comparison yet of MAK against a git-worktree workflow. A harness
+that runs both on real Python projects with concurrent edits and scores them on edits
+preserved, file validity, correctness, and throughput is how the shared-memory thesis
+gets *quantified* rather than asserted. This is the highest-value next step.
 
-The kernel became **runnable end-to-end under sequential execution**: `python -m mak
---task "…"` ingests, plans (with HitL review unless `--no-review`), dispatches one
-agent at a time, and reconstructs files with comments preserved. (Wave 5 below makes
-dispatch concurrent.) Delivered:
+### 2. Planner context / token efficiency
 
-- **CLI entry point + planner backends** — `mak/__main__.py` (`parse_args` /
-  `build_session` / `main`, mapping domain errors to exit codes) and
-  `mak/planner/llm.py` (`build_planner_llm` selects an Anthropic/OpenAI/Gemini
-  completion backend by model prefix). End-to-end test reconstructs a commented
-  project with every comment intact.
-- **Secondary CLI adapters** — `cli_adapter.py` (shared `CliSubprocessAdapter`) with
-  `claude_code`, `codex`, and `copilot` subclasses, registered as config-bound
-  factories. Fallbacks; the API adapters remain primary.
-- **Sandboxing, config validation, error UX** — `sandbox.py` (Docker isolation behind
-  `--sandbox`), `bootstrap.validate_config` (rejects unknown agent types at startup),
-  and friendly error messages / exit codes throughout the CLI.
+`Planner.decompose` embeds the *entire* node inventory in the prompt on *every* call —
+many tokens re-sent each time on a large codebase, even though the inventory barely
+changes. Directions: prompt caching of the stable inventory prefix, retrieval (send
+only task-relevant nodes), a coarse→fine two-stage planner, a module-level summarized
+inventory, or a template bypass for fixed task shapes.
 
-### Wave 5 — Concurrency (the thesis gate) ✅ DONE
+### 3. Planner quality at scale
 
-**This was the heart of the project, and it is now built and proven.** MAK's reason
-to exist — a concurrent shared-memory kernel — runs end-to-end. Three pieces:
+Even with HitL review, one-shot subtask decomposition degrades on large tasks with
+many interdependent nodes. Prompt engineering, few-shot examples, and a possible
+multi-step planner (outline → detail) are open.
 
-- **Concurrent dispatch** ✅ — `Session.run` dispatches every lock-satisfiable ready
-  task onto a bounded `ThreadPoolExecutor` (the scheduler caps in-flight work at
-  `max_concurrent_agents`) and collects results from a completion queue as they
-  arrive. Concurrently-completing results are **batched** into one multi-task
-  conflict-detection round so the cross-agent checks finally fire. Commit order is
-  deterministic (topological index, then id); each task is validated against the
-  batch's already-committed peers, so when two tasks genuinely conflict the earlier
-  one wins and the later is rejected and retried.
-- **Commit-time safety under contention** ✅ — `_validate_and_commit` re-validates
-  write-lock ownership (`LockTable.holds_all`, expiry-aware) immediately before
-  advancing the store, refusing to commit through a reclaimed lock. A heartbeat
-  thread renews in-flight holders' leases (`LockTable.renew_all`) so a slow-but-alive
-  agent keeps its grants.
-- **Concurrency integration gate** ✅ — `tests/test_concurrency_integration.py` drives
-  *real* concurrent sessions through the scheduler + session over a multi-file corpus
-  with deliberately overlapping target nodes, asserting: no two conflicting holders
-  ever coexist, no lost or corrupted fragments, no deadlock/stall (atomic
-  pre-allocation is deadlock-free, with a `DeadlockDetector` watchdog as defense in
-  depth), and the node store stays consistent with disk. **This green test licenses
-  calling MAK "functionally complete." 480 tests pass; `mypy --strict mak` and
-  `ruff check mak tests` clean.**
+### 4. Multi-language support
 
-## Open questions
+The node-store schema is language-agnostic; only ingestion and reconstruction are
+Python-specific. The plan is to abstract them behind a `LanguageBackend` interface
+(with `tree-sitter` as the target backend for TypeScript/Go). Python proves the
+model; language-agnosticism follows.
 
-These are active research/design tracks — good places for substantial contributions
-and discussion:
+### 5. Live-model hardening
 
-- **Multi-language support.** The node-store schema is language-agnostic; only
-  ingestion and reconstruction are Python-specific. The plan is to abstract them
-  behind a `LanguageBackend` interface (with `tree-sitter` as the target backend for
-  TypeScript/Go). Python proves the model; language-agnosticism follows.
-- **Planner quality at scale.** Even with HitL review, one-shot subtask
-  decomposition degrades on large tasks with many interdependent nodes. Prompt
-  engineering, few-shot examples, and a possible multi-step planner (outline →
-  detail) are open.
-- **Planner context / token efficiency.** `Planner.decompose` embeds the *entire*
-  node inventory in the prompt on *every* task. For a large codebase that's many
-  tokens re-sent each time — slow and expensive — even though the inventory barely
-  changes between calls. Worth implementing: prompt caching of the stable inventory
-  prefix, retrieval (send only task-relevant nodes), a coarse→fine two-stage planner,
-  a module-level summarized inventory, and/or a template bypass for fixed task shapes.
-- **Evaluation.** A suite that runs MAK on real Python projects and measures
-  correctness and throughput against a worktree baseline.
+The wire and adapters carry an agent's rewritten source, and the pipeline runs against
+a real model given an API key — but live behavior isn't exercised in CI (no key). Real
+runs against hosted models, prompt tuning so models reliably return *complete* node
+source, and retry/repair policy for malformed edits are worth shaking out on real
+tasks.
+
+## Known limitations (accepted tradeoffs)
+
+These are deliberate limits of an intentionally shallow, correctness-first kernel.
+None can corrupt code — each *fails safe* — so they are accepted tradeoffs, documented
+here so contributors don't mistake them for bugs:
+
+- **Class-shell fragments aren't independently parseable.** A `class Foo:` shell with
+  its methods removed isn't valid Python alone, so a task that targets a `class`-shell
+  node and returns just the shell is *rejected* by the parse gate (never corrupted).
+  Reconstruction validates the assembled file, so this is safe; making shells
+  standalone-parseable (or the detector shell-aware) is a possible improvement.
+- **The conflict detector is name-based and shallow.** Its cross-file signature check
+  can flag a call to a same-named-but-unrelated function in another module — a false
+  positive that costs a bounded retry, not correctness. It is a structural gate, not a
+  type checker, by design.
+- **`context_nodes` are read but not read-locked.** This is intentional: a *hard*
+  dependency on another task's output belongs in `depends_on` (which the DAG
+  enforces); `context_nodes` are *soft* reference (sibling methods, attributes) read
+  at dispatch. Read-locking them would add serialization for no correctness gain on
+  the cases the DAG already covers.
+- **The deadlock watchdog never fires.** Atomic lock pre-allocation means a waiting
+  task holds no locks, so the wait graph is acyclic by construction. The
+  `DeadlockDetector` runs each iteration as genuine defense-in-depth that, by design,
+  finds nothing.
 
 ## Good first contributions
 
@@ -1043,8 +1039,19 @@ and discussion:
 - Harden a CLI adapter: add a real wrapper that makes `claude`/`codex`/`gh copilot`
   speak the MAK line protocol, or extend the sandbox (host allowlisting).
 
-Before starting something large (Wave 5 pieces, a `LanguageBackend`), open an issue
-to align on the approach first.
+## How MAK was built (history)
+
+MAK was built in gated **waves** — each a set of independent tasks that had to leave
+the full suite, `mypy --strict`, and `ruff` green before the next began. That
+discipline is why the foundation is solid. Waves 0–1 built the core (types, config,
+logging, node store, lock manager, agent-runner base); Wave H hardened ingestion
+(span-tiling for comments/decorators/methods), the concurrency model, and CI; Waves
+2–3 added the scheduler, conflict detector, API adapters, planner + HitL, git
+integration, and the session; Wave 3.5 + a hotfix hardened the session and wired the
+composition root; Wave 4 delivered the CLI, secondary CLI adapters, and the sandbox;
+**Wave 5** made dispatch concurrent and proved the shared-memory thesis with the
+integration gate; **Wave 6** carried the agent's rewritten source over the wire so a
+real agent's edit reaches the store. What remains is the open-problems list above.
 
 ---
 
@@ -1091,7 +1098,7 @@ the grain.
 - **SubTask** — a planned unit of work with write targets, read context, and
   dependencies.
 - **EditRound** — the set of staged fragments the conflict detector validates
-  together (one task's today; multi-task once Wave 5 lands).
+  together — multi-task in a concurrent batch, so cross-agent conflicts are seen.
 - **Adapter** — the swappable translator between MAK's protocol and a specific agent
   backend.
 - **Composition root** — `mak/bootstrap.py`, which assembles configured collaborators

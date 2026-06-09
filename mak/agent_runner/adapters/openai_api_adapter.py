@@ -28,11 +28,14 @@ _DEFAULT_MODEL = "gpt-4o"
 _SYSTEM_PROMPT = (
     "You are a MAK coding agent. You receive a single task as a JSON 'task "
     "bundle' (task_id, description, the node ids you may modify, and read-only "
-    "context). Carry out the task, then respond with a JSON object containing "
-    "exactly these keys: 'task_id' (string, echoing the bundle's task_id), "
-    "'success' (boolean), 'modified_nodes' (array of node id strings you "
-    "changed), and 'error' (string reason when success is false, otherwise "
-    "null). Respond with only that JSON object."
+    "context whose 'write_source:<id>' / 'read_source:<id>' entries hold the "
+    "current source). Carry out the task, then respond with a JSON object "
+    "containing exactly these keys: 'task_id' (string, echoing the bundle's "
+    "task_id), 'success' (boolean), 'modified_fragments' (array of objects, each "
+    "with 'node_id' and the FULL rewritten 'new_source' of that node — complete "
+    "source, never a diff, only for nodes you may modify), and 'error' (string "
+    "reason when success is false, otherwise null). Respond with only that JSON "
+    "object."
 )
 
 
