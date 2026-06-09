@@ -1,7 +1,8 @@
 # Multi Agent Kernel (MAK)
 
-A kernel for **concurrent** multi-agent software development. Many agents edit one
-shared working directory at the same time — no worktrees, no merge step, no
+A kernel for **concurrent** multi-agent software development. 
+
+Many agents edit one shared working directory at the same time — no worktrees, no merge step, no
 late-stage reconciliation. The kernel arbitrates concurrent access the way an OS
 arbitrates shared memory between threads.
 
@@ -13,13 +14,14 @@ information needed to resolve them is gone.
 
 MAK takes the **shared-memory** approach. The codebase is decomposed into
 independently lockable AST nodes (functions, methods, classes, headers); files on
-disk are derived artifacts reconstructed from a versioned node store. The kernel owns
-a symbol-level lock table and resolves conflicts at *scheduling* time, where the
+disk are derived artifacts reconstructed from a versioned node store. 
+
+The kernel owns a symbol-level lock table and resolves conflicts at *scheduling* time, where the
 dependency graph is still explicit. Each agent receives only the nodes it holds write
 locks on, edits them in isolation, and returns the modified fragments; the kernel
 reassembles the file. Git is used only as an audit log.
 
-## Run it
+## Run
 
 ### 1. Clone from source (Python ≥ 3.11):
 
@@ -30,7 +32,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-### 2. Set api keys for the default agents `mak/.env`, then point MAK at a project:
+### 2. Set api keys for the default agents in `mak/.env`, then point MAK at a project:
 
 ```bash
 touch mak/.env
@@ -51,12 +53,6 @@ python3 -m mak --task "Implement every function in the dataforge package per its
 python3 -m pytest demo/project   # verify the result
 ```
 
-## Status
-
-The **kernel is functionally complete and well-tested.** The remaining work is
-research and tooling, not core mechanism — see [CONTRIBUTING.md](CONTRIBUTING.md)
-(*Open problems*): planner token efficiency, multi-language support, and extending the
-benchmark below.
 
 ## Benchmark
 
@@ -72,13 +68,16 @@ operations that **all must edit one shared registry function** — the contentio
 | Merge conflicts | **0** | 2 |
 
 MAK spent **36% fewer tokens** and hit **zero merge conflicts** by construction — the
-worktree run made 2 extra model calls reconciling the shared file. It was *slower* in
-wall-clock here because every task contends on that one symbol, so MAK serializes those
+worktree run made 2 extra model calls reconciling the shared file. 
+
+It was *slower* in wall-clock here because every task contends on that one symbol, so MAK serializes those
 writes while the worktrees edit in parallel and reconcile afterward: the trade is
 correctness-by-construction and token efficiency for wall-clock on a deliberately
 maximally-contended workload. Run it yourself with
-`python benchmark/run_benchmark.py` — details and methodology in
-[CONTRIBUTING.md](CONTRIBUTING.md#benchmark-mak-vs-git-worktrees).
+
+```bash
+python3 benchmark/run_benchmark.py --mode real --models anthropic:claude-sonnet-4-6 openai:gpt-4o gemini:gemini-3-pro
+```
 
 ## Contributing
 

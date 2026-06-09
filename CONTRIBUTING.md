@@ -12,6 +12,7 @@ when you need subsystem detail, and Parts III–V for the day-to-day workflow,
 roadmap, and design rationale.
 
 > [Current status](#current-status)
+
 > [Open problems](#open-problems)
 
 ---
@@ -343,7 +344,7 @@ operations, 30 tests.
   9 of them. Real projects are mostly independent work plus some contention; a larger,
   *partially*-contended workload would show MAK's parallelism on the independent part and
   widen the token/correctness gap on the contended part. Extending the benchmark in those
-  directions is [open problem #1](#1-extend-the-worktree-benchmark).
+  directions is an [open problem](#also-extend-the-benchmark).
 
 ### Running it
 
@@ -1071,49 +1072,86 @@ about **what's left**, ordered by leverage. Start here.
 
 ## Open problems
 
-The active tracks, highest-leverage first. These are research and tooling on top of a
-finished kernel — open an issue to align before starting a large one.
+The v2 roadmap, in the project's current **priority order**. These are research and
+tooling on top of a finished kernel — open an issue to align before starting a large
+one.
 
-### 1. Extend the worktree benchmark
+### 1. Planner context / token efficiency
 
-A first measured comparison of MAK against a git-worktree workflow now exists in
-[`benchmark/`](benchmark/) — see [Benchmark: MAK vs. git
-worktrees](#benchmark-mak-vs-git-worktrees) below for the methodology and the first
-real numbers. It is deliberately small and maximally-contended; the open work is to
-make it representative: more model mixes (the recorded run is single-model because of
-account/billing limits), larger and *partially*-contended workloads (where MAK's
-parallelism on independent work should show), harder tasks (where the accuracy gap
-should open), and a throughput-focused variant. This is still the highest-leverage
-track — turning one data point into a curve.
+`Planner.decompose` lists the **entire** node inventory in the prompt on **every**
+call — and again on every retry. For a large repo that is thousands of lines of input
+re-sent each time, even though the inventory barely changes; planner tokens aren't
+even measured today. Directions (not mutually exclusive): **prompt caching** of the
+stable inventory prefix (Anthropic `cache_control`, OpenAI/Gemini equivalents — needs
+extending the `PlannerLLM` interface from `complete(prompt)` to a cacheable
+prefix/suffix); **retrieval** of only task-relevant nodes (keyword/embedding); a
+**coarse→fine** two-stage planner (pick modules, then decompose within them); a
+module-level **summarized inventory**; and a **template bypass** for fixed task shapes.
+Start by measuring planner tokens, then add caching (helps retries immediately), then
+selection. Acceptance: planner input scales sub-linearly with repo size.
 
-### 2. Planner context / token efficiency
+### 2. Multi-language support
 
-`Planner.decompose` embeds the *entire* node inventory in the prompt on *every* call —
-many tokens re-sent each time on a large codebase, even though the inventory barely
-changes. Directions: prompt caching of the stable inventory prefix, retrieval (send
-only task-relevant nodes), a coarse→fine two-stage planner, a module-level summarized
-inventory, or a template bypass for fixed task shapes.
+Ingestion, reconstruction, and the conflict detector's checks are Python-`ast`-specific;
+everything else (node-store schema, locks, scheduler, session, transport) is already
+language-agnostic. Plan: a **`LanguageBackend` ABC** (`parse_into_fragments`,
+`reconstruct`, optional structural checks, extension routing) with **tree-sitter** as
+the parser — its precise node ranges let the same raw-source span-tiling model
+generalize, so comments/formatting survive by construction. Phases: (A) extract the
+Python backend behind the ABC (pure refactor, no regression); (B) a **TypeScript**
+backend end-to-end, gated by the round-trip property test; (C) generalize the conflict
+detector (parse-gate-only baseline for new languages first); (D) Go/Rust; (E)
+mixed-language repos. Per-language pieces: a node-identity scheme and a formatter
+(`prettier`/`gofmt`/`rustfmt`, discovered with fallback like `ruff` today).
 
-### 3. Planner quality at scale
+### 3. Deployment — PyPI + Docker
 
-Even with HitL review, one-shot subtask decomposition degrades on large tasks with
-many interdependent nodes. Prompt engineering, few-shot examples, and a possible
-multi-step planner (outline → detail) are open.
+MAK is only runnable from a clone today. **Decision: PyPI (with `pipx` as the
+recommended install) is primary; an official Docker image is secondary; Homebrew is
+deferred** (it duplicates pip for a Python CLI). **Prerequisite (do first): config
+discovery + scaffolding** — `--config` defaults to `mak/config.yaml`, which only exists
+in the repo, so an installed `mak` needs config discovery (`./mak.yaml`,
+`~/.config/mak/…`, built-in defaults) and a **`mak init`** command; MAK also reads keys
+from the environment and doesn't auto-load `.env`. Then: a `mak` console entry point in
+`pyproject.toml`, **optional extras** (`[anthropic]`/`[openai]`/`[local]` — the three
+SDKs are heavy), a CI release workflow (OIDC trusted publishing), and a `Dockerfile`
+that bind-mounts the target repo (`docker run -v "$PWD:/work" …`).
 
-### 4. Multi-language support
+### 4. Planner quality
 
-The node-store schema is language-agnostic; only ingestion and reconstruction are
-Python-specific. The plan is to abstract them behind a `LanguageBackend` interface
-(with `tree-sitter` as the target backend for TypeScript/Go). Python proves the
-model; language-agnosticism follows.
+One-shot decomposition + HitL degrades on large, interdependent tasks (missed
+dependency edges → runtime collisions, hallucinated node ids, over/under
+serialization). The standout MAK-specific idea: **ground the plan in the real
+call/import graph**. MAK can build a static dependency graph from the node store, then
+**cross-check the planner's `depends_on` against actual code dependencies** — flagging
+missing edges (B writes a node A calls → B should depend on A) and spurious ones. That
+turns the plan from an LLM guess into an LLM proposal *validated against code
+structure*. Also: node grounding / hallucination guards (fuzzy-match bad ids, or
+constrain target nodes to the real inventory), an outline→detail planner, a
+self-critique pass, few-shot examples, and plan-quality metrics (realized parallelism,
+conflict/re-dispatch rate) as a feedback signal.
 
-### 5. Live-model hardening
+### 5. Local LLM support
 
-The wire and adapters carry an agent's rewritten source, and the pipeline runs against
-a real model given an API key — but live behavior isn't exercised in CI (no key). Real
-runs against hosted models, prompt tuning so models reliably return *complete* node
-source, and retry/repair policy for malformed edits are worth shaking out on real
-tasks.
+Only hosted API adapters today; local models (Ollama, vLLM, llama.cpp, LM Studio)
+matter for cost, privacy, and offline/air-gapped repos. Most local servers expose an
+**OpenAI-compatible endpoint**, so the minimal primary step is to add a **`base_url`**
+field to `AgentConfig` and thread it into the OpenAI adapter and `build_planner_llm` —
+one change unlocks every compatible server for both agents and the planner. Then harden
+**structured output** for weaker models (JSON-mode / grammar-constrained decoding where
+supported, plus a parse→repair→retry loop for malformed edits — the standing live-model
+hardening), document **hybrid** (API planner + local agents) and **fully-local**
+configs, and add optional-dependency extras (with #3) so a local-only user needn't
+install cloud SDKs.
+
+### Also: extend the benchmark
+
+The recorded [`benchmark/`](benchmark/) run is single-model (billing limits) and
+maximally-contended. Make it representative: more model mixes, larger and
+*partially*-contended workloads (to show MAK's parallelism on independent work), harder
+tasks (to open the accuracy gap), and a throughput variant — turning one data point
+into a curve. See [Benchmark: MAK vs. git
+worktrees](#benchmark-mak-vs-git-worktrees).
 
 ## Known limitations (accepted tradeoffs)
 
