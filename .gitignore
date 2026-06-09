@@ -7,7 +7,7 @@ __pycache__
 .DS_Store
 .idea
 .env
-.graphify-out
+graphify-out
 
 # Personal/local notes
 PLANS.md
