@@ -1,12 +1,12 @@
 # Multi Agent Kernel (MAK)
 
-> Check out the [Knowledge Graph](https://index-mu-pink-61.vercel.app)!
-
 A kernel for **concurrent** multi-agent software development. 
 
 Many agents edit one shared working directory at the same time — no worktrees, no merge step, no
 late-stage reconciliation. The kernel arbitrates concurrent access the way an OS
 arbitrates shared memory between threads.
+
+> Check out the [Knowledge Graph](https://mak-kg.vercel.app) of this project! (created with [graphify](https://github.com/safishamsi/graphify))
 
 ## The idea
 
