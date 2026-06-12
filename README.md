@@ -6,7 +6,7 @@ Many agents edit one shared working directory at the same time — no worktrees,
 late-stage reconciliation. The kernel arbitrates concurrent access the way an OS
 arbitrates shared memory between threads.
 
-> Check out the [Knowledge Graph](https://mak-kg.vercel.app) of this project! (created with [graphify](https://github.com/safishamsi/graphify))
+> Check out the [knowledge graph](https://mak-kg.vercel.app) for this project! (created with [graphify](https://github.com/safishamsi/graphify))
 
 ## The idea
 
