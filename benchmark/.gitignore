@@ -3,3 +3,4 @@
 .mak/
 __pycache__/
 .last_run.json
+.last_run.*.json
