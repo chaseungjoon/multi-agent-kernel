@@ -259,17 +259,29 @@ workload** with the **same agents** (same models, same per-operation prompt, sam
 task assignment); the only thing that differs is the coordination model, so any
 difference in the numbers is attributable to that.
 
-### The workload
+### The workloads
 
-A small library, `toolkit`, with **9 operations** across three modules — each an
-unimplemented stub — plus a shared dispatch table, `registry._register_all`, that
-**every** operation must add one line to. A 30-test suite is the accuracy oracle.
+Two targets, both the same shape — a `toolkit` library of unimplemented stubs plus a
+shared dispatch table, `registry._register_all`, that **every** operation must add one
+line to — at two sizes:
+
+- **Basic** — **9 operations** across 3 modules (`strings`, `numbers`, `sequences`); a
+  30-test oracle.
+- **Template 2** — **90 operations** across 9 modules (`strkit`, `numkit`, `seqkit`,
+  `dictkit`, `datekit`, `mathkit`, `parsekit`, `setkit`, `codekit`) — real-utility-style
+  functions in the spirit of `boltons`/`more-itertools`/`toolz` (Levenshtein distance,
+  Roman numerals both ways, calendar math, prime sieves, small parsers, set algebra,
+  ciphers); a 270-test oracle. It is **generated** from `harness/template2_spec.py` by
+  `tools/gen_template2.py`, so its stubs, reference implementations, and tests cannot
+  drift — and a reference self-test (fill every stub from the spec, run pytest) proves the
+  oracle is internally consistent before any model is called.
 
 That shared `_register_all` is the whole point: it is the one symbol every agent must
 touch. Under MAK a node-level write lock serializes those edits and none are lost;
 under worktrees every branch edits it independently, so every merge after the first
 collides there and must be reconciled. Module files are assigned one-agent-per-module
-so they merge cleanly — the conflict is isolated to exactly the contended symbol.
+so they merge cleanly — the conflict is isolated to exactly the contended symbol. Pick a
+target with `--project basic|2|all` (default `all`).
 
 ### Fairness controls
 
@@ -277,8 +289,8 @@ so they merge cleanly — the conflict is isolated to exactly the contended symb
   prompts, and the registry line itself is applied by a deterministic helper, so the
   model's only creative job is the function body. The comparison isolates
   *coordination*, not registry-editing skill.
-- **Same assignment** (operation → agent) and the **same 30-test oracle**, run the
-  same way.
+- **Same assignment** (operation → agent) and the **same per-workload test oracle**, run
+  the same way.
 - **Parallel timing model.** The worktree side's agents work concurrently, so its
   implementation phase is charged as `max` over agents of that agent's call time (not
   the sum); the sequential merge+resolve phase is added on top. MAK is charged its real
@@ -286,11 +298,23 @@ so they merge cleanly — the conflict is isolated to exactly the contended symb
 - The worktree baseline **resolves** each conflict with one model call (rather than
   leaving conflict markers, which would fail import and collapse accuracy) — the fairer,
   stronger baseline.
+- **A malformed agent response is isolated, not fatal — on both sides.** A garbled
+  output (e.g. an unparseable function) is rejected symmetrically: MAK's commit phase
+  drops a node whose staged source fails its parse gate and retries the task, and the
+  worktree runner refuses to splice unparseable Python into the module. One bad call
+  therefore costs *that operation* its tests rather than crashing the run — and the token
+  cost of the call still counts. (This fired on the Template 2 run; see below.)
+- **A per-test timeout guards the oracle.** A real agent can implement an algorithmic
+  function with an infinite loop (a wrong `while` in `collatz_steps`, `nth_prime`, …).
+  The template's `conftest.py` installs a SIGALRM-based per-test timeout, so a runaway
+  implementation fails *that* test instead of hanging `pytest` forever — applied to both
+  the MAK and worktree measurements, so it favours neither side.
 
-### First real result
+### Real results
 
-Recorded run: **3 × `claude-sonnet-4-6`** (the same three agents on both sides), 9
-operations, 30 tests.
+Recorded runs: **3 × `claude-sonnet-4-6`** (the same three agents on both sides).
+
+**Basic — 9 operations, 30 tests**
 
 | Metric | MAK | Traditional (worktrees) |
 |---|---|---|
@@ -302,7 +326,21 @@ operations, 30 tests.
 | Registry merge conflicts | **0** | 2 |
 | Conflict-resolution calls | **0** | 2 |
 
+**Template 2 — 90 operations, 270 tests**
+
+| Metric | MAK | Traditional (worktrees) |
+|---|---|---|
+| Implementation time | 191.67s | **92.11s** |
+| Total tokens | **18,186** | 23,761 |
+| — input / output | 10,307 / 7,879 | 13,477 / 10,284 |
+| Model calls | 90 | 92 |
+| Accuracy (tests passed) | **253/270 (94%)** | 250/270 (93%) |
+| Registry merge conflicts | **0** | 2 |
+| Conflict-resolution calls | **0** | 2 |
+
 ### Reading it carefully
+
+**Basic — the structural signal.**
 
 - **Tokens — MAK wins by 36%.** Both sides make the same 9 implementation calls; the
   entire ≈1,140-token gap is the worktree side's **two conflict-resolution calls** (the
@@ -318,44 +356,67 @@ operations, 30 tests.
   *correctly this time*. The failure mode MAK removes is a resolver that drops or
   garbles a `register(...)` line: that operation silently never enters the table and its
   dispatch test fails. The tie reflects easy tasks plus a strong resolver, not the
-  absence of a difference; on larger or harder workloads the worktree accuracy is the
-  one that erodes.
-- **Time — the worktree side was faster here, and the *why* matters.** This workload is
+  absence of a difference — which is exactly what the heavier target exposes.
+- **Time — the worktree side was faster, and the *why* matters.** This workload is
   **maximally contended**: all 9 tasks must edit the single shared node. MAK's
   correctness on that node comes from serializing its writes, so the 9 tasks run
-  effectively sequentially (≈9 model calls back-to-back ≈ 20s). The worktree model lets
-  all three agents implement fully in parallel and defers the collision to a cheap merge
-  phase. In other words, worktrees win wall-clock *precisely because they do not
-  coordinate during implementation* — they pay for it afterward in tokens, conflicts,
-  and the risk of lost work. On a realistic workload where most edits are independent
-  (different files/symbols), MAK parallelizes that independent work just like worktrees
-  and serializes only the few contended writes, so the wall-clock gap shrinks while the
-  token and correctness advantages remain. **This benchmark is the worst case for MAK's
-  wall-clock and a strong case for its tokens and correctness** — that is the honest
-  shape of the trade.
+  effectively sequentially (≈20s). The worktree model lets all three agents implement
+  fully in parallel and defers the collision to a cheap merge phase — it wins wall-clock
+  *precisely because it does not coordinate during implementation*, and pays for it
+  afterward in tokens, conflicts, and the risk of lost work.
+
+**Template 2 — what changes at 10× the size (90 operations).**
+
+- **Tokens — MAK wins by 23%** (18,186 vs 23,761). Both sides make ~90 implementation
+  calls of comparable size; the gap is the worktree side's heavier input (it re-sends the
+  conflicted registry on its two resolution calls) plus those extra calls themselves. MAK
+  reconciles nothing, so it never pays that — and the absolute saving (≈5,600 tokens) is
+  far larger than on the small target even though the *percentage* is between Basic's two
+  numbers. The token advantage is the most robust, repeatable signal here.
+- **Accuracy — MAK ahead, 94% vs 93%** (253/270 vs 250/270). At this size the models get
+  a handful of the harder algorithms wrong on *both* sides — that is real, expected LLM
+  noise and exactly why the suite has a per-test timeout and a parse gate. The point is
+  the *delta*: the worktree side lost everything MAK lost **plus** a function whose
+  malformed output the merge kept (one agent emitted a `caesar` with an `unmatched ')'`,
+  left as a stub) **plus** the structural exposure of two registry conflicts. MAK's
+  coordination removes that extra tail by construction, so it lands strictly ahead.
+- **Conflicts — still 0 vs 2, by construction.** Three branches, two collide on
+  `_register_all`; MAK serializes the node and never does. This is invariant in the size
+  of the project — it is `agents − 1` for the worktree model regardless.
+- **MAK made exactly 90 calls for 90 operations** — one per task, no retries this run:
+  every task committed its function node and its registry append atomically on the first
+  attempt, so the kernel's re-validate-and-retry path (bounded by `max_attempts`) never
+  fired. The worktree side made 92 (90 + 2 resolutions).
+- **Time — still ~2× slower (191.7s vs 92.1s), same reason as Basic, amplified.** 90
+  tasks all contend on the one registry node, so MAK serializes their commits while the
+  three worktrees implement fully in parallel and pay only a cheap merge. The wall-clock
+  trade is unchanged at scale; the benchmark remains the worst case for MAK's latency and
+  a strong case for its tokens and correctness.
 
 ### Caveats
 
-- **Single model.** The recorded run used three Claude agents because the OpenAI account
-  had no active billing and the Gemini key's prepaid credits were depleted. Same model
-  on both sides keeps it fair, but it is not a cross-model comparison. Supply your own
-  keys and `--models` to compare across providers.
-- **Maximally contended, small.** Every task touches the shared node, and there are only
-  9 of them. Real projects are mostly independent work plus some contention; a larger,
-  *partially*-contended workload would show MAK's parallelism on the independent part and
-  widen the token/correctness gap on the contended part. Extending the benchmark in those
-  directions is an [open problem](#also-extend-the-benchmark).
+- **Single model.** Both recorded runs used three Claude agents because the OpenAI
+  account had no active billing and the Gemini key's prepaid credits were depleted. Same
+  model on both sides keeps it fair, but it is not a cross-model comparison. Supply your
+  own keys and `--models` to compare across providers.
+- **Maximally contended.** Every task touches the shared node on both targets. Real
+  projects are mostly independent work plus some contention; a larger, *partially*-
+  contended workload would show MAK's parallelism on the independent part and widen the
+  token/correctness gap on the contended part. Extending the benchmark in those directions
+  is an [open problem](#also-extend-the-benchmark).
 
 ### Running it
 
 ```bash
-python benchmark/run_benchmark.py --mode mock     # keyless self-test
-python benchmark/run_benchmark.py --mode real     # real models (needs keys)
+python benchmark/run_benchmark.py --mode mock              # keyless self-test (both targets)
+python benchmark/run_benchmark.py --mode real              # real models (needs keys), both targets
+python benchmark/run_benchmark.py --mode real --project 2  # just the heavy 90-op target
 ```
 
 Results are written to `benchmark/README.md` (summary) and `benchmark/STATS.md`
-(detail); `--render-only` regenerates them from the last run without spending tokens.
-See [`benchmark/README.md`](benchmark/README.md) for the full guide.
+(detail), one labelled section per target; `--render-only` regenerates them from the last
+runs without spending tokens. See [`benchmark/README.md`](benchmark/README.md) for the
+full guide.
 
 ---
 

@@ -57,30 +57,37 @@ python3 -m pytest demo/project   # verify the result
 
 ## Benchmark
 
-[`benchmark/`](benchmark/) pits MAK against a real git-worktree multi-agent workflow on
-the same workload with the same agents (3× `claude-sonnet-4-6`). The workload is 9
-operations that **all must edit one shared registry function** — the contention point.
+[`benchmark/`](benchmark/) pits MAK against a traditional git-worktree multi-agent workflow on
+the same workload with the same agents (3× `claude-sonnet-4-6`). Every operation **must
+edit one shared registry function**
 
-| | MAK | Git worktrees |
-|---|---|---|
-| Tokens | **2,052** | 3,192 |
-| Time | 20.4s | **11.6s** |
-| Accuracy | 100% | 100% |
-| Merge conflicts | **0** | 2 |
+- [`benchmark/project_template_2/`](benchmark/project_template_2/) — 90 operations, 9 modules
 
-MAK spent **36% fewer tokens** and hit **zero merge conflicts** by construction — the
-worktree run made 2 extra model calls reconciling the shared file. 
+  | | MAK | Git worktrees |
+  |---|---|---|
+  | Tokens | **18,186** | 23,761 |
+  | Time | 191.7s | **92.1s** |
+  | Accuracy | **94%** (253/270) | 93% (250/270) |
+  | Merge conflicts | **0** | 2 |
 
-It was *slower* in wall-clock here because every task contends on that one symbol, so MAK serializes those
-writes while the worktrees edit in parallel and reconcile afterward: the trade is
-correctness-by-construction and token efficiency for wall-clock on a deliberately
-maximally-contended workload. Run it yourself with
+> MAK spends **23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a slight edge in accuracy.
+>
+> [More statistics](/benchmark/STATS.md)
+
+Both sides got a few of the harder algorithms wrong, but the worktree side
+additionally resulted in **2 merge conflicts.**
+
+MAK is **slower** than traditional worktree based operations because every task contends on that one symbol, so MAK
+serializes those writes while the worktrees edit in parallel and reconcile afterward: the
+trade is **correctness by construction** and **token efficiency** for execution time on a deliberately
+maximally-contended workload. Run it yourself (all targets) with
 
 ```bash
-python3 benchmark/run_benchmark.py --mode real --models anthropic:claude-sonnet-4-6 openai:gpt-4o gemini:gemini-3-pro
+python3 benchmark/run_benchmark.py --mode real \
+  --models anthropic:claude-sonnet-4-6 anthropic:claude-sonnet-4-6 anthropic:claude-sonnet-4-6
 ```
 
-## Contributing
+## Contribute
 
 [**CONTRIBUTING.md**](CONTRIBUTING.md) is the full guide — architecture, every
 subsystem in depth, setup, the quality gates, coding standards, and where to help.
