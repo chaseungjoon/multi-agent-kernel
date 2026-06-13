@@ -1,4 +1,9 @@
-"""Render benchmark results into ``benchmark/README.md`` and ``benchmark/STATS.md``."""
+"""Render benchmark results into ``benchmark/README.md`` and ``benchmark/STATS.md``.
+
+Both reports can hold *several* projects at once (the basic 9-op target and the
+larger 17-op ``pro`` target), one labelled section per project, so adding a heavier
+workload never overwrites the lighter one's published numbers.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +25,18 @@ class RunMeta:
     timestamp: str
     operations: int
     tests: int
+    project: str = "basic"  # workload key
+    label: str = "Basic toolkit"  # human label
+    modules: int = 3  # module count of the workload
+
+
+@dataclass(frozen=True)
+class ProjectRun:
+    """One project's full result triple."""
+
+    meta: RunMeta
+    mak: RunResult
+    trad: RunResult
 
 
 def _tokens(result: RunResult) -> int:
@@ -110,25 +127,33 @@ def _mode_note(meta: RunMeta) -> str:
     )
 
 
-def render_readme_results(mak: RunResult, trad: RunResult, meta: RunMeta) -> str:
-    """The block injected between the RESULTS markers in README.md."""
+def _readme_section(run: ProjectRun) -> str:
+    meta = run.meta
     return "\n".join([
-        _README_START,
+        f"### {meta.label} — {meta.operations} operations, {meta.modules} modules",
         "",
         f"_Last run: {meta.timestamp} · mode `{meta.mode}` · {meta.num_agents} agents._",
         "",
         _mode_note(meta),
         "",
-        _summary_table(mak, trad),
+        _summary_table(run.mak, run.trad),
         "",
         "**Reading the numbers:**",
         "",
-        _takeaway(mak, trad),
-        "",
-        "See [STATS.md](STATS.md) for the full breakdown.",
-        "",
-        _README_END,
+        _takeaway(run.mak, run.trad),
     ])
+
+
+def render_readme_results(runs: list[ProjectRun]) -> str:
+    """The block injected between the RESULTS markers in README.md."""
+    parts = [_README_START, ""]
+    for i, run in enumerate(runs):
+        if i:
+            parts.append("\n---\n")
+        parts.append(_readme_section(run))
+        parts.append("")
+    parts += ["See [STATS.md](STATS.md) for the full breakdown.", "", _README_END]
+    return "\n".join(parts)
 
 
 def inject_readme(readme_text: str, block: str) -> str:
@@ -138,28 +163,28 @@ def inject_readme(readme_text: str, block: str) -> str:
     return pre + block + post
 
 
-def render_stats(mak: RunResult, trad: RunResult, meta: RunMeta) -> str:
-    """The full STATS.md document."""
+def _stats_section(run: ProjectRun) -> list[str]:
+    meta, mak, trad = run.meta, run.mak, run.trad
     lines: list[str] = [
-        "# Benchmark results — detailed statistics",
+        f"## {meta.label}",
         "",
         f"- **Run at:** {meta.timestamp}",
         f"- **Mode:** `{meta.mode}`",
         f"- **Agents:** {meta.num_agents} ({', '.join(meta.models)})",
-        f"- **Workload:** {meta.operations} operations across 3 modules + 1 shared "
-        f"registry function; {meta.tests} tests as the accuracy oracle.",
+        f"- **Workload:** {meta.operations} operations across {meta.modules} modules "
+        f"+ 1 shared registry function; {meta.tests} tests as the accuracy oracle.",
         "",
         _mode_note(meta),
         "",
-        "## Headline",
+        "### Headline",
         "",
         _summary_table(mak, trad),
         "",
-        "## Reading the numbers",
+        "### Reading the numbers",
         "",
         _takeaway(mak, trad),
         "",
-        "## Token detail",
+        "### Token detail",
         "",
         "| | MAK | Traditional |",
         "|---|---|---|",
@@ -168,7 +193,7 @@ def render_stats(mak: RunResult, trad: RunResult, meta: RunMeta) -> str:
         f"| Total tokens | {_tokens(mak):,} | {_tokens(trad):,} |",
         f"| Model calls | {mak.usage.calls} | {trad.usage.calls} |",
         "",
-        "## Model calls per agent",
+        "### Model calls per agent",
         "",
         "| Agent | MAK | Traditional |",
         "|---|---|---|",
@@ -181,7 +206,7 @@ def render_stats(mak: RunResult, trad: RunResult, meta: RunMeta) -> str:
         )
     lines += [
         "",
-        "## Coordination",
+        "### Coordination",
         "",
         f"- **MAK** held a node-level write lock on the shared `_register_all`, "
         f"serializing the {meta.operations} registry edits: "
@@ -193,7 +218,18 @@ def render_stats(mak: RunResult, trad: RunResult, meta: RunMeta) -> str:
     ]
     for label, result in (("MAK", mak), ("Traditional", trad)):
         if result.notes:
-            lines.append(f"### {label} notes")
+            lines.append(f"#### {label} notes")
             lines += [f"- {note}" for note in result.notes]
             lines.append("")
+    return lines
+
+
+def render_stats(runs: list[ProjectRun]) -> str:
+    """The full STATS.md document, one section per project."""
+    lines: list[str] = ["# Benchmark results — detailed statistics", ""]
+    for i, run in enumerate(runs):
+        if i:
+            lines.append("---")
+            lines.append("")
+        lines += _stats_section(run)
     return "\n".join(lines)

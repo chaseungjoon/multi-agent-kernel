@@ -17,12 +17,27 @@ that varies between MAK and the worktree baseline is the coordination model.
 from __future__ import annotations
 
 import re
+import sys
+import threading
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from harness.workload import Operation, add_registration
 
 _FENCE = re.compile(r"^```[a-zA-Z]*\n|\n```$", re.MULTILINE)
+
+_log_lock = threading.Lock()
+_call_no = 0
+
+
+def _log(label: str, usage: Usage) -> None:
+    """Print a one-line progress note per completed real model call (liveness signal)."""
+    global _call_no
+    with _log_lock:
+        _call_no += 1
+        n = _call_no
+    print(f"[call {n:>3}] {label}  (in={usage.tokens_in} out={usage.tokens_out})",
+          file=sys.stderr, flush=True)
 
 
 @dataclass(frozen=True)
@@ -112,11 +127,13 @@ class RealBackend:
     def implement(self, op: Operation, stub_source: str) -> tuple[str, Usage]:
         prompt = f"Implement this function:\n\n{stub_source}"
         text, usage = self._call(_IMPLEMENT_SYS, prompt)
+        _log(f"implement {op.name} via {self.name}", usage)
         return _strip_fence(text), usage
 
     def resolve(self, versions: list[str]) -> tuple[str, Usage]:
         joined = "\n\n# ---- version ----\n".join(versions)
         text, usage = self._call(_RESOLVE_SYS, joined)
+        _log(f"resolve registry via {self.name}", usage)
         return _strip_fence(text), usage
 
     # -- provider dispatch -------------------------------------------------

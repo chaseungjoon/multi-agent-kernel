@@ -1,5 +1,7 @@
 # Benchmark results — detailed statistics
 
+## Basic toolkit (9 ops)
+
 - **Run at:** 2026-06-09T19:13:39
 - **Mode:** `real`
 - **Agents:** 3 (claude-sonnet-4-6, claude-sonnet-4-6, claude-sonnet-4-6)
@@ -7,7 +9,7 @@
 
 > **Mode: `real`.** 3 agents (claude-sonnet-4-6, claude-sonnet-4-6, claude-sonnet-4-6) implementing 9 operations (verified by 30 tests).
 
-## Headline
+### Headline
 
 | Metric | MAK | Traditional (worktrees) |
 |---|---|---|
@@ -18,14 +20,14 @@
 | Registry merge conflicts | 0 | 2 |
 | Conflict-resolution calls | 0 | 2 |
 
-## Reading the numbers
+### Reading the numbers
 
 - **Tokens:** MAK spent **36% fewer** (2,052 vs 3,192) — it reconciles nothing, so it makes no extra conflict-resolution calls.
 - **Accuracy:** tied at 100%. These tasks are small and the resolver merged the registry correctly *this time*; the structural risk MAK removes — a dropped or garbled registration — is what bites on larger tasks or weaker resolvers.
 - **Time:** the worktree run was faster here (11.6s vs 20.4s): *every* task contends on the one shared registry node, so MAK serializes them while the worktrees run fully in parallel and reconcile afterwards. On a workload with more independent work, MAK parallelizes that part too — this benchmark deliberately maximizes contention.
 - **Coordination:** MAK hit **0** merge conflicts by construction; the worktree run hit **2**, each an extra resolution call.
 
-## Token detail
+### Token detail
 
 | | MAK | Traditional |
 |---|---|---|
@@ -34,7 +36,7 @@
 | Total tokens | 2,052 | 3,192 |
 | Model calls | 9 | 11 |
 
-## Model calls per agent
+### Model calls per agent
 
 | Agent | MAK | Traditional |
 |---|---|---|
@@ -42,7 +44,61 @@
 | agent1-claude-sonnet-4-6 | 3 | 3 |
 | agent2-claude-sonnet-4-6 | 3 | 3 |
 
-## Coordination
+### Coordination
 
 - **MAK** held a node-level write lock on the shared `_register_all`, serializing the 9 registry edits: **0 conflicts**, **0 resolution calls**.
 - **Traditional** merged 3 branches that all edited `_register_all`: **2 conflicts**, **2 resolution calls**.
+
+---
+
+## Template 2 (90 ops)
+
+- **Run at:** 2026-06-14T04:04:44
+- **Mode:** `real`
+- **Agents:** 3 (claude-sonnet-4-6, claude-sonnet-4-6, claude-sonnet-4-6)
+- **Workload:** 90 operations across 9 modules + 1 shared registry function; 270 tests as the accuracy oracle.
+
+> **Mode: `real`.** 3 agents (claude-sonnet-4-6, claude-sonnet-4-6, claude-sonnet-4-6) implementing 90 operations (verified by 270 tests).
+
+### Headline
+
+| Metric | MAK | Traditional (worktrees) |
+|---|---|---|
+| Implementation time | 191.67s | 92.11s |
+| Total tokens | 18,186 | 23,761 |
+| Model calls | 90 | 92 |
+| Accuracy (tests passed) | 253/270 (94%) | 250/270 (93%) |
+| Registry merge conflicts | 0 | 2 |
+| Conflict-resolution calls | 0 | 2 |
+
+### Reading the numbers
+
+- **Tokens:** MAK spent **23% fewer** (18,186 vs 23,761) — it reconciles nothing, so it makes no extra conflict-resolution calls.
+- **Accuracy:** MAK higher — MAK 94% vs Traditional 93% (Traditional lost work in the merge).
+- **Time:** the worktree run was faster here (92.1s vs 191.7s): *every* task contends on the one shared registry node, so MAK serializes them while the worktrees run fully in parallel and reconcile afterwards. On a workload with more independent work, MAK parallelizes that part too — this benchmark deliberately maximizes contention.
+- **Coordination:** MAK hit **0** merge conflicts by construction; the worktree run hit **2**, each an extra resolution call.
+
+### Token detail
+
+| | MAK | Traditional |
+|---|---|---|
+| Input tokens | 10,307 | 13,477 |
+| Output tokens | 7,879 | 10,284 |
+| Total tokens | 18,186 | 23,761 |
+| Model calls | 90 | 92 |
+
+### Model calls per agent
+
+| Agent | MAK | Traditional |
+|---|---|---|
+| agent0-claude-sonnet-4-6 | 30 | 32 |
+| agent1-claude-sonnet-4-6 | 30 | 30 |
+| agent2-claude-sonnet-4-6 | 30 | 30 |
+
+### Coordination
+
+- **MAK** held a node-level write lock on the shared `_register_all`, serializing the 90 registry edits: **0 conflicts**, **0 resolution calls**.
+- **Traditional** merged 3 branches that all edited `_register_all`: **2 conflicts**, **2 resolution calls**.
+
+#### Traditional notes
+- agent2-claude-sonnet-4-6 produced unparseable caesar: unmatched ')' (<unknown>, line 6)

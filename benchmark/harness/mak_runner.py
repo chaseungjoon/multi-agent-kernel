@@ -10,6 +10,7 @@ delegated to the same backends the traditional runner uses.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from pathlib import Path
@@ -17,7 +18,12 @@ from typing import cast
 
 from harness.agents import Backend, Usage
 from harness.metrics import RunResult
-from harness.workload import OPERATIONS, REGISTRY_NODE, add_registration, operation_by_func_node
+from harness.workload import (
+    REGISTRY_NODE,
+    Workload,
+    add_registration,
+    operation_by_func_node,
+)
 from mak.config import GitConfig, MakConfig, NodeStoreConfig, SessionConfig
 from mak.core.types import NodeId, SubTask, TaskBundle, TaskResult
 from mak.lock_manager.lock_table import LockTable
@@ -42,8 +48,9 @@ class _Registry:
 class _BenchmarkRunner:
     """MAK agent runner: delegates each task to the backend named by its agent_type."""
 
-    def __init__(self, backends: dict[str, Backend]) -> None:
+    def __init__(self, backends: dict[str, Backend], workload: Workload) -> None:
         self._backends = backends
+        self._workload = workload
         self._guard = threading.Lock()
         self.usage = Usage()
         self.calls_by_agent: dict[str, int] = {}
@@ -54,7 +61,7 @@ class _BenchmarkRunner:
         backend = self._backends[agent_type]
 
         func_node = next(n for n in bundle.target_nodes if str(n) != REGISTRY_NODE)
-        op = operation_by_func_node(str(func_node))
+        op = operation_by_func_node(self._workload.operations, str(func_node))
         stub = bundle.context.get(f"write_source:{op.func_node}", "")
         func_source, usage = backend.implement(op, stub)
 
@@ -97,10 +104,11 @@ def run_mak(
     mak_dir: Path,
     backends: list[Backend],
     assignment: list[int],
+    workload: Workload,
 ) -> RunResult:
     """Implement the workload through MAK; return measured results."""
     by_name = {b.name: b for b in backends}
-    runner = _BenchmarkRunner(by_name)
+    runner = _BenchmarkRunner(by_name, workload)
 
     subtasks = [
         SubTask(
@@ -109,7 +117,7 @@ def run_mak(
             target_nodes=[NodeId(op.func_node), NodeId(REGISTRY_NODE)],
             agent_type=backends[assignment[i]].name,
         )
-        for i, op in enumerate(OPERATIONS)
+        for i, op in enumerate(workload.operations)
     ]
 
     config = _config(project_dir, mak_dir, len(backends))
@@ -128,6 +136,7 @@ def run_mak(
     result = session.run()
     elapsed = time.monotonic() - start
 
+    print("[mak] agents done; measuring accuracy (pytest) ...", file=sys.stderr, flush=True)
     passed = _measure(project_dir)
     notes = [] if result.ok else [f"MAK run state: {result.state.value}"]
     return RunResult(
@@ -135,6 +144,7 @@ def run_mak(
         wall_seconds=elapsed,
         usage=runner.usage,
         passed=passed,
+        total=workload.expected_tests,
         conflicts=0,
         resolutions=0,
         per_agent_calls=runner.calls_by_agent,

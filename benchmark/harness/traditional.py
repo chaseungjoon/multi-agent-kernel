@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import ast
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 from harness.accuracy import measure
 from harness.agents import Backend, Usage, _union_registry
 from harness.metrics import RunResult
-from harness.workload import OPERATIONS, add_registration
+from harness.workload import Workload, add_registration
 
 
 def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -59,8 +60,10 @@ def run_traditional(
     worktree_root: Path,
     backends: list[Backend],
     assignment: list[int],
+    workload: Workload,
 ) -> RunResult:
     """Implement the workload via git worktrees + merge; return measured results."""
+    operations = workload.operations
     _git(["init", "-q"], project_dir)
     _git(["config", "user.email", "benchmark@mak.local"], project_dir)
     _git(["config", "user.name", "MAK Benchmark"], project_dir)
@@ -68,7 +71,7 @@ def run_traditional(
     _git(["commit", "-q", "-m", "base: stubs"], project_dir)
     base = _git(["branch", "--show-current"], project_dir).stdout.strip()
 
-    ops_for = {i: [OPERATIONS[k] for k in range(len(OPERATIONS)) if assignment[k] == i]
+    ops_for = {i: [operations[k] for k in range(len(operations)) if assignment[k] == i]
                for i in range(len(backends))}
 
     # -- implementation phase (agents work in parallel, in their own worktrees) --
@@ -98,16 +101,28 @@ def run_traditional(
                 notes.append(f"{backend.name} failed to implement {op.name}: {exc}")
                 continue
             elapsed += time.monotonic() - start
-            module_path.write_text(_splice_function(module_src, op.func, func_source))
+            # The call happened and cost tokens regardless of whether its output is
+            # usable, so count it before deciding whether to keep the result.
+            total_usage = total_usage + usage
+            calls_by_agent[backend.name] = calls_by_agent.get(backend.name, 0) + usage.calls
+
+            # Reject a malformed implementation rather than write unparseable Python
+            # into the module (which would crash every later step). The stub stays in
+            # place, so only this op's tests fail — the same way MAK isolates a bad
+            # node instead of corrupting the whole file.
+            try:
+                new_module = _splice_function(module_src, op.func, func_source)
+                ast.parse(new_module)
+            except SyntaxError as exc:
+                notes.append(f"{backend.name} produced unparseable {op.name}: {exc}")
+                continue
+            module_path.write_text(new_module)
 
             reg_path = worktree / "toolkit/registry.py"
             reg_src = reg_path.read_text()
             current = _extract_function(reg_src, "_register_all")
             updated = add_registration(current, op.register_line)
             reg_path.write_text(_splice_function(reg_src, "_register_all", updated))
-
-            total_usage = total_usage + usage
-            calls_by_agent[backend.name] = calls_by_agent.get(backend.name, 0) + usage.calls
         _git(["add", "-A"], worktree)
         _git(["commit", "-q", "-m", branch], worktree)
         agent_seconds[backend.name] = elapsed
@@ -156,12 +171,15 @@ def run_traditional(
         _git(["worktree", "remove", "--force", str(worktree_root / branch)],
              project_dir, check=False)
 
+    print("[traditional] merge done; measuring accuracy (pytest) ...",
+          file=sys.stderr, flush=True)
     passed = measure(project_dir)
     return RunResult(
         label="Traditional (git worktrees)",
         wall_seconds=parallel_seconds + merge_seconds,
         usage=total_usage,
         passed=passed,
+        total=workload.expected_tests,
         conflicts=conflicts,
         resolutions=resolutions,
         per_agent_calls=calls_by_agent,

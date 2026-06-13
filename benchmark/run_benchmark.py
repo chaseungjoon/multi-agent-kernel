@@ -2,14 +2,19 @@
 
 Usage (from the repository root)::
 
-    python benchmark/run_benchmark.py --mode mock          # keyless self-test
-    python benchmark/run_benchmark.py --mode real          # real models (needs keys)
+    python benchmark/run_benchmark.py --mode mock                 # keyless self-test (all projects)
+    python benchmark/run_benchmark.py --mode real                 # real models, all projects
+    python benchmark/run_benchmark.py --mode real --project 2      # just the heavy project
     python benchmark/run_benchmark.py --mode real --models anthropic:claude-sonnet-4-6 \\
         openai:gpt-4o gemini:gemini-3-pro
 
-Both runners get a fresh copy of ``project_template`` and the *same* agents and
-assignment; only the coordination model differs. Results are written into
-``benchmark/README.md`` (summary) and ``benchmark/STATS.md`` (detail).
+There are two workloads: ``basic`` (9 ops, 3 modules) and ``2`` (90 ops, 9 modules of
+real-utility-style functions). Each runs both coordination models — MAK and git
+worktrees — on a fresh copy with the *same* agents and assignment; only coordination
+differs.
+Every project's last run is saved separately, so the reports
+(``benchmark/README.md`` summary + ``benchmark/STATS.md`` detail) show one labelled
+section per project and a heavier run never overwrites a lighter one's numbers.
 """
 
 from __future__ import annotations
@@ -49,53 +54,83 @@ def _load_env() -> None:
 
 _load_env()
 
-from harness.accuracy import EXPECTED_TESTS  # noqa: E402
 from harness.agents import AgentSpec, Usage, make_backends  # noqa: E402
 from harness.mak_runner import run_mak  # noqa: E402
 from harness.metrics import RunResult  # noqa: E402
 from harness.report import (  # noqa: E402
+    ProjectRun,
     RunMeta,
     inject_readme,
     render_readme_results,
     render_stats,
 )
 from harness.traditional import run_traditional  # noqa: E402
-from harness.workload import OPERATIONS, assign  # noqa: E402
+from harness.workload import WORKLOADS, Workload, assign  # noqa: E402
 
-_LAST_RUN = BENCH / ".last_run.json"
+# Render order: lighter project first, heavier second.
+_PROJECT_ORDER = ["basic", "2"]
+_LEGACY_RUN = BENCH / ".last_run.json"
 
 
-def _save_run(mak: RunResult, trad: RunResult, meta: RunMeta) -> None:
-    _LAST_RUN.write_text(json.dumps({
+def _run_path(project: str) -> Path:
+    return BENCH / f".last_run.{project}.json"
+
+
+def _save_run(project: str, mak: RunResult, trad: RunResult, meta: RunMeta) -> None:
+    _run_path(project).write_text(json.dumps({
         "meta": dataclasses.asdict(meta),
         "mak": dataclasses.asdict(mak),
         "trad": dataclasses.asdict(trad),
     }, indent=2))
 
 
-def _load_run() -> tuple[RunResult, RunResult, RunMeta]:
-    data = json.loads(_LAST_RUN.read_text())
+def _load_run(path: Path) -> ProjectRun:
+    data = json.loads(path.read_text())
+    meta = RunMeta(**data["meta"])
 
     def _result(d: dict) -> RunResult:
         d = dict(d)
         d["usage"] = Usage(**d.pop("usage"))
-        d.pop("total", None)
+        d.setdefault("total", meta.tests)  # legacy runs stored no per-result total
         d.pop("accuracy", None)
         return RunResult(**d)
 
-    return _result(data["mak"]), _result(data["trad"]), RunMeta(**data["meta"])
+    return ProjectRun(meta=meta, mak=_result(data["mak"]), trad=_result(data["trad"]))
 
 
-def _write_reports(mak: RunResult, trad: RunResult, meta: RunMeta) -> None:
+def _migrate_legacy() -> None:
+    """Seed ``.last_run.basic.json`` from the pre-multiproject ``.last_run.json``."""
+    if _legacy_basic_missing():
+        shutil.copyfile(_LEGACY_RUN, _run_path("basic"))
+
+
+def _legacy_basic_missing() -> bool:
+    return _LEGACY_RUN.exists() and not _run_path("basic").exists()
+
+
+def _collect_runs() -> list[ProjectRun]:
+    """Load every saved project run, in render order."""
+    _migrate_legacy()
+    runs: list[ProjectRun] = []
+    for project in _PROJECT_ORDER:
+        path = _run_path(project)
+        if path.exists():
+            runs.append(_load_run(path))
+    return runs
+
+
+def _write_reports() -> None:
+    runs = _collect_runs()
+    if not runs:
+        raise SystemExit("no saved runs to render")
     readme_path = BENCH / "README.md"
     readme_path.write_text(
-        inject_readme(
-            readme_path.read_text(),
-            render_readme_results(mak, trad, meta),
-        )
+        inject_readme(readme_path.read_text(), render_readme_results(runs))
     )
-    (BENCH / "STATS.md").write_text(render_stats(mak, trad, meta))
-    print(f"[benchmark] wrote {readme_path.name} and STATS.md")
+    (BENCH / "STATS.md").write_text(render_stats(runs))
+    print(f"[benchmark] wrote {readme_path.name} and STATS.md "
+          f"({len(runs)} project section(s))")
+
 
 _DEFAULT_SPECS = [
     AgentSpec("claude", "anthropic", "claude-sonnet-4-6"),
@@ -128,68 +163,84 @@ def _fresh_copy(template: Path, dest: Path) -> Path:
     return dest
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="MAK vs git-worktree benchmark")
-    parser.add_argument("--mode", choices=("mock", "real"), default="mock")
-    parser.add_argument("--agents", type=int, default=3)
-    parser.add_argument("--models", nargs="*", default=None,
-                        help="provider:model entries; overrides the defaults")
-    parser.add_argument("--keep", action="store_true",
-                        help="keep the .runs working copies for inspection")
-    parser.add_argument("--render-only", action="store_true",
-                        help="re-render the reports from the last run (no model calls)")
-    args = parser.parse_args(argv)
-
-    if args.render_only:
-        if not _LAST_RUN.exists():
-            raise SystemExit("no previous run to render; run without --render-only first")
-        _write_reports(*_load_run())
-        return 0
-
-    specs = _parse_specs(args.models, args.agents)
+def _run_project(
+    workload: Workload, specs: list[AgentSpec], mode: str, runs_root: Path
+) -> None:
     num_agents = len(specs)
-    assignment = assign(num_agents)
-    mock = args.mode == "mock"
-    template = BENCH / "project_template"
-    runs = BENCH / ".runs"
+    assignment = assign(workload, num_agents)
+    mock = mode == "mock"
+    template = BENCH / workload.template
 
-    print(f"[benchmark] mode={args.mode} agents={num_agents} "
+    print(f"\n[benchmark] === project '{workload.name}' ({workload.label}) ===")
+    print(f"[benchmark] mode={mode} agents={num_agents} "
           f"models={[s.model for s in specs]}")
 
     print("[benchmark] running MAK (shared-memory kernel) ...")
     mak_result = run_mak(
-        _fresh_copy(template, runs / "mak" / "project"),
-        runs / "mak" / "mak_state",
+        _fresh_copy(template, runs_root / workload.name / "mak" / "project"),
+        runs_root / workload.name / "mak" / "mak_state",
         make_backends(specs, mock=mock),
         assignment,
+        workload,
     )
     print(f"[benchmark]   MAK: {mak_result.accuracy:.0%} accuracy, "
           f"{mak_result.usage.calls} calls, {mak_result.wall_seconds:.2f}s")
 
     print("[benchmark] running Traditional (git worktrees) ...")
     trad_result = run_traditional(
-        _fresh_copy(template, runs / "traditional" / "project"),
-        runs / "traditional" / "worktrees",
+        _fresh_copy(template, runs_root / workload.name / "traditional" / "project"),
+        runs_root / workload.name / "traditional" / "worktrees",
         make_backends(specs, mock=mock),
         assignment,
+        workload,
     )
     print(f"[benchmark]   Traditional: {trad_result.accuracy:.0%} accuracy, "
           f"{trad_result.usage.calls} calls, {trad_result.conflicts} conflicts")
 
     meta = RunMeta(
-        mode=args.mode,
+        mode=mode,
         num_agents=num_agents,
         models=[s.model for s in specs],
         timestamp=datetime.datetime.now().isoformat(timespec="seconds"),
-        operations=len(OPERATIONS),
-        tests=EXPECTED_TESTS,
+        operations=len(workload.operations),
+        tests=workload.expected_tests,
+        project=workload.name,
+        label=workload.label,
+        modules=len(workload.modules),
     )
+    _save_run(workload.name, mak_result, trad_result, meta)
 
-    _save_run(mak_result, trad_result, meta)
-    _write_reports(mak_result, trad_result, meta)
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="MAK vs git-worktree benchmark")
+    parser.add_argument("--mode", choices=("mock", "real"), default="mock")
+    parser.add_argument("--agents", type=int, default=3)
+    parser.add_argument("--project", choices=("basic", "2", "all"), default="all",
+                        help="which workload to run (default: all)")
+    parser.add_argument("--models", nargs="*", default=None,
+                        help="provider:model entries; overrides the defaults")
+    parser.add_argument("--keep", action="store_true",
+                        help="keep the .runs working copies for inspection")
+    parser.add_argument("--render-only", action="store_true",
+                        help="re-render the reports from the last runs (no model calls)")
+    args = parser.parse_args(argv)
+
+    if args.render_only:
+        _write_reports()
+        return 0
+
+    specs = _parse_specs(args.models, args.agents)
+    projects = _PROJECT_ORDER if args.project == "all" else [args.project]
+    runs_root = BENCH / ".runs"
+    shutil.rmtree(runs_root, ignore_errors=True)  # clear any stale copies from a crash
+
+    for project in projects:
+        _run_project(WORKLOADS[project], specs, args.mode, runs_root)
+
+    _write_reports()
 
     if not args.keep:
-        shutil.rmtree(runs, ignore_errors=True)
+        shutil.rmtree(runs_root, ignore_errors=True)
     return 0
 
 

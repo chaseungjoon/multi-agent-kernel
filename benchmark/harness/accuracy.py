@@ -1,9 +1,9 @@
 """Accuracy oracle: run a project copy's test suite and count what passes.
 
-Accuracy is ``passed / EXPECTED_TESTS`` against a *fixed* expected count, so that
-tests which never even get collected — e.g. because ``registry.py`` is left with
-git conflict markers and fails to import — are correctly counted as failures rather
-than silently dropped from the denominator.
+Accuracy is ``passed / workload.expected_tests`` against a *fixed* expected count,
+so that tests which never even get collected — e.g. because ``registry.py`` is left
+with git conflict markers and fails to import — are correctly counted as failures
+rather than silently dropped from the denominator.
 """
 
 from __future__ import annotations
@@ -12,10 +12,6 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-
-# The full suite when every stub is implemented and every op registered:
-# 12 per-operation tests + 9 "is registered" + 9 "dispatches correctly" = 30.
-EXPECTED_TESTS = 30
 
 _SUMMARY = re.compile(r"(\d+) (passed|failed|error|errors)")
 
