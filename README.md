@@ -80,6 +80,7 @@ python3 -m mak --task "your task" --work-dir /path/to/project \
 --models gemini:gemini-3-pro
 
 # Use multiple providers
+--models anthropic openai gemini
 --models anthropic:claude-opus-4-8 openai:gpt-5.5 gemini:gemini-3-pro
 
 # Use single provider with multiple agents
