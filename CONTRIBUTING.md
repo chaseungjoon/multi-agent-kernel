@@ -639,7 +639,15 @@ The canonical conflict matrix lives in `conflicts.py` and is consumed by **both*
 `.mak/lock_table.json` after every mutation (for crash recovery). Notable methods:
 `try_acquire`, `try_acquire_all` (atomic multi-lock — all-or-nothing, never partial
 acquisition), `release`, `release_all`, `renew` / `renew_all` (lease heartbeat),
-`expire_stale`, and the entry accessors.
+`expire_stale`, `clear`, and the entry accessors.
+
+**Fresh-session hygiene:** the persisted table is for crash *recovery* within a
+session. A brand-new session owns none of the leases a prior (possibly killed) run
+left on disk, so `Session.initialize` calls `clear()` to drop them — otherwise they
+surface later as alarming-but-spurious "lease expired: holder=… (held 1383s)"
+warnings when the new run's first sweep finds them. Crash resume takes the other
+path: `Session.recover` deliberately keeps the persisted table and `expire_stale`s
+it.
 
 **Concurrency model (option B):** every public mutation is guarded by one
 table-wide **re-entrant lock**, so `try_acquire_all`'s check-pass and acquire-pass
@@ -754,6 +762,12 @@ The SDKs (`anthropic`, `openai`, `google-genai`) are declared dependencies, but 
 adapter imports its SDK **lazily** and accepts an **injectable client** — so import
 time stays fast and the tests never make a real call (they inject fakes).
 
+The whole new source of every changed node travels back inside that one structured
+reply, so a node's full file can be large — especially a **whole-file node** (§2)
+returning an entire new module. A truncated reply is unparseable and fails the task,
+so the Anthropic adapter's default `max_tokens` is **8192** (overridable per adapter);
+pair a big-file workload with a model and limit that can emit it in one response.
+
 CLI subprocess adapters (`claude_code`, `codex`, `copilot`) are a **secondary
 fallback**, implemented over a shared `CliSubprocessAdapter` base (`cli_adapter.py`):
 they speak MAK's newline-JSON wire protocol over a pooled subprocess, take a `cmd`
@@ -834,8 +848,21 @@ so it is unit-testable without Docker.
   `complete(prompt) -> str`), and validates the JSON plan with `parse_plan`. The
   parser accepts a bare array or `{"subtasks": …}`, strips code fences, validates
   each `SubTask` (including the optional `context_nodes`), and rejects duplicate ids
-  and unknown dependencies. On a malformed response it retries up to `max_retries`,
-  feeding the rejection reason back, then raises `PlannerFailedError`.
+  and unknown dependencies. Two further **target-node rules** keep a plan inside what
+  the kernel can actually execute (both raise `ValueError`, so `decompose` retries
+  with the reason fed back and the model self-corrects):
+    - **Python-only targets.** Every `target_node`'s file component must end in
+      `.py` (`is_python_target`). A `.md`/`.json`/`README`/doc target is rejected —
+      MAK has no AST node for it, so it could never be ingested or reconstructed
+      (this is what made an "architecture doc" task fail cryptically deep in the
+      parser before the gate existed).
+    - **One whole file, one task.** A whole-file target (a bare `path.py`, §2) must be
+      owned by exactly one task; two tasks each returning the entire file would
+      clobber each other and serialize on the one node. To split a file across tasks,
+      target distinct symbols (`path.py::kind::name`). The prompt also steers the
+      model to decompose a new project by file (one focused module per task).
+  On a malformed response it retries up to `max_retries`, feeding the rejection
+  reason back, then raises `PlannerFailedError`.
 - **`review.py`** — `display_plan_for_review` renders the subtask list and dependency
   edges and loops **approve / edit (paste corrected JSON) / abort**
   (`PlanReviewAborted`). I/O is injected (`prompt_fn` / `printer`) for testability;
@@ -904,8 +931,19 @@ Three robustness properties worth knowing:
 - **Crash recovery** — `recover()` expires stale leases and rebuilds the scheduler
   from `task_graph.json` via `from_persisted`.
 - **Honest stall reporting** — a run is `COMPLETED` *only if* the scheduler is
-  genuinely done; a run stranded by an unsatisfiable DAG or locks that never freed
-  reports `FAILED` with a `blocked=(…)` list, never a false success.
+  genuinely done; otherwise `SessionResult` splits the strays so the outcome is
+  legible: `failed` (a task that exhausted `max_attempts`), `skipped` (a task with a
+  **failed ancestor** — an expected downstream consequence, computed by walking the
+  dependency edges to a fixpoint), and `blocked` (stranded for some *other* reason —
+  an unsatisfiable DAG or a lock that never freed, with no failed ancestor). A run
+  with any of the three reports `FAILED`, never a false success.
+- **Diagnosable failures** — each task's most recent failure reason is captured
+  (`_failure_reasons`): the agent's `TaskResult.error` (an API error or a
+  truncated/malformed structured reply), or the rejection reason from
+  conflict/parse/lock-revalidation, or a fallback for an agent that claimed success
+  but staged nothing. `SessionResult.failure_reasons` carries it for the failed
+  tasks, and the CLI prints one line per failed task — so a failure is never a bare
+  task id with no explanation.
 
 All collaborators are injected behind `Protocol`s, so the session is testable with
 fakes.
@@ -985,7 +1023,10 @@ shell over the composition root, split into testable functions:
   failed-or-blocked run / failing tests, `2` for a config error (including a bad
   `--models` provider or `--max-agents < 1`) or a missing Docker daemon under
   `--sandbox`. The `session_builder` seam lets tests drive `main` end-to-end with a
-  fully-faked session.
+  fully-faked session. The end-of-run summary counts `completed / failed / skipped /
+  blocked` (§10) and prints each failed task's reason and the `skipped`/`blocked`
+  lists separately, so a cascade from one root failure reads as one failure plus its
+  dependents, not many independent problems.
 
 ### 12.1 Choosing agents and concurrency from the command line
 
