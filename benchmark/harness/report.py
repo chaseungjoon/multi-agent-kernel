@@ -28,19 +28,29 @@ class RunMeta:
     project: str = "basic"  # workload key
     label: str = "Basic toolkit"  # human label
     modules: int = 3  # module count of the workload
+    repeats: int = 1  # how many runs the numbers are averaged over
 
 
 @dataclass(frozen=True)
 class ProjectRun:
-    """One project's full result triple."""
+    """One project's full result triple (the ``mak``/``trad`` numbers are the mean
+    over ``meta.repeats`` runs; ``samples`` holds the per-run headline numbers)."""
 
     meta: RunMeta
     mak: RunResult
     trad: RunResult
+    samples: list[dict] | None = None
 
 
 def _tokens(result: RunResult) -> int:
-    return result.usage.tokens_in + result.usage.tokens_out
+    return round(result.usage.tokens_in + result.usage.tokens_out)
+
+
+def _num(value: float | int) -> str:
+    """Render a metric: integers (and whole floats) without decimals, else one place."""
+    if isinstance(value, float) and not value.is_integer():
+        return f"{value:.1f}"
+    return f"{int(round(value)):,}"
 
 
 def _fmt_secs(value: float) -> str:
@@ -50,13 +60,13 @@ def _fmt_secs(value: float) -> str:
 def _summary_table(mak: RunResult, trad: RunResult) -> str:
     rows = [
         ("Implementation time", _fmt_secs(mak.wall_seconds), _fmt_secs(trad.wall_seconds)),
-        ("Total tokens", f"{_tokens(mak):,}", f"{_tokens(trad):,}"),
-        ("Model calls", str(mak.usage.calls), str(trad.usage.calls)),
+        ("Total tokens", _num(_tokens(mak)), _num(_tokens(trad))),
+        ("Model calls", _num(mak.usage.calls), _num(trad.usage.calls)),
         ("Accuracy (tests passed)",
-         f"{mak.passed}/{mak.total} ({mak.accuracy:.0%})",
-         f"{trad.passed}/{trad.total} ({trad.accuracy:.0%})"),
-        ("Registry merge conflicts", str(mak.conflicts), str(trad.conflicts)),
-        ("Conflict-resolution calls", str(mak.resolutions), str(trad.resolutions)),
+         f"{_num(mak.passed)}/{mak.total} ({mak.accuracy:.0%})",
+         f"{_num(trad.passed)}/{trad.total} ({trad.accuracy:.0%})"),
+        ("Registry merge conflicts", _num(mak.conflicts), _num(trad.conflicts)),
+        ("Conflict-resolution calls", _num(mak.resolutions), _num(trad.resolutions)),
     ]
     lines = ["| Metric | MAK | Traditional (worktrees) |", "|---|---|---|"]
     lines += [f"| {m} | {a} | {b} |" for m, a, b in rows]
@@ -106,7 +116,7 @@ def _takeaway(mak: RunResult, trad: RunResult) -> str:
         )
     lines.append(
         f"- **Coordination:** MAK hit **0** merge conflicts by construction; the "
-        f"worktree run hit **{trad.conflicts}**, each an extra resolution call."
+        f"worktree run hit **{_num(trad.conflicts)}**, each an extra resolution call."
     )
     return "\n".join(lines)
 
@@ -120,19 +130,25 @@ def _mode_note(meta: RunMeta) -> str:
             "merge-conflict and resolution counts, which become real token/time/accuracy "
             "costs under `--mode real`. Run with real models for representative numbers."
         )
+    averaged = (
+        f" Figures are the **mean of {meta.repeats} runs** (per-run breakdown below)."
+        if meta.repeats > 1 else ""
+    )
     return (
         f"> **Mode: `real`.** {meta.num_agents} agents "
         f"({', '.join(meta.models)}) implementing {meta.operations} operations "
-        f"(verified by {meta.tests} tests)."
+        f"(verified by {meta.tests} tests).{averaged}"
     )
 
 
 def _readme_section(run: ProjectRun) -> str:
     meta = run.meta
+    runs_note = f" · mean of {meta.repeats} runs" if meta.repeats > 1 else ""
     return "\n".join([
         f"### {meta.label} — {meta.operations} operations, {meta.modules} modules",
         "",
-        f"_Last run: {meta.timestamp} · mode `{meta.mode}` · {meta.num_agents} agents._",
+        f"_Last run: {meta.timestamp} · mode `{meta.mode}` · "
+        f"{meta.num_agents} agents{runs_note}._",
         "",
         _mode_note(meta),
         "",
@@ -163,12 +179,37 @@ def inject_readme(readme_text: str, block: str) -> str:
     return pre + block + post
 
 
+def _samples_lines(run: ProjectRun) -> list[str]:
+    """A per-run breakdown table, so the averaged headline is auditable."""
+    if not run.samples or run.meta.repeats <= 1:
+        return []
+    lines = [
+        f"### Per-run breakdown ({run.meta.repeats} runs)",
+        "",
+        "Each row is one independent run; the headline above is the mean of these.",
+        "",
+        "| Run | MAK tokens | MAK passed | MAK time | "
+        "Trad tokens | Trad passed | Trad time | Trad conflicts |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for i, s in enumerate(run.samples, 1):
+        m, t = s["mak"], s["trad"]
+        lines.append(
+            f"| {i} | {m['tokens']:,} | {m['passed']}/{run.meta.tests} | "
+            f"{m['wall']:.1f}s | {t['tokens']:,} | {t['passed']}/{run.meta.tests} | "
+            f"{t['wall']:.1f}s | {t['conflicts']} |"
+        )
+    lines.append("")
+    return lines
+
+
 def _stats_section(run: ProjectRun) -> list[str]:
     meta, mak, trad = run.meta, run.mak, run.trad
+    avg = f" (mean of {meta.repeats} runs)" if meta.repeats > 1 else ""
     lines: list[str] = [
         f"## {meta.label}",
         "",
-        f"- **Run at:** {meta.timestamp}",
+        f"- **Run at:** {meta.timestamp}{avg}",
         f"- **Mode:** `{meta.mode}`",
         f"- **Agents:** {meta.num_agents} ({', '.join(meta.models)})",
         f"- **Workload:** {meta.operations} operations across {meta.modules} modules "
@@ -204,16 +245,18 @@ def _stats_section(run: ProjectRun) -> list[str]:
             f"| {agent} | {mak.per_agent_calls.get(agent, 0)} | "
             f"{trad.per_agent_calls.get(agent, 0)} |"
         )
+    lines += _samples_lines(run)
     lines += [
         "",
         "### Coordination",
         "",
         f"- **MAK** held a node-level write lock on the shared `_register_all`, "
         f"serializing the {meta.operations} registry edits: "
-        f"**{mak.conflicts} conflicts**, **{mak.resolutions} resolution calls**.",
+        f"**{_num(mak.conflicts)} conflicts**, "
+        f"**{_num(mak.resolutions)} resolution calls**.",
         f"- **Traditional** merged {meta.num_agents} branches that all edited "
-        f"`_register_all`: **{trad.conflicts} conflicts**, "
-        f"**{trad.resolutions} resolution calls**.",
+        f"`_register_all`: **{_num(trad.conflicts)} conflicts**, "
+        f"**{_num(trad.resolutions)} resolution calls**.",
         "",
     ]
     for label, result in (("MAK", mak), ("Traditional", trad)):

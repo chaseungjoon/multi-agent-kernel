@@ -14,10 +14,10 @@ class RunResult:
     label: str  # "MAK" | "Traditional (git worktrees)"
     wall_seconds: float
     usage: Usage  # total tokens + model calls across the run
-    passed: int  # tests passing after the run
+    passed: float  # tests passing after the run (mean, possibly fractional, when averaged)
     total: int  # the workload's expected test count (denominator)
-    conflicts: int  # registry merge conflicts hit (0 for MAK by construction)
-    resolutions: int  # conflict-resolution model calls made (0 for MAK)
+    conflicts: float  # registry merge conflicts hit (0 for MAK by construction)
+    resolutions: float  # conflict-resolution model calls made (0 for MAK)
     per_agent_calls: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 

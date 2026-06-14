@@ -76,14 +76,19 @@ python benchmark/run_benchmark.py --mode real
 # Just one target (the heavy one):
 python benchmark/run_benchmark.py --mode real --project 2
 
+# Average over several runs (the published Template 2 numbers are --repeat 10):
+python benchmark/run_benchmark.py --mode real --project 2 --repeat 10
+
 # Pick your own agents (provider:model), same set used for both sides:
 python benchmark/run_benchmark.py --mode real \
   --models anthropic:claude-sonnet-4-6 openai:gpt-4o gemini:gemini-3-pro
 ```
 
 Each run writes its results into the **Results** section below and the full breakdown
-into [STATS.md](STATS.md). Working copies live under `benchmark/.runs/` (gitignored);
-pass `--keep` to inspect them.
+into [STATS.md](STATS.md); with `--repeat N` the headline is the mean of N runs and
+STATS.md gains a per-run breakdown table. Working copies live under `benchmark/.runs/`
+(gitignored); pass `--keep` to inspect them. A per-call liveness line is printed to
+stderr so a long sweep is visibly progressing.
 
 ## Results
 
@@ -119,24 +124,24 @@ _Last run: 2026-06-09T19:13:39 · mode `real` · 3 agents._
 
 ### Template 2 (90 ops) — 90 operations, 9 modules
 
-_Last run: 2026-06-14T04:04:44 · mode `real` · 3 agents._
+_Last run: 2026-06-14T19:03:31 · mode `real` · 3 agents · mean of 10 runs._
 
-> **Mode: `real`.** 3 agents (claude-sonnet-4-6, claude-sonnet-4-6, claude-sonnet-4-6) implementing 90 operations (verified by 270 tests).
+> **Mode: `real`.** 3 agents (claude-sonnet-4-6, claude-sonnet-4-6, claude-sonnet-4-6) implementing 90 operations (verified by 270 tests). Figures are the **mean of 10 runs** (per-run breakdown below).
 
 | Metric | MAK | Traditional (worktrees) |
 |---|---|---|
-| Implementation time | 191.67s | 92.11s |
-| Total tokens | 18,186 | 23,761 |
-| Model calls | 90 | 92 |
-| Accuracy (tests passed) | 253/270 (94%) | 250/270 (93%) |
+| Implementation time | 226.54s | 99.52s |
+| Total tokens | 18,339 | 23,760 |
+| Model calls | 91 | 92 |
+| Accuracy (tests passed) | 253.1/270 (94%) | 251.6/270 (93%) |
 | Registry merge conflicts | 0 | 2 |
 | Conflict-resolution calls | 0 | 2 |
 
 **Reading the numbers:**
 
-- **Tokens:** MAK spent **23% fewer** (18,186 vs 23,761) — it reconciles nothing, so it makes no extra conflict-resolution calls.
+- **Tokens:** MAK spent **23% fewer** (18,339 vs 23,760) — it reconciles nothing, so it makes no extra conflict-resolution calls.
 - **Accuracy:** MAK higher — MAK 94% vs Traditional 93% (Traditional lost work in the merge).
-- **Time:** the worktree run was faster here (92.1s vs 191.7s): *every* task contends on the one shared registry node, so MAK serializes them while the worktrees run fully in parallel and reconcile afterwards. On a workload with more independent work, MAK parallelizes that part too — this benchmark deliberately maximizes contention.
+- **Time:** the worktree run was faster here (99.5s vs 226.5s): *every* task contends on the one shared registry node, so MAK serializes them while the worktrees run fully in parallel and reconcile afterwards. On a workload with more independent work, MAK parallelizes that part too — this benchmark deliberately maximizes contention.
 - **Coordination:** MAK hit **0** merge conflicts by construction; the worktree run hit **2**, each an extra resolution call.
 
 See [STATS.md](STATS.md) for the full breakdown.

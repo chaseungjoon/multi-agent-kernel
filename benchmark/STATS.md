@@ -53,39 +53,39 @@
 
 ## Template 2 (90 ops)
 
-- **Run at:** 2026-06-14T04:04:44
+- **Run at:** 2026-06-14T19:03:31 (mean of 10 runs)
 - **Mode:** `real`
 - **Agents:** 3 (claude-sonnet-4-6, claude-sonnet-4-6, claude-sonnet-4-6)
 - **Workload:** 90 operations across 9 modules + 1 shared registry function; 270 tests as the accuracy oracle.
 
-> **Mode: `real`.** 3 agents (claude-sonnet-4-6, claude-sonnet-4-6, claude-sonnet-4-6) implementing 90 operations (verified by 270 tests).
+> **Mode: `real`.** 3 agents (claude-sonnet-4-6, claude-sonnet-4-6, claude-sonnet-4-6) implementing 90 operations (verified by 270 tests). Figures are the **mean of 10 runs** (per-run breakdown below).
 
 ### Headline
 
 | Metric | MAK | Traditional (worktrees) |
 |---|---|---|
-| Implementation time | 191.67s | 92.11s |
-| Total tokens | 18,186 | 23,761 |
-| Model calls | 90 | 92 |
-| Accuracy (tests passed) | 253/270 (94%) | 250/270 (93%) |
+| Implementation time | 226.54s | 99.52s |
+| Total tokens | 18,339 | 23,760 |
+| Model calls | 91 | 92 |
+| Accuracy (tests passed) | 253.1/270 (94%) | 251.6/270 (93%) |
 | Registry merge conflicts | 0 | 2 |
 | Conflict-resolution calls | 0 | 2 |
 
 ### Reading the numbers
 
-- **Tokens:** MAK spent **23% fewer** (18,186 vs 23,761) — it reconciles nothing, so it makes no extra conflict-resolution calls.
+- **Tokens:** MAK spent **23% fewer** (18,339 vs 23,760) — it reconciles nothing, so it makes no extra conflict-resolution calls.
 - **Accuracy:** MAK higher — MAK 94% vs Traditional 93% (Traditional lost work in the merge).
-- **Time:** the worktree run was faster here (92.1s vs 191.7s): *every* task contends on the one shared registry node, so MAK serializes them while the worktrees run fully in parallel and reconcile afterwards. On a workload with more independent work, MAK parallelizes that part too — this benchmark deliberately maximizes contention.
+- **Time:** the worktree run was faster here (99.5s vs 226.5s): *every* task contends on the one shared registry node, so MAK serializes them while the worktrees run fully in parallel and reconcile afterwards. On a workload with more independent work, MAK parallelizes that part too — this benchmark deliberately maximizes contention.
 - **Coordination:** MAK hit **0** merge conflicts by construction; the worktree run hit **2**, each an extra resolution call.
 
 ### Token detail
 
 | | MAK | Traditional |
 |---|---|---|
-| Input tokens | 10,307 | 13,477 |
-| Output tokens | 7,879 | 10,284 |
-| Total tokens | 18,186 | 23,761 |
-| Model calls | 90 | 92 |
+| Input tokens | 10,378 | 13,481 |
+| Output tokens | 7,961 | 10,279 |
+| Total tokens | 18,339 | 23,760 |
+| Model calls | 91 | 92 |
 
 ### Model calls per agent
 
@@ -94,6 +94,23 @@
 | agent0-claude-sonnet-4-6 | 30 | 32 |
 | agent1-claude-sonnet-4-6 | 30 | 30 |
 | agent2-claude-sonnet-4-6 | 30 | 30 |
+### Per-run breakdown (10 runs)
+
+Each row is one independent run; the headline above is the mean of these.
+
+| Run | MAK tokens | MAK passed | MAK time | Trad tokens | Trad passed | Trad time | Trad conflicts |
+|---|---|---|---|---|---|---|---|
+| 1 | 18,163 | 253/270 | 213.4s | 23,737 | 253/270 | 90.1s | 2 |
+| 2 | 18,129 | 253/270 | 225.2s | 23,796 | 253/270 | 94.4s | 2 |
+| 3 | 18,588 | 253/270 | 235.9s | 23,697 | 250/270 | 108.5s | 2 |
+| 4 | 18,457 | 253/270 | 224.4s | 23,761 | 250/270 | 97.0s | 2 |
+| 5 | 18,209 | 254/270 | 211.1s | 23,879 | 247/270 | 93.2s | 2 |
+| 6 | 18,221 | 253/270 | 224.8s | 23,724 | 250/270 | 97.6s | 2 |
+| 7 | 18,695 | 253/270 | 242.5s | 23,746 | 253/270 | 103.6s | 2 |
+| 8 | 18,381 | 253/270 | 253.2s | 23,735 | 253/270 | 108.9s | 2 |
+| 9 | 18,137 | 253/270 | 216.7s | 23,749 | 254/270 | 102.7s | 2 |
+| 10 | 18,408 | 253/270 | 218.1s | 23,782 | 253/270 | 99.1s | 2 |
+
 
 ### Coordination
 
@@ -101,4 +118,4 @@
 - **Traditional** merged 3 branches that all edited `_register_all`: **2 conflicts**, **2 resolution calls**.
 
 #### Traditional notes
-- agent2-claude-sonnet-4-6 produced unparseable caesar: unmatched ')' (<unknown>, line 6)
+- 5 agent-output note(s) across 10 runs (malformed/failed calls isolated per the parse gate; see per-run rows).

@@ -76,11 +76,18 @@ def _run_path(project: str) -> Path:
     return BENCH / f".last_run.{project}.json"
 
 
-def _save_run(project: str, mak: RunResult, trad: RunResult, meta: RunMeta) -> None:
+def _save_run(
+    project: str,
+    mak: RunResult,
+    trad: RunResult,
+    meta: RunMeta,
+    samples: list[dict] | None = None,
+) -> None:
     _run_path(project).write_text(json.dumps({
         "meta": dataclasses.asdict(meta),
         "mak": dataclasses.asdict(mak),
         "trad": dataclasses.asdict(trad),
+        "samples": samples,
     }, indent=2))
 
 
@@ -95,7 +102,63 @@ def _load_run(path: Path) -> ProjectRun:
         d.pop("accuracy", None)
         return RunResult(**d)
 
-    return ProjectRun(meta=meta, mak=_result(data["mak"]), trad=_result(data["trad"]))
+    return ProjectRun(
+        meta=meta,
+        mak=_result(data["mak"]),
+        trad=_result(data["trad"]),
+        samples=data.get("samples"),
+    )
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _aggregate(results: list[RunResult]) -> RunResult:
+    """Average a list of single-run results from the *same* runner into one result.
+
+    Tokens and call counts are rounded to whole numbers; accuracy and conflict
+    counts keep one decimal so a fractional mean (e.g. 252.4/270) stays honest.
+    """
+    n = len(results)
+    agents = sorted({a for r in results for a in r.per_agent_calls})
+    note_count = sum(len(r.notes) for r in results)
+    notes = (
+        [f"{note_count} agent-output note(s) across {n} runs "
+         f"(malformed/failed calls isolated per the parse gate; see per-run rows)."]
+        if note_count else []
+    )
+    return RunResult(
+        label=results[0].label,
+        wall_seconds=_mean([r.wall_seconds for r in results]),
+        usage=Usage(
+            tokens_in=round(_mean([r.usage.tokens_in for r in results])),
+            tokens_out=round(_mean([r.usage.tokens_out for r in results])),
+            calls=round(_mean([r.usage.calls for r in results])),
+        ),
+        passed=round(_mean([r.passed for r in results]), 1),
+        total=results[0].total,
+        conflicts=round(_mean([r.conflicts for r in results]), 1),
+        resolutions=round(_mean([r.resolutions for r in results]), 1),
+        per_agent_calls={
+            a: round(_mean([r.per_agent_calls.get(a, 0) for r in results]))
+            for a in agents
+        },
+        notes=notes,
+    )
+
+
+def _sample(mak: RunResult, trad: RunResult) -> dict:
+    def one(r: RunResult) -> dict:
+        return {
+            "tokens": r.usage.tokens_in + r.usage.tokens_out,
+            "calls": r.usage.calls,
+            "passed": r.passed,
+            "wall": r.wall_seconds,
+            "conflicts": r.conflicts,
+            "resolutions": r.resolutions,
+        }
+    return {"mak": one(mak), "trad": one(trad)}
 
 
 def _migrate_legacy() -> None:
@@ -163,17 +226,13 @@ def _fresh_copy(template: Path, dest: Path) -> Path:
     return dest
 
 
-def _run_project(
+def _one_pass(
     workload: Workload, specs: list[AgentSpec], mode: str, runs_root: Path
-) -> None:
-    num_agents = len(specs)
-    assignment = assign(workload, num_agents)
+) -> tuple[RunResult, RunResult]:
+    """Run MAK and Traditional once over the workload on fresh copies."""
+    assignment = assign(workload, len(specs))
     mock = mode == "mock"
     template = BENCH / workload.template
-
-    print(f"\n[benchmark] === project '{workload.name}' ({workload.label}) ===")
-    print(f"[benchmark] mode={mode} agents={num_agents} "
-          f"models={[s.model for s in specs]}")
 
     print("[benchmark] running MAK (shared-memory kernel) ...")
     mak_result = run_mak(
@@ -196,6 +255,39 @@ def _run_project(
     )
     print(f"[benchmark]   Traditional: {trad_result.accuracy:.0%} accuracy, "
           f"{trad_result.usage.calls} calls, {trad_result.conflicts} conflicts")
+    return mak_result, trad_result
+
+
+def _run_project(
+    workload: Workload,
+    specs: list[AgentSpec],
+    mode: str,
+    runs_root: Path,
+    repeats: int = 1,
+) -> None:
+    num_agents = len(specs)
+
+    print(f"\n[benchmark] === project '{workload.name}' ({workload.label}) ===")
+    print(f"[benchmark] mode={mode} agents={num_agents} repeats={repeats} "
+          f"models={[s.model for s in specs]}")
+
+    mak_runs: list[RunResult] = []
+    trad_runs: list[RunResult] = []
+    samples: list[dict] = []
+    for i in range(repeats):
+        print(f"\n[benchmark] --- {workload.name}: run {i + 1}/{repeats} ---",
+              file=sys.stderr, flush=True)
+        mak_result, trad_result = _one_pass(workload, specs, mode, runs_root)
+        mak_runs.append(mak_result)
+        trad_runs.append(trad_result)
+        samples.append(_sample(mak_result, trad_result))
+
+    mak_agg = _aggregate(mak_runs)
+    trad_agg = _aggregate(trad_runs)
+    if repeats > 1:
+        print(f"[benchmark]   mean over {repeats} runs — "
+              f"MAK {mak_agg.accuracy:.0%}/{_tokens_int(mak_agg)} tok, "
+              f"Trad {trad_agg.accuracy:.0%}/{_tokens_int(trad_agg)} tok")
 
     meta = RunMeta(
         mode=mode,
@@ -207,8 +299,14 @@ def _run_project(
         project=workload.name,
         label=workload.label,
         modules=len(workload.modules),
+        repeats=repeats,
     )
-    _save_run(workload.name, mak_result, trad_result, meta)
+    _save_run(workload.name, mak_agg, trad_agg, meta,
+              samples=samples if repeats > 1 else None)
+
+
+def _tokens_int(r: RunResult) -> int:
+    return round(r.usage.tokens_in + r.usage.tokens_out)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -217,6 +315,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--agents", type=int, default=3)
     parser.add_argument("--project", choices=("basic", "2", "all"), default="all",
                         help="which workload to run (default: all)")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="run each project N times and report the mean (default: 1)")
     parser.add_argument("--models", nargs="*", default=None,
                         help="provider:model entries; overrides the defaults")
     parser.add_argument("--keep", action="store_true",
@@ -235,7 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     shutil.rmtree(runs_root, ignore_errors=True)  # clear any stale copies from a crash
 
     for project in projects:
-        _run_project(WORKLOADS[project], specs, args.mode, runs_root)
+        _run_project(WORKLOADS[project], specs, args.mode, runs_root,
+                     repeats=max(1, args.repeat))
 
     _write_reports()
 
