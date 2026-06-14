@@ -1,16 +1,21 @@
+<div align="center">
+
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/Version-0.0.4 Beta-brightgreen"/> <img src="https://img.shields.io/badge/License-MIT-red"/> <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
 
-
+---
 
 A kernel for **concurrent** multi-agent software development. 
 
-Many agents edit one shared working directory at the same time — no worktrees, no merge step, no
-late-stage reconciliation. The kernel arbitrates concurrent access the way an OS
+Multiple agents edit one shared working directory at the same time — no worktrees, no merge step, no
+late-stage reconciliation. 
+
+The Multi Agent Kernel arbitrates concurrent access the way an OS
 arbitrates shared memory between threads.
 
-> Check out the [knowledge graph](https://mak-kg.vercel.app) for this project! (created with [graphify](https://github.com/safishamsi/graphify))
+</div>
+
 
 ## The idea
 
@@ -26,6 +31,8 @@ The kernel owns a symbol-level lock table and resolves conflicts at *scheduling*
 dependency graph is still explicit. Each agent receives only the nodes it holds write
 locks on, edits them in isolation, and returns the modified fragments; the kernel
 reassembles the file. Git is used only as an audit log.
+
+> Check out the [knowledge graph](https://mak-kg.vercel.app) for this project! (created with [graphify](https://github.com/safishamsi/graphify))
 
 ## Run
 
