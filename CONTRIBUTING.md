@@ -496,6 +496,16 @@ format is:
 Duplicate names (e.g. `@overload` stubs, conditional defs) are disambiguated with a
 `#n` suffix so no symbol is silently dropped.
 
+**Whole-file nodes (new-file creation).** A node id may also be a **bare file path**
+with no `::kind::name` suffix — e.g. `app/main.py`. This is a *whole-file node*: the
+agent returns the entire file as one node, and reconstruction writes it verbatim (a
+single fragment already *is* the file). It is how MAK creates a brand-new file from an
+empty target: `list_nodes(path)`/`get_committed_fragments(path)` return the exact-match
+bare node alongside any `path::…` fragments, locking uses the bare path as its key
+(so commit-time re-validation lines up), and `reconstruct_file` `mkdir -p`s the parent.
+A planner targeting `editor/main.py` (greenfield) therefore works end to end; an
+existing file is still decomposed into the qualified fragments above.
+
 ### On-disk layout
 
 Runtime state lives under `.mak/` (gitignored):
@@ -853,6 +863,13 @@ the working branch (no branches, no worktrees). `GitHelper`:
 - `get_session_commits(session_id)` parses `git log` into `CommitInfo` filtered by
   session; `validate_clean_state()` checks porcelain; `push(branch, remote)`
   coordinates the single end-of-session push.
+- `ensure_initialized()` (called from `Session.initialize` when `auto_commit` is on)
+  guarantees the work-dir is its **own** repo before any commit. If the dir is nested
+  inside an outer repo (a classic footgun: a project under a git-tracked home
+  directory) or is in no repo at all, it runs `git init` there — and sets a *local*
+  identity only when git cannot resolve one (never overriding a user's global
+  identity). This keeps MAK's audit commits inside the project instead of leaking them
+  into a surrounding repo.
 
 All operations shell out to `git` and raise `GitIntegrationError` with stderr on
 failure — nothing is swallowed.

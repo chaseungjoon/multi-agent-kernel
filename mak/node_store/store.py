@@ -164,13 +164,22 @@ class NodeStore:
             return sorted(versions)
 
     def list_nodes(self, file_path: str | None = None) -> list[NodeId]:
-        """List committed node IDs in source order, optionally filtered by file."""
+        """List committed node IDs in source order, optionally filtered by file.
+
+        A *whole-file* node — a bare path id equal to ``file_path`` with no
+        ``::kind::name`` suffix — is included for its own file. Such nodes are how a
+        brand-new file is created: the agent returns the entire file as one node, and
+        reconstruction writes it verbatim (a single fragment is already the file).
+        """
         with self._lock:
             nodes = sorted(self._nodes, key=self._order)
             if file_path is None:
                 return nodes
             prefix = f"{file_path}::"
-            return [nid for nid in nodes if str(nid).startswith(prefix)]
+            return [
+                nid for nid in nodes
+                if str(nid) == file_path or str(nid).startswith(prefix)
+            ]
 
     def parse_file_into_nodes(
         self, file_path: str, source: str | None = None

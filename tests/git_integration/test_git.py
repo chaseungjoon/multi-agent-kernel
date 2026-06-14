@@ -124,6 +124,28 @@ class TestGetSessionCommits:
         assert helper.get_session_commits("nope") == []
 
 
+class TestEnsureInitialized:
+    def test_existing_repo_root_is_a_noop(self, repo: Path) -> None:
+        assert GitHelper(repo).ensure_initialized() is False
+
+    def test_non_repo_dir_is_initialized(self, tmp_path: Path) -> None:
+        work = tmp_path / "fresh"
+        work.mkdir()
+        assert GitHelper(work).ensure_initialized() is True
+        assert (work / ".git").is_dir()
+
+    def test_nested_dir_inside_outer_repo_gets_its_own_repo(self, repo: Path) -> None:
+        # 'repo' is a git repo; a subdirectory inside it is NOT its own repo root,
+        # so ensure_initialized must give it one (so commits don't leak to 'repo').
+        nested = repo / "subproject"
+        nested.mkdir()
+        helper = GitHelper(nested)
+        assert helper.ensure_initialized() is True
+        assert (nested / ".git").is_dir()
+        # A second call is now a no-op: it is its own repo root.
+        assert helper.ensure_initialized() is False
+
+
 class TestValidateCleanState:
     def test_clean_after_commit(self, repo: Path) -> None:
         assert GitHelper(repo).validate_clean_state()

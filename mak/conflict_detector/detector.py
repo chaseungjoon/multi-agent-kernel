@@ -18,6 +18,28 @@ from mak.conflict_detector.name_collision_check import check_name_collisions
 from mak.conflict_detector.signature_check import check_signature_compatibility
 
 
+def _syntax_reason(label: str, exc: SyntaxError) -> str:
+    """Turn a raw ``ast.parse`` failure into an actionable reason.
+
+    ``label`` is ``"<check>:<node_id>"`` (e.g. ``"definition:app/main.py::function::f"``
+    or ``"definition:docs/design.md"``). A node whose file component is not ``.py`` is
+    a target MAK cannot represent at all; a ``.py`` node that still fails to parse
+    usually means the agent returned prose/markdown instead of code. Either way, say so
+    instead of surfacing a bare "invalid character" from the tokenizer.
+    """
+    node_id = label.split(":", 1)[1] if ":" in label else label
+    file_part = node_id.split("::", 1)[0]
+    if not file_part.endswith(".py"):
+        return (
+            f"{label}: '{file_part}' is not a Python (.py) file — MAK only edits "
+            f"Python nodes and cannot represent this target ({exc.msg})"
+        )
+    return (
+        f"{label} is not valid Python — the agent may have returned prose or "
+        f"markdown instead of code ({exc.msg})"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Conflict:
     """One detected problem, tagged with the check that found it."""
@@ -97,9 +119,7 @@ class ConflictDetector:
             try:
                 ast.parse(source)
             except SyntaxError as exc:
-                conflicts.append(
-                    Conflict("syntax", f"{label} failed to parse: {exc.msg}")
-                )
+                conflicts.append(Conflict("syntax", _syntax_reason(label, exc)))
         return conflicts
 
     def _check_signatures(self, edits: EditRound) -> list[Conflict]:

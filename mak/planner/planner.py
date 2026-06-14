@@ -34,6 +34,12 @@ below, or new ids for new symbols)
   - "depends_on": array of task_ids that must complete before this one
   - "agent_type": the agent type to run this sub-task (e.g. "anthropic_api")
 
+MAK edits Python only: every target node id must name a Python source file — either \
+"path/to/file.py" or "path/to/file.py::kind::qualified_name". Do NOT target \
+non-Python files (no .md, .json, .txt, .js, .html, .css, README, or doc/architecture \
+files) — MAK cannot represent them. If the task implies documentation or other \
+non-Python artifacts, leave them out of the plan.
+
 Only assign two sub-tasks to write the same node if one depends on the other."""
 
 
@@ -61,6 +67,16 @@ def _strip_code_fences(text: str) -> str:
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
+
+
+def target_file(node_id: str) -> str:
+    """Return a node id's file-path component (``a.py::function::f`` -> ``a.py``)."""
+    return node_id.split("::", 1)[0]
+
+
+def is_python_target(node_id: str) -> bool:
+    """Return whether a target node id names a Python (``.py``) source file."""
+    return target_file(node_id).endswith(".py")
 
 
 def _require_str(value: object, where: str, field_name: str) -> str:
@@ -132,6 +148,24 @@ def parse_plan(raw: str) -> list[SubTask]:
                 dep in known,
                 f"sub-task '{task.task_id}' depends on unknown task '{dep}'",
             )
+
+    # MAK can only represent Python AST nodes — a non-".py" target can never be
+    # ingested, validated, or reconstructed, so reject it here with a clear reason
+    # instead of failing cryptically deep in the parser at commit time.
+    bad = [
+        (task.task_id, node)
+        for task in subtasks
+        for node in task.target_nodes
+        if not is_python_target(node)
+    ]
+    if bad:
+        listed = "; ".join(f"{tid} -> {node}" for tid, node in bad)
+        raise ValueError(
+            "MAK only edits Python (.py) nodes, but these targets name non-Python "
+            f"files: {listed}. Use 'path/to/file.py' or "
+            "'path/to/file.py::kind::name' for every target_node, and drop tasks that "
+            "produce documentation or other non-Python artifacts."
+        )
     return subtasks
 
 

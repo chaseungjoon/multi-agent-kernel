@@ -41,6 +41,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import queue
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -157,23 +158,31 @@ class SubTaskProgress:
 class SessionResult:
     """The outcome of a ``run``.
 
-    ``blocked`` lists tasks that were neither completed nor explicitly failed —
-    they were stranded by an unsatisfiable DAG or locks that never freed. A run
-    with any blocked tasks ends in ``FAILED``, never ``COMPLETED``.
+    A task that was neither completed nor explicitly failed is reported as one of:
+
+    - ``skipped`` — it (transitively) depended on a task that **failed**, so it could
+      never have run. This is a downstream consequence of a real failure, not an
+      independent problem.
+    - ``blocked`` — it was stranded for some *other* reason (locks that never freed,
+      a wedged worker), with no failed ancestor to explain it.
+
+    A run with any failed, skipped, or blocked tasks ends in ``FAILED``.
     """
 
     state: SessionState
     completed: tuple[str, ...]
     failed: tuple[str, ...]
     blocked: tuple[str, ...] = ()
+    skipped: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
-        """True only when the run completed with no failed or blocked tasks."""
+        """True only when the run completed with nothing failed/blocked/skipped."""
         return (
             self.state is SessionState.COMPLETED
             and not self.failed
             and not self.blocked
+            and not self.skipped
         )
 
 
@@ -342,6 +351,16 @@ class Session:
                     )
                 except SyntaxError:
                     continue
+        if self._git is not None and self._config.git.auto_commit:
+            # Keep MAK's audit commits inside the project: if the work-dir is nested
+            # in an outer repo (e.g. a home directory) or in none at all, give it its
+            # own repo so commits never leak into the surrounding one.
+            if self._git.ensure_initialized():
+                print(
+                    f"mak: initialized a git repo in {self._work_dir} for MAK's "
+                    "audit log (it was not its own repository).",
+                    file=sys.stderr,
+                )
         self.state = SessionState.INITIALIZED
         inventory = self._node_store.list_nodes()
         self._log(EventType.SESSION_STARTED, node_count=len(inventory))
@@ -456,25 +475,54 @@ class Session:
 
     def _finalize(self, scheduler: Scheduler) -> SessionResult:
         """Compute the terminal state and result after the loop exits."""
-        # A task that is neither completed nor explicitly failed was stranded
-        # (unsatisfiable deps or locks that never freed). It must NOT be reported
-        # as success — the run is COMPLETED only when the DAG is genuinely done.
+        # A task that is neither completed nor explicitly failed was stranded. It
+        # must NOT be reported as success — the run is COMPLETED only when the DAG is
+        # genuinely done. Split the strays: those with a failed ancestor are *skipped*
+        # (an expected downstream consequence), the rest are genuinely *blocked*.
         accounted = set(self._completed) | set(self._failed)
-        blocked = [
+        unaccounted = [
             tid for tid in scheduler.dag.remaining() if tid not in accounted
         ]
-        if scheduler.is_done() and not self._failed and not blocked:
+        tainted = self._failed_descendants(scheduler.dag.tasks)
+        skipped = [tid for tid in unaccounted if tid in tainted]
+        blocked = [tid for tid in unaccounted if tid not in tainted]
+
+        if scheduler.is_done() and not self._failed and not blocked and not skipped:
             self.state = SessionState.COMPLETED
         else:
             self.state = SessionState.FAILED
-        if blocked:
-            self._log(EventType.SESSION_ENDED, blocked=blocked, stalled=True)
+        if skipped or blocked:
+            self._log(
+                EventType.SESSION_ENDED,
+                skipped=skipped,
+                blocked=blocked,
+                stalled=True,
+            )
         return SessionResult(
             state=self.state,
             completed=tuple(self._completed),
             failed=tuple(self._failed),
             blocked=tuple(blocked),
+            skipped=tuple(skipped),
         )
+
+    def _failed_descendants(self, tasks: dict[str, SubTask]) -> set[str]:
+        """Tasks that (transitively) depend on a failed task.
+
+        Iterates to a fixpoint over the dependency edges so a failure propagates the
+        whole way down the chain (a task depending on a skipped task is skipped too).
+        """
+        tainted = set(self._failed)
+        changed = True
+        while changed:
+            changed = False
+            for tid, task in tasks.items():
+                if tid in tainted:
+                    continue
+                if any(dep in tainted for dep in task.depends_on):
+                    tainted.add(tid)
+                    changed = True
+        return tainted - set(self._failed)
 
     # -- collection & batch processing ------------------------------------
 
@@ -704,8 +752,14 @@ class Session:
         files = sorted({str(n).split("::", 1)[0] for n in nodes})
         for file_path in files:
             fragments = self._node_store.get_committed_fragments(file_path)
-            if fragments:
-                reconstruct_file(fragments, output_path=self._work_dir / file_path)
+            if not fragments:
+                # A committed node that yields no fragments would leave nothing on
+                # disk yet still be reported as written — fail loudly (the caller
+                # reverts the commit) instead of failing later at `git add`.
+                raise OSError(
+                    f"no committed fragments for '{file_path}'; nothing to write"
+                )
+            reconstruct_file(fragments, output_path=self._work_dir / file_path)
         return files
 
     def _audit_commit(self, task_id: str, nodes: list[NodeId]) -> None:
@@ -796,11 +850,16 @@ class Session:
             )
 
     def _node_kind(self, node_id: NodeId) -> str:
-        """Return a node's stored kind, defaulting to ``function`` if it is new."""
+        """Return a node's stored kind, inferring a sensible kind for a new node.
+
+        A bare-path ``.py`` id (no ``::kind::name``) is a *whole-file* node — the
+        agent returned an entire new file as one node — so its kind is ``module``;
+        any other new id defaults to ``function``.
+        """
         try:
             return self._node_store.get_node(node_id).kind
         except NodeStoreError:
-            return "function"
+            return "module" if "::" not in str(node_id) else "function"
 
     def _node_source(self, node_id: NodeId) -> str | None:
         """Return a node's current committed source, or None if it does not exist."""

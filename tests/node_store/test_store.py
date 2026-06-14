@@ -96,6 +96,18 @@ class TestNodeStore:
         frags = store.get_committed_fragments("mod.py")
         assert len(frags) >= 3
 
+    def test_whole_file_node_is_listed_for_its_file(self, tmp_path: Path) -> None:
+        # A bare-path node id (no ::kind::name) represents an entire new file and
+        # must be returned for that file path, so reconstruction can write it.
+        store = NodeStore(tmp_path / "ns")
+        nid = NodeId("editor/main.py")
+        store.put_node(nid, NodeFragment(nid, "module", "def main():\n    pass\n", 1))
+        store.commit_node(nid)
+        assert store.list_nodes("editor/main.py") == [nid]
+        frags = store.get_committed_fragments("editor/main.py")
+        assert [f.node_id for f in frags] == [nid]
+        assert "def main" in frags[0].source
+
     def test_persistence_round_trip(self, tmp_path: Path) -> None:
         store_root = tmp_path / "ns"
         store1 = NodeStore(store_root)

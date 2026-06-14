@@ -260,13 +260,23 @@ def main(
 
     print(
         f"mak: {len(result.completed)} completed, "
-        f"{len(result.failed)} failed, {len(result.blocked)} blocked."
+        f"{len(result.failed)} failed, {len(result.skipped)} skipped, "
+        f"{len(result.blocked)} blocked."
     )
     if not result.ok:
         if result.failed:
             print(f"mak: failed tasks: {', '.join(result.failed)}", file=sys.stderr)
+        if result.skipped:
+            print(
+                f"mak: skipped (an upstream task failed): {', '.join(result.skipped)}",
+                file=sys.stderr,
+            )
         if result.blocked:
-            print(f"mak: blocked tasks: {', '.join(result.blocked)}", file=sys.stderr)
+            print(
+                f"mak: blocked (stranded, no failed ancestor): "
+                f"{', '.join(result.blocked)}",
+                file=sys.stderr,
+            )
         return 1
     if not tests_passed:
         print("mak: tasks completed but the test suite did not pass.", file=sys.stderr)

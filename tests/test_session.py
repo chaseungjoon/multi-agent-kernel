@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import time
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from mak.core.types import (
     TaskBundle,
     TaskResult,
 )
+from mak.git_integration.git import GitHelper
 from mak.lock_manager.lock_table import LockTable
 from mak.node_store.store import NodeStore
 from mak.session import Session, SessionState, SubTaskProgress, _Completion
@@ -533,6 +535,36 @@ class TestStallReporting:
         result = session.run()
         assert result.state is SessionState.FAILED
         assert result.blocked == ("a",)
+        assert result.skipped == ()
+        assert not result.ok
+
+    def test_dependent_of_failed_task_is_skipped_not_blocked(
+        self, tmp_path: Path
+    ) -> None:
+        # 'a' always fails; 'b' depends on 'a' and 'c' depends on 'b'. Both
+        # downstream tasks are reported as *skipped* (a failed ancestor), and the
+        # genuinely-blocked list stays empty.
+        (tmp_path / "m.py").write_text(
+            "def a():\n    return 0\n\n"
+            "def b():\n    return 0\n\n"
+            "def c():\n    return 0\n"
+        )
+        store = _store(tmp_path)
+        runner = StagingRunner(store, coverage={"a": 0.0})  # 'a' never passes
+        session = _session(
+            tmp_path, runner=runner, node_store=store, max_attempts=2
+        )
+        session.initialize()
+        session.install_plan([
+            _task("a", ["m.py::function::a"]),
+            _task("b", ["m.py::function::b"], deps=["a"]),
+            _task("c", ["m.py::function::c"], deps=["b"]),
+        ])
+        result = session.run()
+        assert result.state is SessionState.FAILED
+        assert result.failed == ("a",)
+        assert set(result.skipped) == {"b", "c"}
+        assert result.blocked == ()
         assert not result.ok
 
 
@@ -771,6 +803,64 @@ class WireRunner:
         )
 
 
+class TestGreenfieldWithGit:
+    """The user's scenario: build new files into a dir that is not its own repo."""
+
+    def _git_session(self, work: Path, runner: object) -> Session:
+        config = MakConfig(
+            session=SessionConfig(work_dir=str(work), mak_dir=str(work / ".mak")),
+            git=GitConfig(auto_commit=True, auto_push=False),
+            node_store=NodeStoreConfig(),
+        )
+        return Session(
+            session_id="s1",
+            config=config,
+            node_store=NodeStore(work / ".mak" / "ns"),
+            lock_table=LockTable(),
+            registry=FakeRegistry(),  # type: ignore[arg-type]
+            agent_runner=runner,  # type: ignore[arg-type]
+            git_helper=GitHelper(work),
+        )
+
+    def test_greenfield_file_created_and_committed_in_own_repo(
+        self, tmp_path: Path
+    ) -> None:
+        # tmp_path is sat inside an OUTER repo, mirroring a work-dir nested in a home
+        # repo. MAK must give the work-dir its own repo and commit there, not leak
+        # into the outer one.
+        outer = tmp_path / "outer"
+        outer.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=outer, check=True)
+        work = outer / "project"
+        work.mkdir()
+
+        runner = WireRunner({"app/main.py": "def main():\n    return 0\n"})
+        session = self._git_session(work, runner)
+        session.initialize()  # should `git init` work/ (it is not its own repo root)
+        session.install_plan([_task("core", ["app/main.py"])])
+        result = session.run()
+
+        assert result.ok
+        assert (work / "app" / "main.py").exists()
+        # work/ is now its own repo, with a MAK audit commit for the new file.
+        toplevel = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=work, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        assert Path(toplevel).resolve() == work.resolve()
+        log = subprocess.run(
+            ["git", "log", "--oneline"],
+            cwd=work, check=True, capture_output=True, text=True,
+        ).stdout
+        assert "core" in log
+        # The outer repo saw none of it.
+        outer_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=outer, check=True, capture_output=True, text=True,
+        ).stdout
+        assert "app/main.py" not in outer_status
+
+
 class TestSourceTransport:
     def test_agent_returned_source_is_applied(self, tmp_path: Path) -> None:
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
@@ -804,6 +894,46 @@ class TestSourceTransport:
         assert set(result.completed) == {"a", "b"}
         rebuilt = (tmp_path / "m.py").read_text()
         assert "return 1" in rebuilt and "return 2" in rebuilt
+
+    def test_greenfield_whole_file_node_is_created(self, tmp_path: Path) -> None:
+        # Greenfield: a bare-path node ("editor/main.py", no ::kind::name) is a whole
+        # new file the agent returns in full. It must be created on disk, in a new
+        # subdirectory, and the task must complete.
+        store = _store(tmp_path)
+        source = "import sys\n\n\ndef main():\n    return 0\n"
+        runner = WireRunner({"editor/main.py": source})
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("core", ["editor/main.py"])])
+        result = session.run()
+        assert result.ok
+        assert result.completed == ("core",)
+        created = tmp_path / "editor" / "main.py"
+        assert created.exists()
+        assert "def main():" in created.read_text()
+        assert store.get_node(NodeId("editor/main.py")).kind == "module"
+
+    def test_greenfield_multiple_new_files(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        runner = WireRunner({
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def helper():\n    return 1\n",
+            "app.py": (
+                "from pkg.util import helper\n\n\ndef run():\n    return helper()\n"
+            ),
+        })
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([
+            _task("init", ["pkg/__init__.py"]),
+            _task("util", ["pkg/util.py"]),
+            _task("app", ["app.py"], deps=["util"]),
+        ])
+        result = session.run()
+        assert result.ok
+        assert (tmp_path / "pkg" / "util.py").exists()
+        assert "def helper" in (tmp_path / "pkg" / "util.py").read_text()
+        assert "def run" in (tmp_path / "app.py").read_text()
 
     def test_claimed_node_without_source_fails_cleanly(self, tmp_path: Path) -> None:
         # A misbehaving agent: success=True, claims it changed a node, but sends no

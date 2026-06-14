@@ -70,6 +70,25 @@ class TestDetect:
         assert report.by_check("syntax")
         assert not report.by_check("signature")
 
+    def test_non_python_target_gets_actionable_message(self) -> None:
+        # A node whose file is not .py can never be valid Python; say so plainly
+        # instead of surfacing a bare tokenizer "invalid character".
+        edits = EditRound(definitions={"docs/design.md": "# Title\n├── tree\n"})
+        report = ConflictDetector().detect(edits)
+        assert not report.ok
+        (reason,) = report.by_check("syntax")
+        assert "not a Python (.py) file" in reason.message
+        assert "docs/design.md" in reason.message
+
+    def test_python_node_with_prose_blames_the_agent(self) -> None:
+        # A .py node that still won't parse usually means the agent returned prose.
+        edits = EditRound(definitions={"app/main.py::function::f": "Here is the code:"})
+        report = ConflictDetector().detect(edits)
+        assert not report.ok
+        (reason,) = report.by_check("syntax")
+        assert "not valid Python" in reason.message
+        assert "prose or" in reason.message
+
     def test_multiple_conflicts_aggregated(self) -> None:
         edits = EditRound(
             definitions={"m.py::function::f": "def f(a, b): pass"},

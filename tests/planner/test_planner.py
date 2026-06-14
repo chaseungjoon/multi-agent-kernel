@@ -104,6 +104,40 @@ class TestParsePlan:
         with pytest.raises(ValueError, match="unknown task 'ghost'"):
             parse_plan(bad)
 
+    def test_non_python_target_rejected(self) -> None:
+        bad = json.dumps(
+            [{"task_id": "T01", "description": "x", "target_nodes": ["README.md"]}]
+        )
+        with pytest.raises(ValueError, match="only edits Python"):
+            parse_plan(bad)
+
+    def test_non_python_target_lists_offenders(self) -> None:
+        bad = json.dumps(
+            [
+                {"task_id": "T01", "description": "x", "target_nodes": ["docs/a.md"]},
+                {"task_id": "T02", "description": "y", "target_nodes": ["ok.py"]},
+                {"task_id": "T03", "description": "z", "target_nodes": ["notes"]},
+            ]
+        )
+        with pytest.raises(ValueError) as exc:
+            parse_plan(bad)
+        assert "T01 -> docs/a.md" in str(exc.value)
+        assert "T03 -> notes" in str(exc.value)
+        assert "ok.py" not in str(exc.value)  # the valid .py target is not flagged
+
+    def test_python_targets_with_qualified_names_pass(self) -> None:
+        good = json.dumps(
+            [
+                {"task_id": "a", "description": "x",
+                 "target_nodes": ["pkg/mod.py::function::f", "main.py"]},
+            ]
+        )
+        (task,) = parse_plan(good)
+        assert task.target_nodes == [
+            NodeId("pkg/mod.py::function::f"),
+            NodeId("main.py"),
+        ]
+
     def test_defaults_for_optional_fields(self) -> None:
         minimal = json.dumps([{"task_id": "a", "description": "x"}])
         (task,) = parse_plan(minimal)
