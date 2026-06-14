@@ -19,24 +19,25 @@ arbitrates shared memory between threads.
 
 ## The idea
 
-Most multi-agent coding systems give each agent a Git branch and merge at the end —
-a **message-passing** model where conflicts surface late, after the dependency
+Most multi-agent coding systems give each agent a Git branch and merge at the end. A **message-passing** model where conflicts surface late, after the dependency
 information needed to resolve them is gone.
 
-MAK takes the **shared-memory** approach. The codebase is decomposed into
-independently lockable AST nodes (functions, methods, classes, headers); files on
-disk are derived artifacts reconstructed from a versioned node store. 
+The Multi Agent Kernel takes the **shared-memory** approach. The codebase is decomposed into
+independently lockable AST nodes (functions, methods, classes, headers). Files on
+disk are derived artifacts reconstructed from a versioned node store.
 
 The kernel owns a symbol-level lock table and resolves conflicts at *scheduling* time, where the
-dependency graph is still explicit. Each agent receives only the nodes it holds write
-locks on, edits them in isolation, and returns the modified fragments; the kernel
+dependency graph is still explicit. 
+
+Each agent receives only the nodes it holds write
+locks on, edits them in isolation, and returns the modified fragments. The kernel
 reassembles the file. Git is used only as an audit log.
 
-> Check out the [knowledge graph](https://mak-kg.vercel.app) for this project! (created with [graphify](https://github.com/safishamsi/graphify))
+> Check out the [knowledge graph](https://mak-kg.vercel.app) for this project. (created with [graphify](https://github.com/safishamsi/graphify))
 
 ## Run
 
-***Currently, MAK only supports Python codebases***, there are plans to add other language support in the near future.
+> ⚠️ ***Currently, MAK only supports Python codebases***, there are plans to add other language support in the near future.
 
 ### 1. Clone from source (Python ≥ 3.11)
 
@@ -59,7 +60,7 @@ cp mak/.env.example mak/.env     # Fill in your keys
 
 ### 3. Choose the number and types of agents & Run
 
-***⚠️ Just in case, create a separate branch for MAK to work on ⚠️***
+> ***⚠️ Just in case, create a separate branch for MAK to work on ⚠️***
 
 ```bash
 # Example with claude 4.8, gpt 5.5 and gemini 3 pro
