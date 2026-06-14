@@ -10,15 +10,20 @@
 
 ---
 
+</br>
+
 A kernel for **concurrent** multi-agent software development. 
 
-Multiple agents edit one shared working directory at the same time — no worktrees, no merge step, no
-late-stage reconciliation. 
+Multiple agents edit one shared working directory at the same time.
+
+No worktrees, no merge step, no late-stage reconciliation.
 
 The Multi Agent Kernel arbitrates concurrent access the way an OS
 arbitrates shared memory between threads.
 
 </div>
+
+</br>
 
 
 ## The idea
@@ -26,16 +31,20 @@ arbitrates shared memory between threads.
 Most multi-agent coding systems give each agent a Git branch and merge at the end. A **message-passing** model where conflicts surface late, after the dependency
 information needed to resolve them is gone.
 
-The Multi Agent Kernel takes the **shared-memory** approach. The codebase is decomposed into
-independently lockable AST nodes (functions, methods, classes, headers). Files on
-disk are derived artifacts reconstructed from a versioned node store.
+The Multi Agent Kernel takes the **shared-memory** approach. 
 
-The kernel owns a symbol-level lock table and resolves conflicts at *scheduling* time, where the
+- The codebase is decomposed into
+independently lockable `AST nodes` (functions, methods, classes, headers). 
+
+- Files on
+disk are derived artifacts reconstructed from a `versioned node store`.
+
+- The kernel owns a `symbol-level lock table` and resolves conflicts at *scheduling* time, where the
 dependency graph is still explicit. 
 
-Each agent receives only the nodes it holds write
+- Each agent receives only the nodes it holds write
 locks on, edits them in isolation, and returns the modified fragments. The kernel
-reassembles the file. Git is used only as an audit log.
+reassembles the file.
 
 > Check out the [knowledge graph](https://mak-kg.vercel.app) for this project. (created with [graphify](https://github.com/safishamsi/graphify))
 
@@ -54,9 +63,11 @@ pip install -e .
 
 ### 2. Set the API keys
 
-MAK drives hosted models from **three providers — Anthropic, OpenAI, and Google
-Gemini**. Put the key(s) for the providers you'll use in `mak/.env` (gitignored, and
-loaded automatically); you only need keys for the agents you actually run:
+Currently, MAK drives hosted models from **three providers — Anthropic, OpenAI, and Google
+Gemini**. 
+
+Put the key(s) for the providers you'll use in `mak/.env`.
+You only need keys for the agents you actually run:
 
 ```bash
 cp mak/.env.example mak/.env     # Fill in your keys 
@@ -64,7 +75,7 @@ cp mak/.env.example mak/.env     # Fill in your keys
 
 ### 3. Choose the number and types of agents & Run
 
-> ***⚠️ Just in case, create a separate branch for MAK to work on ⚠️***
+> ***⚠️ Just to be safe, create a separate branch for MAK to work on ⚠️***
 
 ```bash
 # Example with claude 4.8, gpt 5.5 and gemini 3 pro
@@ -139,7 +150,7 @@ edit one shared registry function**. The numbers below are the **mean of 10 inde
   | Avg. Accuracy | **94%** (253.1/270) | 93% (251.6/270) |
   | Avg. Merge conflicts | **0** | 2 |
 
-> MAK spends **23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a slight edge in accuracy — and the advantage holds across all 10 runs.
+> MAK spends **23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a slight edge in accuracy.
 >
 > [More statistics](/benchmark/STATS.md)
 
@@ -149,7 +160,9 @@ additionally resulted in **2 merge conflicts.**
 MAK is **slower** than traditional worktree based operations because every task contends on that one symbol, so MAK
 serializes those writes while the worktrees edit in parallel and reconcile afterward: the
 trade is **correctness by construction** and **token efficiency** for execution time on a deliberately
-maximally-contended workload. Run it yourself (all targets) with
+maximally-contended workload. 
+
+Run it yourself (all targets) with
 
 ```bash
 python3 benchmark/run_benchmark.py --mode real \
