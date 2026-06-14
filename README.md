@@ -36,6 +36,8 @@ reassembles the file. Git is used only as an audit log.
 
 ## Run
 
+***Currently, MAK only supports Python codebases***, there are plans to add other language support in the near future.
+
 ### 1. Clone from source (Python ≥ 3.11)
 
 ```bash
