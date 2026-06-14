@@ -496,15 +496,25 @@ format is:
 Duplicate names (e.g. `@overload` stubs, conditional defs) are disambiguated with a
 `#n` suffix so no symbol is silently dropped.
 
-**Whole-file nodes (new-file creation).** A node id may also be a **bare file path**
-with no `::kind::name` suffix — e.g. `app/main.py`. This is a *whole-file node*: the
-agent returns the entire file as one node, and reconstruction writes it verbatim (a
-single fragment already *is* the file). It is how MAK creates a brand-new file from an
-empty target: `list_nodes(path)`/`get_committed_fragments(path)` return the exact-match
-bare node alongside any `path::…` fragments, locking uses the bare path as its key
-(so commit-time re-validation lines up), and `reconstruct_file` `mkdir -p`s the parent.
-A planner targeting `editor/main.py` (greenfield) therefore works end to end; an
-existing file is still decomposed into the qualified fragments above.
+**Whole-file nodes (new-file creation *and* whole-file rewrites).** A node id may also
+be a **bare file path** with no `::kind::name` suffix — e.g. `app/main.py`. This is a
+*whole-file node*: the agent returns the entire file as one node, and reconstruction
+writes it verbatim (a single fragment already *is* the file). It is how MAK creates a
+brand-new file from an empty target: `list_nodes(path)`/`get_committed_fragments(path)`
+return the exact-match bare node alongside any `path::…` fragments, locking uses the
+bare path as its key (so commit-time re-validation lines up), and `reconstruct_file`
+`mkdir -p`s the parent. A planner targeting `editor/main.py` (greenfield) therefore
+works end to end.
+
+A whole-file node may also target an **existing** file that was ingested as fragments
+(e.g. an "audit / rewrite this whole module" task). Committing it **supersedes** that
+file's fragments: `commit_node` drops every committed/pending `path::…` node
+(`_supersede_fragments`) so the file is now defined by the one whole-file node alone.
+Without this, reconstruction would concatenate the whole file *and* its stale
+fragments and emit every top-level symbol **twice** — a real corruption bug this guards
+against. (An existing file you do *not* whole-file-target stays decomposed into the
+qualified fragments above; mixing fragment-level and whole-file edits to the *same*
+file in one plan is rejected at plan time — see §8.)
 
 ### On-disk layout
 
@@ -848,9 +858,9 @@ so it is unit-testable without Docker.
   `complete(prompt) -> str`), and validates the JSON plan with `parse_plan`. The
   parser accepts a bare array or `{"subtasks": …}`, strips code fences, validates
   each `SubTask` (including the optional `context_nodes`), and rejects duplicate ids
-  and unknown dependencies. Two further **target-node rules** keep a plan inside what
-  the kernel can actually execute (both raise `ValueError`, so `decompose` retries
-  with the reason fed back and the model self-corrects):
+  and unknown dependencies. Three further **target-node rules** keep a plan inside
+  what the kernel can actually execute (each raises `ValueError`, so `decompose`
+  retries with the reason fed back and the model self-corrects):
     - **Python-only targets.** Every `target_node`'s file component must end in
       `.py` (`is_python_target`). A `.md`/`.json`/`README`/doc target is rejected —
       MAK has no AST node for it, so it could never be ingested or reconstructed
@@ -861,6 +871,10 @@ so it is unit-testable without Docker.
       clobber each other and serialize on the one node. To split a file across tasks,
       target distinct symbols (`path.py::kind::name`). The prompt also steers the
       model to decompose a new project by file (one focused module per task).
+    - **One granularity per file.** A file may not be targeted *both* as a whole file
+      and by individual symbols in the same plan: the whole-file commit supersedes the
+      file's fragments (§2), so a sibling fragment task would lose its work. Pick one —
+      a single whole-file task, or only symbol tasks.
   On a malformed response it retries up to `max_retries`, feeding the rejection
   reason back, then raises `PlannerFailedError`.
 - **`review.py`** — `display_plan_for_review` renders the subtask list and dependency
@@ -919,7 +933,7 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   so a misbehaving agent fails its task cleanly rather than crashing the commit.
 - **teardown** — run the test suite; push if green and `auto_push` is enabled.
 
-Three robustness properties worth knowing:
+Robustness properties worth knowing:
 
 - **Transactional commit** — the prospective file is reconstructed and
   `ast.parse`-validated *before* any `commit_node`; a post-commit write failure
@@ -928,6 +942,14 @@ Three robustness properties worth knowing:
   completed grants are accepted and committed and only their locks released; the
   *remaining* grants are re-dispatched as a narrowed task. This is tracked per task
   by `SubTaskProgress` and bounded by `max_attempts`.
+- **No-op acceptance** — an "audit / review" task may legitimately inspect an
+  already-complete file and return `success=True` with **no** changes. If the agent
+  succeeded, claimed no edits, and the targets already exist (`_target_exists` — the
+  node is committed, or a whole-file target whose file already has fragments), those
+  targets are marked done instead of retried to failure. This is distinct from the
+  misbehaving-agent case (success that *claims* edits but stages no source), which is
+  not accepted; and from a create task whose target does *not* exist and returns
+  nothing, which correctly still fails.
 - **Crash recovery** — `recover()` expires stale leases and rebuilds the scheduler
   from `task_graph.json` via `from_persisted`.
 - **Honest stall reporting** — a run is `COMPLETED` *only if* the scheduler is

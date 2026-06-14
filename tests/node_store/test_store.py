@@ -96,6 +96,27 @@ class TestNodeStore:
         frags = store.get_committed_fragments("mod.py")
         assert len(frags) >= 3
 
+    def test_whole_file_node_supersedes_existing_fragments(
+        self, tmp_path: Path
+    ) -> None:
+        # A file first ingested as fragments, then rewritten as one whole-file node,
+        # must reconstruct from the whole file ALONE — not whole-file + leftover
+        # fragments (which would emit every top-level symbol twice).
+        store = NodeStore(tmp_path / "ns")
+        store.parse_file_into_nodes("m.py", SAMPLE_SOURCE)
+        assert len(store.get_committed_fragments("m.py")) >= 3  # fragments present
+
+        whole = NodeId("m.py")
+        new_src = "def only():\n    return 1\n"
+        store.put_node(whole, NodeFragment(whole, "module", new_src, 1))
+        store.commit_node(whole)
+
+        frags = store.get_committed_fragments("m.py")
+        assert [f.node_id for f in frags] == [whole]  # fragments gone, only the file
+        assert frags[0].source == new_src
+        # The old fragment nodes are no longer known to the store.
+        assert all("::" not in str(n) for n in store.list_nodes("m.py"))
+
     def test_whole_file_node_is_listed_for_its_file(self, tmp_path: Path) -> None:
         # A bare-path node id (no ::kind::name) represents an entire new file and
         # must be returned for that file path, so reconstruction can write it.

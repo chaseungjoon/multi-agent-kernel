@@ -106,7 +106,14 @@ class NodeStore:
             return staged
 
     def commit_node(self, node_id: NodeId) -> None:
-        """Promote a pending fragment to committed."""
+        """Promote a pending fragment to committed.
+
+        Committing a *whole-file* node (a bare ``path.py`` with no ``::kind::name``)
+        supersedes that file's fragment nodes: the whole file now defines the file,
+        so any previously-ingested ``path.py::…`` fragments are dropped. Otherwise
+        reconstruction would concatenate the whole file *and* its old fragments and
+        emit every top-level symbol twice.
+        """
         with self._lock:
             if node_id not in self._pending:
                 raise NodeStoreError(f"no pending version for node: {node_id}")
@@ -119,7 +126,19 @@ class NodeStore:
                 "version": fragment.version,
                 "order": order,
             }
+            if "::" not in str(node_id):
+                self._supersede_fragments(str(node_id))
             self._save_metadata()
+
+    def _supersede_fragments(self, file_path: str) -> None:
+        """Drop a file's ``path::…`` fragments — a whole-file node now defines it."""
+        prefix = f"{file_path}::"
+        for nid in [n for n in self._nodes if str(n).startswith(prefix)]:
+            del self._nodes[nid]
+        for nid in [n for n in self._pending if str(n).startswith(prefix)]:
+            del self._pending[nid]
+        for nid in [n for n in self._metadata if str(n).startswith(prefix)]:
+            del self._metadata[nid]
 
     def rollback_node(self, node_id: NodeId) -> None:
         """Discard a pending (uncommitted) fragment."""

@@ -959,6 +959,66 @@ class TestSourceTransport:
         assert "def helper" in (tmp_path / "pkg" / "util.py").read_text()
         assert "def run" in (tmp_path / "app.py").read_text()
 
+    def test_whole_file_rewrite_of_existing_file_is_not_doubled(
+        self, tmp_path: Path
+    ) -> None:
+        # An existing file is ingested as fragments; a task that targets the whole
+        # file (bare path) and returns the full new source must REPLACE it, not append
+        # to the old fragments (which doubled every top-level symbol before the fix).
+        (tmp_path / "m.py").write_text(
+            "def a():\n    return 0\n\n\ndef b():\n    return 0\n"
+        )
+        store = _store(tmp_path)
+        new_source = "def a():\n    return 1\n\n\ndef b():\n    return 2\n"
+        runner = WireRunner({"m.py": new_source})
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("rewrite", ["m.py"])])
+        result = session.run()
+        assert result.ok
+        rebuilt = (tmp_path / "m.py").read_text()
+        assert rebuilt.count("def a(") == 1  # not doubled
+        assert rebuilt.count("def b(") == 1
+        assert "return 1" in rebuilt and "return 2" in rebuilt
+
+    def test_noop_audit_of_existing_file_completes(self, tmp_path: Path) -> None:
+        # An "audit" task targeting an existing file whose agent finds nothing to
+        # change (success=True, no modified_nodes, no sources) must COMPLETE — the
+        # file is already correct — not retry to failure.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+
+        class NoOpRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(task_id=task.task_id, success=True)
+
+        session = _session(tmp_path, runner=NoOpRunner(), node_store=store)
+        session.initialize()
+        session.install_plan([_task("audit", ["m.py"])])
+        result = session.run()
+        assert result.ok
+        assert result.completed == ("audit",)
+        # The file is untouched and still valid.
+        assert (tmp_path / "m.py").read_text() == "def a():\n    return 0\n"
+
+    def test_noop_create_of_missing_file_still_fails(self, tmp_path: Path) -> None:
+        # The no-op acceptance must NOT mask a real miss: a create task whose target
+        # does not exist and that returns nothing has produced nothing, so it fails.
+        store = _store(tmp_path)
+
+        class NoOpRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(task_id=task.task_id, success=True)
+
+        session = _session(
+            tmp_path, runner=NoOpRunner(), node_store=store, max_attempts=2
+        )
+        session.initialize()
+        session.install_plan([_task("create", ["new.py"])])
+        result = session.run()
+        assert result.failed == ("create",)
+        assert not (tmp_path / "new.py").exists()
+
     def test_claimed_node_without_source_fails_cleanly(self, tmp_path: Path) -> None:
         # A misbehaving agent: success=True, claims it changed a node, but sends no
         # source and stages nothing. Must not crash the commit phase; the task is

@@ -179,9 +179,11 @@ def parse_plan(raw: str) -> list[SubTask]:
     # require a whole-file target to be owned by exactly one task. To split work
     # across a file, target distinct symbols (file.py::kind::name) instead.
     whole_file_owner: dict[str, str] = {}
+    fragment_files: dict[str, str] = {}  # file path -> a task targeting its fragments
     for task in subtasks:
         for node in dict.fromkeys(task.target_nodes):
             if "::" in node:
+                fragment_files.setdefault(target_file(node), task.task_id)
                 continue
             if node in whole_file_owner:
                 raise ValueError(
@@ -191,6 +193,22 @@ def parse_plan(raw: str) -> list[SubTask]:
                     "tasks by targeting individual symbols (file.py::kind::name)."
                 )
             whole_file_owner[node] = task.task_id
+
+    # A file cannot be edited at *both* granularities in one plan: a whole-file commit
+    # supersedes that file's fragment nodes, so a sibling fragment task would lose its
+    # work (or double symbols, depending on order). Pick one granularity per file.
+    mixed = sorted(set(whole_file_owner) & set(fragment_files))
+    if mixed:
+        listed = "; ".join(
+            f"'{f}' (whole: {whole_file_owner[f]}, fragment: {fragment_files[f]})"
+            for f in mixed
+        )
+        raise ValueError(
+            "a file is targeted both as a whole file and by individual symbols, which "
+            f"would lose work when the whole-file write supersedes its fragments: "
+            f"{listed}. Edit each file at one granularity — either one whole-file task "
+            "or only 'file.py::kind::name' symbol tasks."
+        )
     return subtasks
 
 

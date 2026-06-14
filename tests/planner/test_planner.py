@@ -133,6 +133,15 @@ class TestParsePlan:
         with pytest.raises(ValueError, match="both write the whole file"):
             parse_plan(bad)
 
+    def test_whole_file_and_fragment_of_same_file_rejected(self) -> None:
+        bad = json.dumps([
+            {"task_id": "a", "description": "x", "target_nodes": ["m.py"]},
+            {"task_id": "b", "description": "y",
+             "target_nodes": ["m.py::function::f"]},
+        ])
+        with pytest.raises(ValueError, match="one granularity|both as a whole file"):
+            parse_plan(bad)
+
     def test_same_file_different_symbols_pass(self) -> None:
         good = json.dumps([
             {"task_id": "a", "description": "x",

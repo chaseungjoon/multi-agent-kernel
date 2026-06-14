@@ -627,11 +627,37 @@ class Session:
             if source is not None:
                 committed_sources[str(node_id)] = source
 
+        # Accept a no-op: an "audit/review" task may inspect an already-complete file
+        # and legitimately return success with no changes. If the agent succeeded,
+        # claimed no edits, and the targets already exist, treat them as done rather
+        # than retrying to failure. (A success that *claims* edits but stages nothing
+        # is the misbehaving-agent case above and is not accepted here.)
+        if result.success and not result.modified_nodes and not result.new_sources:
+            for node_id in progress.target_nodes:
+                if (
+                    node_id not in progress.completed_nodes
+                    and self._target_exists(node_id)
+                ):
+                    progress.completed_nodes.add(node_id)
+                    self._release_lock(task_id, node_id)
+
         if progress.is_complete:
             self._finish_task(task_id)
         else:
             self._handle_incomplete(progress)
         return committed_sources
+
+    def _target_exists(self, node_id: NodeId) -> bool:
+        """Whether a target already exists committed (so a no-op leaves it intact).
+
+        True if the node itself is committed, or — for a whole-file target (a bare
+        ``path.py``) — if the file already has committed fragments from ingestion.
+        """
+        if self._node_source(node_id) is not None:
+            return True
+        if "::" not in str(node_id):
+            return bool(self._node_store.get_committed_fragments(str(node_id)))
+        return False
 
     def _validate_and_commit(
         self, task_id: str, staged: list[NodeId], peers: dict[str, str] | None = None
