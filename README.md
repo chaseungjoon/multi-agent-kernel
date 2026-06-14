@@ -46,15 +46,15 @@ cp mak/.env.example mak/.env     # Fill in your keys
 
 ### 3. Choose the number and types of agents & Run
 
-***For safety reasons, create a separate branch for MAK to work on***
+***⚠️ Just in case, create a separate branch for MAK to work on ⚠️***
 
 ```bash
 # Example with claude 4.8, gpt 5.5 and gemini 3 pro
-python3 -m mak --task "your task" --work-dir path/to/project \
+python3 -m mak --task "your task" --work-dir /path/to/project \
   --models anthropic:claude-opus-4-8 openai:gpt-5.5 gemini:gemini-3-pro
 
 # Example with claude 4.6 X 5
-python3 -m mak --task "your task" --work-dir path/to/project \
+python3 -m mak --task "your task" --work-dir /path/to/project \
   --models anthropic --max-agents 5
 ```
 
@@ -80,11 +80,11 @@ python3 -m mak --task "your task" --work-dir path/to/project \
 --models gemini:gemini-3-pro
 
 # Use multiple providers
---models openai:gpt-5.5 gemini:gemini-3-pro
+--models anthropic:claude-opus-4-8 openai:gpt-5.5 gemini:gemini-3-pro
 
 # Use single provider with multiple agents
---max-agents 5 --models anthropic
---max-agents 4 --models anthropic:claude-opus-4-8
+--models anthropic --max-agents 5 
+--models anthropic:claude-opus-4-8 --max-agents 3
 
 # Choose a custom config file
 --config /path/to/config.yaml
