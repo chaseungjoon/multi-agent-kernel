@@ -57,6 +57,15 @@ class TestLockTable:
         assert count == 2
         assert table.get_holder_entries("agent_a") == []
 
+    def test_clear_drops_all_leases(self) -> None:
+        table = LockTable()
+        table.try_acquire(NodeId("a.py::function::a"), LockMode.WRITE, "h1")
+        table.try_acquire(NodeId("b.py::function::b"), LockMode.READ, "h2")
+        assert table.clear() == 2
+        assert table.all_entries() == {}
+        # The node is free again afterwards (the rwlock was released, not just dropped).
+        assert table.try_acquire(NodeId("a.py::function::a"), LockMode.WRITE, "h3")
+
     def test_get_entries(self) -> None:
         table = LockTable()
         nid = NodeId("mod.py::function::foo")

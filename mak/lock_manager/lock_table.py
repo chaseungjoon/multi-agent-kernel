@@ -106,6 +106,23 @@ class LockTable:
             self._persist()
             return released
 
+    def clear(self) -> int:
+        """Drop every lease (e.g. stale ones persisted by a prior, dead session).
+
+        A fresh session owns none of the leases left on disk by an earlier run;
+        carrying them over only produces alarming "lease expired" warnings when they
+        are later swept. Crash *recovery* uses ``recover``/``expire_stale`` instead,
+        which deliberately inspects the persisted table. Returns the count dropped.
+        """
+        with self._lock:
+            count = sum(len(entries) for entries in self._entries.values())
+            for node_id in list(self._entries.keys()):
+                for entry in list(self._entries.get(node_id, [])):
+                    self._get_rwlock(node_id).release(entry.mode, entry.holder)
+            self._entries.clear()
+            self._persist()
+            return count
+
     def release_all(self, holder: str) -> int:
         """Release all locks held by a specific holder."""
         with self._lock:
