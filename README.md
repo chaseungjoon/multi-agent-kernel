@@ -59,18 +59,18 @@ python3 -m pytest demo/project   # verify the result
 
 [`benchmark/`](benchmark/) pits MAK against a traditional git-worktree multi-agent workflow on
 the same workload with the same agents (3× `claude-sonnet-4-6`). Every operation **must
-edit one shared registry function**
+edit one shared registry function**. The numbers below are the **mean of 10 independent runs**
 
 - [`benchmark/project_template_2/`](benchmark/project_template_2/) — 90 operations, 9 modules
 
   | | MAK | Git worktrees |
   |---|---|---|
-  | Tokens | **18,186** | 23,761 |
-  | Time | 191.7s | **92.1s** |
-  | Accuracy | **94%** (253/270) | 93% (250/270) |
-  | Merge conflicts | **0** | 2 |
+  | Avg. Tokens | **18,339** | 23,760 |
+  | Avg. Time | 226.5s | **99.5s** |
+  | Avg. Accuracy | **94%** (253.1/270) | 93% (251.6/270) |
+  | Avg. Merge conflicts | **0** | 2 |
 
-> MAK spends **23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a slight edge in accuracy.
+> MAK spends **23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a slight edge in accuracy — and the advantage holds across all 10 runs.
 >
 > [More statistics](/benchmark/STATS.md)
 

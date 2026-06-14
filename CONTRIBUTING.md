@@ -303,7 +303,7 @@ target with `--project basic|2|all` (default `all`).
   drops a node whose staged source fails its parse gate and retries the task, and the
   worktree runner refuses to splice unparseable Python into the module. One bad call
   therefore costs *that operation* its tests rather than crashing the run — and the token
-  cost of the call still counts. (This fired on the Template 2 run; see below.)
+  cost of the call still counts. (This fired on the Template 2 runs; see below.)
 - **A per-test timeout guards the oracle.** A real agent can implement an algorithmic
   function with an infinite loop (a wrong `while` in `collatz_steps`, `nth_prime`, …).
   The template's `conftest.py` installs a SIGALRM-based per-test timeout, so a runaway
@@ -313,6 +313,8 @@ target with `--project basic|2|all` (default `all`).
 ### Real results
 
 Recorded runs: **3 × `claude-sonnet-4-6`** (the same three agents on both sides).
+The **Template 2** numbers are the **mean of 10 independent runs** (the per-run breakdown
+is in [`benchmark/STATS.md`](benchmark/STATS.md)); Basic is a single representative run.
 
 **Basic — 9 operations, 30 tests**
 
@@ -326,17 +328,21 @@ Recorded runs: **3 × `claude-sonnet-4-6`** (the same three agents on both sides
 | Registry merge conflicts | **0** | 2 |
 | Conflict-resolution calls | **0** | 2 |
 
-**Template 2 — 90 operations, 270 tests**
+**Template 2 — 90 operations, 270 tests** (mean of 10 runs)
 
 | Metric | MAK | Traditional (worktrees) |
 |---|---|---|
-| Implementation time | 191.67s | **92.11s** |
-| Total tokens | **18,186** | 23,761 |
-| — input / output | 10,307 / 7,879 | 13,477 / 10,284 |
-| Model calls | 90 | 92 |
-| Accuracy (tests passed) | **253/270 (94%)** | 250/270 (93%) |
+| Implementation time | 226.54s | **99.52s** |
+| Total tokens | **18,339** | 23,760 |
+| — input / output | 10,378 / 7,961 | 13,481 / 10,279 |
+| Model calls | 90.6 | 92 |
+| Accuracy (tests passed) | **253.1/270 (94%)** | 251.6/270 (93%) |
 | Registry merge conflicts | **0** | 2 |
 | Conflict-resolution calls | **0** | 2 |
+
+Across the 10 runs MAK's accuracy was rock-steady (253/270 in nine runs, 254 in one;
+σ ≈ 0.3 tests) while the worktree side ranged 247–254 (mean 251.6) — MAK matched or beat
+it in **every** run, and never fewer tokens or more than zero conflicts.
 
 ### Reading it carefully
 
@@ -365,29 +371,32 @@ Recorded runs: **3 × `claude-sonnet-4-6`** (the same three agents on both sides
   *precisely because it does not coordinate during implementation*, and pays for it
   afterward in tokens, conflicts, and the risk of lost work.
 
-**Template 2 — what changes at 10× the size (90 operations).**
+**Template 2 — what changes at 10× the size (90 operations), averaged over 10 runs.**
 
-- **Tokens — MAK wins by 23%** (18,186 vs 23,761). Both sides make ~90 implementation
-  calls of comparable size; the gap is the worktree side's heavier input (it re-sends the
-  conflicted registry on its two resolution calls) plus those extra calls themselves. MAK
-  reconciles nothing, so it never pays that — and the absolute saving (≈5,600 tokens) is
-  far larger than on the small target even though the *percentage* is between Basic's two
-  numbers. The token advantage is the most robust, repeatable signal here.
-- **Accuracy — MAK ahead, 94% vs 93%** (253/270 vs 250/270). At this size the models get
-  a handful of the harder algorithms wrong on *both* sides — that is real, expected LLM
-  noise and exactly why the suite has a per-test timeout and a parse gate. The point is
-  the *delta*: the worktree side lost everything MAK lost **plus** a function whose
-  malformed output the merge kept (one agent emitted a `caesar` with an `unmatched ')'`,
-  left as a stub) **plus** the structural exposure of two registry conflicts. MAK's
-  coordination removes that extra tail by construction, so it lands strictly ahead.
-- **Conflicts — still 0 vs 2, by construction.** Three branches, two collide on
-  `_register_all`; MAK serializes the node and never does. This is invariant in the size
-  of the project — it is `agents − 1` for the worktree model regardless.
-- **MAK made exactly 90 calls for 90 operations** — one per task, no retries this run:
-  every task committed its function node and its registry append atomically on the first
-  attempt, so the kernel's re-validate-and-retry path (bounded by `max_attempts`) never
-  fired. The worktree side made 92 (90 + 2 resolutions).
-- **Time — still ~2× slower (191.7s vs 92.1s), same reason as Basic, amplified.** 90
+- **Tokens — MAK wins by 23%** (18,339 vs 23,760, mean of 10). Both sides make ~90
+  implementation calls of comparable size; the gap is the worktree side's heavier input (it
+  re-sends the conflicted registry on its two resolution calls) plus those extra calls
+  themselves. MAK reconciles nothing, so it never pays that — and the absolute saving
+  (≈5,400 tokens) is far larger than on the small target even though the *percentage* is
+  between Basic's two numbers. The token advantage was the most robust signal: MAK spent
+  fewer tokens in **all 10** runs, tightly clustered (≈18.1k–18.7k vs ≈23.7k–23.9k).
+- **Accuracy — MAK ahead, 94% vs 93%** (253.1/270 vs 251.6/270, mean of 10). At this size
+  the models get a handful of the harder algorithms wrong on *both* sides — that is real,
+  expected LLM noise and exactly why the suite has a per-test timeout and a parse gate. The
+  point is the *delta* and its stability: MAK landed 253/270 in nine of ten runs (254 once),
+  while the worktree side swung from 247 to 254 and averaged lower. The worktree side loses
+  everything MAK loses **plus** the occasional function whose malformed output the merge
+  keeps as a stub (5 such agent-output notes across the 10 runs) **plus** the structural
+  exposure of two registry conflicts every run. MAK matched or beat it in every run.
+- **Conflicts — invariantly 0 vs 2, by construction.** Every one of the 10 worktree runs
+  hit exactly two `_register_all` collisions (three branches, the first merges clean, the
+  next two collide); MAK serializes the node and hits zero. This is `agents − 1` for the
+  worktree model regardless of project size — not noise, structure.
+- **MAK averaged 90.6 calls for 90 operations** — essentially one per task. In five of the
+  ten runs a task lost the commit race and the kernel re-ran it (its bounded
+  re-validate-and-retry path, capped by `max_attempts`), adding one or two calls; the other
+  runs were exactly 90. The worktree side made 92 every run (90 + 2 resolutions).
+- **Time — still ~2.3× slower (226.5s vs 99.5s), same reason as Basic, amplified.** 90
   tasks all contend on the one registry node, so MAK serializes their commits while the
   three worktrees implement fully in parallel and pay only a cheap merge. The wall-clock
   trade is unchanged at scale; the benchmark remains the worst case for MAK's latency and
@@ -408,10 +417,16 @@ Recorded runs: **3 × `claude-sonnet-4-6`** (the same three agents on both sides
 ### Running it
 
 ```bash
-python benchmark/run_benchmark.py --mode mock              # keyless self-test (both targets)
-python benchmark/run_benchmark.py --mode real              # real models (needs keys), both targets
-python benchmark/run_benchmark.py --mode real --project 2  # just the heavy 90-op target
+python benchmark/run_benchmark.py --mode mock                     # keyless self-test (both targets)
+python benchmark/run_benchmark.py --mode real                     # real models (needs keys), both targets
+python benchmark/run_benchmark.py --mode real --project 2         # just the heavy 90-op target
+python benchmark/run_benchmark.py --mode real --project 2 --repeat 10  # mean of 10 runs (as published)
 ```
+
+`--repeat N` runs the target N times and reports the **mean**, plus a per-run breakdown
+table in `STATS.md` so the average is auditable; the published Template 2 numbers are
+`--repeat 10`. A per-call liveness line is printed to stderr (`[call N] implement … (in= out=)`)
+so a long multi-run sweep is visibly progressing and never silently stuck.
 
 Results are written to `benchmark/README.md` (summary) and `benchmark/STATS.md`
 (detail), one labelled section per target; `--render-only` regenerates them from the last
