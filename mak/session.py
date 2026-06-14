@@ -652,12 +652,29 @@ class Session:
 
         True if the node itself is committed, or — for a whole-file target (a bare
         ``path.py``) — if the file already has committed fragments from ingestion.
+        In both cases the file must also exist on disk. If the node is committed but
+        the file has been deleted (stale node store from a prior session), it is
+        reconstructed from committed fragments before returning True.
         """
-        if self._node_source(node_id) is not None:
+        file_path = str(node_id).split("::", 1)[0]
+        in_store = self._node_source(node_id) is not None or (
+            "::" not in str(node_id)
+            and bool(self._node_store.get_committed_fragments(str(node_id)))
+        )
+        if not in_store:
+            return False
+        if (self._work_dir / file_path).exists():
             return True
-        if "::" not in str(node_id):
-            return bool(self._node_store.get_committed_fragments(str(node_id)))
-        return False
+        # Node is committed but file is missing from disk — reconstruct it so
+        # the no-op acceptance does not silently leave the filesystem inconsistent.
+        fragments = self._node_store.get_committed_fragments(file_path)
+        if not fragments:
+            return False
+        try:
+            reconstruct_file(fragments, output_path=self._work_dir / file_path)
+            return True
+        except (SyntaxError, OSError):
+            return False
 
     def _validate_and_commit(
         self, task_id: str, staged: list[NodeId], peers: dict[str, str] | None = None
