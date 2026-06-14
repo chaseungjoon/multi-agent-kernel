@@ -2,7 +2,11 @@
 
 # Multi Agent Kernel (MAK)
 
-<img src="https://img.shields.io/badge/Version-0.1.6 Beta-brightgreen"/> <img src="https://img.shields.io/badge/License-MIT-red"/> <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
+<img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
+<img src="https://img.shields.io/badge/Version-0.1.6 Beta-blue"/> 
+<img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
+<img src="https://img.shields.io/badge/License-MIT-red"/> 
+
 
 ---
 
