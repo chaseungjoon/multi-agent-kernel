@@ -24,7 +24,13 @@ from pathlib import Path
 
 from mak.agent_runner.runner import AgentRunner
 from mak.agent_runner.sandbox import SandboxConfig, docker_available
-from mak.bootstrap import build_registry, default_agent_type, validate_config
+from mak.bootstrap import (
+    DEFAULT_KEY_ENV,
+    agents_from_specs,
+    build_registry,
+    default_agent_type,
+    validate_config,
+)
 from mak.config import MakConfig, load_config
 from mak.core.exceptions import (
     ConfigError,
@@ -45,6 +51,25 @@ SessionBuilder = Callable[
 ]
 
 
+def load_env_file(path: Path | None = None) -> None:
+    """Load ``mak/.env`` (``KEY=VALUE`` lines) into the environment, if present.
+
+    No external dependency. Already-exported variables win (``setdefault``), so an
+    explicit ``export`` overrides the file. This makes the documented convention —
+    put provider keys in ``mak/.env`` — actually take effect; the agent adapters
+    read those keys from the environment at composition time.
+    """
+    env_path = path or Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip())
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the MAK command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -63,6 +88,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--work-dir",
         default=None,
         help="working directory to operate on (overrides config session.work_dir)",
+    )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        metavar="PROVIDER[:MODEL]",
+        help=(
+            "set the agent roster from the command line, overriding the config's "
+            "'agents' list. Each entry is a provider (anthropic, openai, gemini) "
+            "with an optional model, e.g. --models anthropic:claude-opus-4-8 "
+            "openai gemini:gemini-3-pro. One model per provider; keys are read from "
+            "the usual env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)."
+        ),
+    )
+    parser.add_argument(
+        "--max-agents",
+        type=int,
+        default=None,
+        metavar="N",
+        help="how many agents run concurrently (overrides max_concurrent_agents)",
     )
     parser.add_argument(
         "--agent",
@@ -103,7 +148,10 @@ def _planner_api_key(config: MakConfig) -> str | None:
     for agent in config.agents:
         if agent.type == backend and agent.api_key_env:
             return os.environ.get(agent.api_key_env)
-    return None
+    # The planner's provider may not be in the roster (e.g. an OpenAI-only run with
+    # the default Claude planner) — fall back to that provider's conventional env var.
+    fallback_env = DEFAULT_KEY_ENV.get(backend)
+    return os.environ.get(fallback_env) if fallback_env else None
 
 
 def build_session(
@@ -156,6 +204,7 @@ def main(
 ) -> int:
     """Run MAK end-to-end. Returns a process exit code (0 = success)."""
     args = parse_args(argv)
+    load_env_file()  # provider keys from mak/.env; exported vars still win
     logging.basicConfig(
         level=(logging.WARNING, logging.INFO, logging.DEBUG)[min(args.verbose, 2)],
         format="%(levelname)s %(name)s: %(message)s",
@@ -166,6 +215,17 @@ def main(
         if args.work_dir is not None:
             config = replace(
                 config, session=replace(config.session, work_dir=args.work_dir)
+            )
+        if args.models is not None:
+            config = replace(config, agents=agents_from_specs(args.models))
+        if args.max_agents is not None:
+            if args.max_agents < 1:
+                raise ConfigError("--max-agents must be at least 1")
+            config = replace(
+                config,
+                session=replace(
+                    config.session, max_concurrent_agents=args.max_agents
+                ),
             )
         validate_config(config)
     except ConfigError as exc:

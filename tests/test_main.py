@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import pytest
 
 import mak.__main__ as cli
-from mak.__main__ import main, parse_args
+from mak.__main__ import load_env_file, main, parse_args
 from mak.core.exceptions import PlannerFailedError, PlanReviewAborted, SessionError
 from mak.session import SessionResult, SessionState
 
@@ -85,6 +86,42 @@ class TestParseArgs:
         assert args.agent == "openai_api"
         assert args.verbose == 2
 
+    def test_models_and_max_agents(self) -> None:
+        args = parse_args(
+            ["--task", "t", "--models", "anthropic:claude-opus-4-8", "openai",
+             "--max-agents", "5"]
+        )
+        assert args.models == ["anthropic:claude-opus-4-8", "openai"]
+        assert args.max_agents == 5
+
+    def test_models_default_none(self) -> None:
+        args = parse_args(["--task", "t"])
+        assert args.models is None
+        assert args.max_agents is None
+
+
+class TestLoadEnvFile:
+    def test_loads_keys_from_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        env = tmp_path / ".env"
+        env.write_text("# comment\nANTHROPIC_API_KEY=sk-from-file\n\nNOPE\n")
+        load_env_file(env)
+        assert os.environ["ANTHROPIC_API_KEY"] == "sk-from-file"
+
+    def test_exported_var_wins_over_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-exported")
+        env = tmp_path / ".env"
+        env.write_text("OPENAI_API_KEY=sk-from-file\n")
+        load_env_file(env)
+        assert os.environ["OPENAI_API_KEY"] == "sk-exported"
+
+    def test_missing_file_is_a_noop(self, tmp_path: Path) -> None:
+        load_env_file(tmp_path / "absent.env")  # must not raise
+
 
 class TestMain:
     def test_happy_path_returns_zero(self, tmp_path: Path) -> None:
@@ -95,6 +132,39 @@ class TestMain:
         )
         assert code == 0
         assert session.calls == ["initialize", "plan(review=True)", "run", "teardown"]
+
+    def test_models_and_max_agents_override_config(self, tmp_path: Path) -> None:
+        captured: dict[str, object] = {}
+
+        def build(args: argparse.Namespace, config: object, sandbox: object) -> object:
+            captured["config"] = config
+            return FakeSession()
+
+        code = main(
+            ["--task", "t", "--config", str(_config_file(tmp_path)),
+             "--models", "openai", "gemini", "--max-agents", "4"],
+            session_builder=build,  # type: ignore[arg-type]
+        )
+        assert code == 0
+        config = captured["config"]
+        assert [a.type for a in config.agents] == ["openai_api", "gemini_api"]  # type: ignore[attr-defined]
+        assert config.session.max_concurrent_agents == 4  # type: ignore[attr-defined]
+
+    def test_bad_models_provider_returns_two(self, tmp_path: Path) -> None:
+        code = main(
+            ["--task", "t", "--config", str(_config_file(tmp_path)),
+             "--models", "mistral"],
+            session_builder=_builder(FakeSession()),
+        )
+        assert code == 2
+
+    def test_max_agents_below_one_returns_two(self, tmp_path: Path) -> None:
+        code = main(
+            ["--task", "t", "--config", str(_config_file(tmp_path)),
+             "--max-agents", "0"],
+            session_builder=_builder(FakeSession()),
+        )
+        assert code == 2
 
     def test_no_review_flag_skips_review(self, tmp_path: Path) -> None:
         session = FakeSession()

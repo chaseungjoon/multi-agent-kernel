@@ -11,6 +11,7 @@ from mak.agent_runner.adapters.gemini_api_adapter import GeminiApiAdapter
 from mak.agent_runner.adapters.openai_api_adapter import OpenAiApiAdapter
 from mak.agent_runner.sandbox import SandboxConfig
 from mak.bootstrap import (
+    agents_from_specs,
     build_registry,
     default_agent_type,
     validate_config,
@@ -21,6 +22,44 @@ from mak.core.exceptions import AgentError, ConfigError
 
 def _config(*agents: AgentConfig) -> MakConfig:
     return MakConfig(agents=agents)
+
+
+class TestAgentsFromSpecs:
+    def test_maps_providers_to_adapter_types_and_keys(self) -> None:
+        agents = agents_from_specs(["anthropic:claude-opus-4-8", "openai", "gemini"])
+        assert [a.type for a in agents] == [
+            "anthropic_api",
+            "openai_api",
+            "gemini_api",
+        ]
+        assert agents[0].model == "claude-opus-4-8"
+        assert agents[1].model is None  # no model -> adapter default
+        assert [a.api_key_env for a in agents] == [
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+        ]
+
+    def test_google_is_an_alias_for_gemini(self) -> None:
+        (agent,) = agents_from_specs(["google:gemini-3-pro"])
+        assert agent.type == "gemini_api"
+        assert agent.model == "gemini-3-pro"
+
+    def test_unknown_provider_raises(self) -> None:
+        with pytest.raises(ConfigError, match="unknown provider 'mistral'"):
+            agents_from_specs(["mistral"])
+
+    def test_duplicate_provider_raises(self) -> None:
+        with pytest.raises(ConfigError, match="more than once"):
+            agents_from_specs(["anthropic", "anthropic:claude-opus-4-8"])
+
+    def test_empty_specs_raises(self) -> None:
+        with pytest.raises(ConfigError):
+            agents_from_specs([])
+
+    def test_roster_builds_a_registry(self) -> None:
+        registry = build_registry(_config(*agents_from_specs(["anthropic", "openai"])))
+        assert set(registry.list_types()) == {"anthropic_api", "openai_api"}
 
 
 class TestBuildRegistry:

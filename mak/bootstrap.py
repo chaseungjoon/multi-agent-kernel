@@ -53,6 +53,62 @@ KNOWN_AGENT_TYPES: frozenset[str] = frozenset(_API_ADAPTER_CLASSES) | frozenset(
     _CLI_ADAPTER_CLASSES
 )
 
+# Friendly provider name (used on the command line) -> (adapter type, conventional
+# API-key env var). MAK's hosted-model support is exactly these three providers.
+_PROVIDER_TO_API: dict[str, tuple[str, str]] = {
+    "anthropic": ("anthropic_api", "ANTHROPIC_API_KEY"),
+    "openai": ("openai_api", "OPENAI_API_KEY"),
+    "gemini": ("gemini_api", "GEMINI_API_KEY"),
+    "google": ("gemini_api", "GEMINI_API_KEY"),  # alias for gemini
+}
+
+# The providers we advertise (aliases like "google" are accepted but not listed).
+SUPPORTED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "gemini")
+
+# Adapter type -> conventional API-key env var, for resolving the planner's key
+# when the roster does not happen to include that provider.
+DEFAULT_KEY_ENV: dict[str, str] = {
+    agent_type: key_env for agent_type, key_env in _PROVIDER_TO_API.values()
+}
+
+
+def agents_from_specs(specs: list[str]) -> tuple[AgentConfig, ...]:
+    """Build an agent roster from ``provider[:model]`` command-line specs.
+
+    Each spec names a hosted provider and, optionally, an explicit model after a
+    colon (``anthropic:claude-opus-4-8``); with no model the adapter's built-in
+    default is used. The conventional API-key env var is attached per provider so
+    keys are read from the environment, never passed on the command line.
+
+    The adapter registry is keyed by agent *type*, so MAK runs **one model per
+    provider** in a single session — repeating a provider is rejected with a clear
+    message (use ``--max-agents`` to set how many workers run concurrently).
+    """
+    if not specs:
+        raise ConfigError("--models needs at least one provider[:model] entry")
+    agents: list[AgentConfig] = []
+    seen: dict[str, str] = {}
+    for spec in specs:
+        provider, sep, model = spec.partition(":")
+        provider = provider.strip().lower()
+        model = model.strip() if sep else ""
+        if provider not in _PROVIDER_TO_API:
+            raise ConfigError(
+                f"unknown provider {provider!r}; MAK supports "
+                f"{', '.join(SUPPORTED_PROVIDERS)} (as provider or provider:model)"
+            )
+        agent_type, key_env = _PROVIDER_TO_API[provider]
+        if agent_type in seen:
+            raise ConfigError(
+                f"provider {provider!r} given more than once; MAK runs one model per "
+                f"provider — use --max-agents N to set how many agents run at once"
+            )
+        seen[agent_type] = provider
+        agents.append(
+            AgentConfig(type=agent_type, model=model or None, api_key_env=key_env)
+        )
+    return tuple(agents)
+
 
 def _resolve_api_key(agent: AgentConfig) -> str | None:
     """Read the API key from the configured env var, if any. Never persisted."""
