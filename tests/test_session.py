@@ -289,6 +289,29 @@ class TestPartialCompletion:
         # The second dispatch only re-targets the node left over from the first.
         assert runner.assigned[1].target_nodes == [NodeId("m.py::function::a2")]
 
+    def test_agent_error_is_surfaced_on_result(self, tmp_path: Path) -> None:
+        # An agent whose call fails (e.g. API error / truncated response) reports an
+        # error; the run must carry that reason so the failure is diagnosable.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+
+        class ErroringRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=False,
+                    error="response truncated (hit max_tokens)",
+                )
+
+        session = _session(
+            tmp_path, runner=ErroringRunner(), node_store=store, max_attempts=2
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        result = session.run()
+        assert result.failed == ("a",)
+        assert "truncated" in result.failure_reasons["a"]
+
     def test_never_completes_fails_after_max_attempts(self, tmp_path: Path) -> None:
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
         store = _store(tmp_path)
@@ -519,11 +542,6 @@ class TestStallReporting:
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
         store = _store(tmp_path)
         lock_table = LockTable()
-        # An external holder owns the only target node's lock forever, so the
-        # task can never acquire it and the run stalls with zero failures.
-        lock_table.try_acquire(
-            NodeId("m.py::function::a"), LockMode.WRITE, "external"
-        )
         session = _session(
             tmp_path,
             runner=StagingRunner(store),
@@ -531,6 +549,12 @@ class TestStallReporting:
             lock_table=lock_table,
         )
         session.initialize()
+        # An external holder owns the only target node's lock forever (acquired after
+        # initialize, which clears stale leases), so the task can never acquire it and
+        # the run stalls with zero failures.
+        lock_table.try_acquire(
+            NodeId("m.py::function::a"), LockMode.WRITE, "external"
+        )
         session.install_plan([_task("a", ["m.py::function::a"])])
         result = session.run()
         assert result.state is SessionState.FAILED

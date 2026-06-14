@@ -266,6 +266,10 @@ def main(
     if not result.ok:
         if result.failed:
             print(f"mak: failed tasks: {', '.join(result.failed)}", file=sys.stderr)
+            for task_id in result.failed:
+                reason = result.failure_reasons.get(task_id)
+                if reason:
+                    print(f"mak:   - {task_id}: {reason}", file=sys.stderr)
         if result.skipped:
             print(
                 f"mak: skipped (an upstream task failed): {', '.join(result.skipped)}",

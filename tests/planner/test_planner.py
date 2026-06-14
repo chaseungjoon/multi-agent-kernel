@@ -125,6 +125,31 @@ class TestParsePlan:
         assert "T03 -> notes" in str(exc.value)
         assert "ok.py" not in str(exc.value)  # the valid .py target is not flagged
 
+    def test_two_tasks_writing_same_whole_file_rejected(self) -> None:
+        bad = json.dumps([
+            {"task_id": "a", "description": "x", "target_nodes": ["app.py"]},
+            {"task_id": "b", "description": "y", "target_nodes": ["app.py"]},
+        ])
+        with pytest.raises(ValueError, match="both write the whole file"):
+            parse_plan(bad)
+
+    def test_same_file_different_symbols_pass(self) -> None:
+        good = json.dumps([
+            {"task_id": "a", "description": "x",
+             "target_nodes": ["app.py::function::f"]},
+            {"task_id": "b", "description": "y",
+             "target_nodes": ["app.py::function::g"]},
+        ])
+        tasks = parse_plan(good)
+        assert len(tasks) == 2
+
+    def test_distinct_whole_files_pass(self) -> None:
+        good = json.dumps([
+            {"task_id": "a", "description": "x", "target_nodes": ["a.py"]},
+            {"task_id": "b", "description": "y", "target_nodes": ["b.py"]},
+        ])
+        assert len(parse_plan(good)) == 2
+
     def test_python_targets_with_qualified_names_pass(self) -> None:
         good = json.dumps(
             [

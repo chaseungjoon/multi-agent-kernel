@@ -103,6 +103,10 @@ class _LockTableLike(Protocol):
         """Release every lock held by ``holder``."""
         ...
 
+    def clear(self) -> int:
+        """Drop every lease (stale leases from a prior session); return the count."""
+        ...
+
     def expire_stale(self) -> list[LockEntry]:
         """Expire and return timed-out leases."""
         ...
@@ -174,6 +178,7 @@ class SessionResult:
     failed: tuple[str, ...]
     blocked: tuple[str, ...] = ()
     skipped: tuple[str, ...] = ()
+    failure_reasons: dict[str, str] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -294,6 +299,9 @@ class Session:
         self._partial_queue: list[str] = []
         self._completed: list[str] = []
         self._failed: list[str] = []
+        # Most recent reason a task did not make progress (agent error or a
+        # rejection reason), surfaced on the result so a failure is diagnosable.
+        self._failure_reasons: dict[str, str] = {}
 
     # -- logging helper ----------------------------------------------------
 
@@ -337,6 +345,10 @@ class Session:
         """Ingest the working directory's Python files into the node store."""
         if self.state is not SessionState.CREATED:
             raise SessionError(f"cannot initialize from state {self.state}")
+        # A fresh session owns none of the leases a prior (possibly killed) run left
+        # in the persisted lock table; drop them so they don't surface later as
+        # spurious "lease expired" warnings. Crash recovery uses recover() instead.
+        self._lock_table.clear()
         ns_cfg = self._config.node_store
         for pattern in ns_cfg.include_patterns:
             for path in sorted(self._work_dir.glob(pattern)):
@@ -504,6 +516,11 @@ class Session:
             failed=tuple(self._failed),
             blocked=tuple(blocked),
             skipped=tuple(skipped),
+            failure_reasons={
+                t: self._failure_reasons[t]
+                for t in self._failed
+                if t in self._failure_reasons
+            },
         )
 
     def _failed_descendants(self, tasks: dict[str, SubTask]) -> set[str]:
@@ -581,6 +598,10 @@ class Session:
         in_scope = set(progress.target_nodes)
         if result.success:
             self._stage_returned_sources(in_scope, result.new_sources)
+        elif result.error:
+            # The agent call itself failed (API error, or a truncated/malformed
+            # structured response). Keep the reason so the run can report it.
+            self._failure_reasons[task_id] = result.error
         # A node is committable only if a pending fragment actually exists for it —
         # either staged here from the agent's returned source, or put directly by a
         # test/local runner. An id the agent *claims* it changed but provided no
@@ -670,6 +691,8 @@ class Session:
     def _reject(self, task_id: str, staged: list[NodeId], reasons: list[str]) -> None:
         """Log a rejection and discard the staged (pending) fragments."""
         self._log(EventType.CONFLICT_DETECTED, task_id=task_id, reasons=reasons)
+        if reasons:
+            self._failure_reasons[task_id] = "; ".join(reasons)
         for node_id in staged:
             self._node_store.rollback_node(node_id)
 
@@ -788,7 +811,17 @@ class Session:
         if progress.attempts >= self._max_attempts:
             scheduler.on_task_failed(progress.task_id, requeue=False)
             self._failed.append(progress.task_id)
-            self._log(EventType.TASK_COMPLETED, task_id=progress.task_id, failed=True)
+            reason = self._failure_reasons.setdefault(
+                progress.task_id,
+                "agent reported success but staged no usable source "
+                f"after {progress.attempts} attempt(s)",
+            )
+            self._log(
+                EventType.TASK_COMPLETED,
+                task_id=progress.task_id,
+                failed=True,
+                reason=reason,
+            )
         else:
             # Remaining nodes are still locked from the original acquisition; queue
             # a narrowed re-dispatch covering only what is left.

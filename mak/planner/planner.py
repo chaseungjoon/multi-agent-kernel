@@ -40,6 +40,13 @@ non-Python files (no .md, .json, .txt, .js, .html, .css, README, or doc/architec
 files) — MAK cannot represent them. If the task implies documentation or other \
 non-Python artifacts, leave them out of the plan.
 
+Decompose by FILE for a new project: give each new file its own sub-task with that \
+file as a bare-path target ("pkg/foo.py"). Never have two sub-tasks both write the \
+same whole file — that overwrites work. Prefer many small, focused modules over one \
+giant file, and depend on a file only when you truly need its symbols. To split one \
+file across sub-tasks, target individual symbols ("pkg/foo.py::function::name"); \
+otherwise one file = one task.
+
 Only assign two sub-tasks to write the same node if one depends on the other."""
 
 
@@ -166,6 +173,24 @@ def parse_plan(raw: str) -> list[SubTask]:
             "'path/to/file.py::kind::name' for every target_node, and drop tasks that "
             "produce documentation or other non-Python artifacts."
         )
+
+    # A *whole-file* target (a bare 'path.py' with no ::kind::name) is the entire
+    # file. If two tasks each return a whole file, the second clobbers the first, so
+    # require a whole-file target to be owned by exactly one task. To split work
+    # across a file, target distinct symbols (file.py::kind::name) instead.
+    whole_file_owner: dict[str, str] = {}
+    for task in subtasks:
+        for node in dict.fromkeys(task.target_nodes):
+            if "::" in node:
+                continue
+            if node in whole_file_owner:
+                raise ValueError(
+                    f"tasks '{whole_file_owner[node]}' and '{task.task_id}' both write "
+                    f"the whole file '{node}'; a new file must be created by exactly "
+                    "one task. Give each file its own task, or split a file across "
+                    "tasks by targeting individual symbols (file.py::kind::name)."
+                )
+            whole_file_owner[node] = task.task_id
     return subtasks
 
 
