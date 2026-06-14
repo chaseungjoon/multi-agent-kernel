@@ -75,7 +75,7 @@ cp mak/.env.example mak/.env     # Fill in your keys
 
 ### 3. Choose the number and types of agents & Run
 
-> ***⚠️ Just to be safe, create a separate branch for MAK to work on ⚠️***
+> ***⚠️ Just to be safe, create a separate branch for MAK to work on***
 
 ```bash
 # Example with claude 4.8, gpt 5.5 and gemini 3 pro
