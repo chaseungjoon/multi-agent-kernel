@@ -766,7 +766,11 @@ CLI's flags. The API adapters remain primary.
   to their `cmd` and an optional sandbox; an unknown type resolves to a clear error.
   `default_agent_type(config)` returns the routing default (the first configured
   agent), and `validate_config(config)` rejects unknown agent types at startup.
-  `mak/__main__.py` is the thin CLI shell over these functions.
+  `agents_from_specs(specs)` builds a roster of `AgentConfig`s from CLI
+  `provider[:model]` strings (the `--models` flag, §12.1), mapping friendly provider
+  names to adapter types + key env vars via `_PROVIDER_TO_API`; `SUPPORTED_PROVIDERS`
+  and `DEFAULT_KEY_ENV` are the public knobs the CLI reuses. `mak/__main__.py` is the
+  thin CLI shell over these functions.
 
 ### 7.4 The wire protocol
 
@@ -934,8 +938,9 @@ Rules and behaviors:
 - `agents` is **required** and must be non-empty; each entry needs a `type`. Per-agent
   fields `model`, `api_key_env`, and `cmd` are all optional.
 - **API keys are never stored in config** — `api_key_env` names the environment
-  variable to read at composition time. Put real keys in `mak/.env` (gitignored);
-  `mak/.env.example` lists the expected variable names.
+  variable to read at composition time. Put real keys in `mak/.env` (gitignored),
+  which the CLI auto-loads at startup (`load_env_file`, §12); `mak/.env.example` lists
+  the expected variable names. Exported environment variables take precedence.
 - Type coercion is strict and wrapped in `ConfigError` (e.g. `"false"` parses to
   `False`, not Python's truthy `bool("false")`).
 
@@ -944,22 +949,78 @@ Rules and behaviors:
 `mak/__main__.py` is the entry point: `python -m mak --task "..."`. It is a thin
 shell over the composition root, split into testable functions:
 
+- `load_env_file(path=None)` — loads `mak/.env` (`KEY=VALUE` lines, package-relative
+  by default) into `os.environ` via `setdefault`, so the **documented key convention
+  actually takes effect** and an explicitly `export`ed variable still wins. Called
+  first in `main`; the agent/planner adapters then read keys from the environment at
+  composition time. No `python-dotenv` dependency — it's a dozen lines.
 - `parse_args(argv)` — flags: `--task` (required), `--config` (default
-  `mak/config.yaml`), `--work-dir`, `--agent` (override the default agent type),
+  `mak/config.yaml`), `--work-dir`, `--models` (roster override, see below),
+  `--max-agents` (concurrency override), `--agent` (override the default agent type),
   `--no-review`, `--sandbox`, `-v/-vv`.
 - `build_session(args, config, sandbox)` — assembles the `Session` and all its
   collaborators (node store, lock table, registry via `build_registry`, agent runner,
   planner via `build_planner_llm`, git helper, logger, default agent).
-- `main(argv, *, session_builder=build_session)` — loads + validates config, builds
-  the session, drives **initialize → plan → run → teardown**, and maps domain errors
-  to friendly messages and exit codes: `0` success, `1` for an aborted review /
-  planner failure / failed-or-blocked run / failing tests, `2` for a config error or
-  a missing Docker daemon under `--sandbox`. The `session_builder` seam lets tests
-  drive `main` end-to-end with a fully-faked session.
+- `main(argv, *, session_builder=build_session)` — loads env + config, applies the CLI
+  overrides (work-dir, roster, concurrency), validates, builds the session, drives
+  **initialize → plan → run → teardown**, and maps domain errors to friendly messages
+  and exit codes: `0` success, `1` for an aborted review / planner failure /
+  failed-or-blocked run / failing tests, `2` for a config error (including a bad
+  `--models` provider or `--max-agents < 1`) or a missing Docker daemon under
+  `--sandbox`. The `session_builder` seam lets tests drive `main` end-to-end with a
+  fully-faked session.
 
-Run end-to-end: `python -m mak --task "..." --config mak/config.yaml`. Agents are
-dispatched concurrently (bounded by `max_concurrent_agents`); agent and planner
-backends are selected entirely by the config file.
+### 12.1 Choosing agents and concurrency from the command line
+
+Everything the roster needs can be set at the command line — **no config edit
+required** — because `main` rewrites the loaded `MakConfig` (a frozen dataclass) with
+`dataclasses.replace` before validation:
+
+- **`--models PROVIDER[:MODEL] …`** overrides the config's entire `agents` list.
+  `bootstrap.agents_from_specs(specs)` parses each entry: the part before `:` is a
+  friendly **provider** name, the part after (optional) is an explicit **model**.
+  `bootstrap._PROVIDER_TO_API` maps the provider to its adapter `type` and conventional
+  key env var:
+
+  | Provider (CLI) | Adapter `type` | Key env var | Default model (adapter) |
+  |---|---|---|---|
+  | `anthropic` | `anthropic_api` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
+  | `openai` | `openai_api` | `OPENAI_API_KEY` | `gpt-4o` |
+  | `gemini` (alias `google`) | `gemini_api` | `GEMINI_API_KEY` | `gemini-3-pro` |
+
+  With no `:model`, `AgentConfig.model` is left `None` and the adapter's built-in
+  default applies. **These three providers are MAK's entire hosted-model surface**
+  (`bootstrap.SUPPORTED_PROVIDERS`); an unknown provider is rejected with a
+  `ConfigError` listing the supported set. Because the `AdapterRegistry` is keyed by
+  agent *type*, MAK runs **one model per provider** per session — a repeated provider
+  is rejected with a message pointing at `--max-agents` for concurrency. The first
+  entry becomes the routing default (overridable with `--agent`).
+
+- **`--max-agents N`** overrides `session.max_concurrent_agents` — the size of the
+  bounded worker pool in `Session` (§10), i.e. **how many agents run at once**. (Note:
+  `AgentConfig.max_instances` is config metadata only; concurrency is governed solely
+  by `max_concurrent_agents`.) `N < 1` is a `ConfigError`.
+
+- **Planner key fallback.** The planner has its own model (`planner.model`, default a
+  Claude model). `_planner_api_key` first looks for that provider's `api_key_env`
+  among the roster, then falls back to `bootstrap.DEFAULT_KEY_ENV` — so an
+  OpenAI-only `--models openai` run still resolves the Claude planner's
+  `ANTHROPIC_API_KEY` from the environment.
+
+Examples:
+
+```bash
+# Three providers, explicit models, default concurrency from config:
+python -m mak --task "..." --work-dir ./proj \
+  --models anthropic:claude-opus-4-8 openai:gpt-5.5 gemini:gemini-3-pro
+
+# One provider, five concurrent workers:
+python -m mak --task "..." --work-dir ./proj --models anthropic --max-agents 5
+```
+
+To make a roster permanent instead, edit the `agents:` list in `mak/config.yaml`; the
+flags simply override it for a single run. Agent and planner backends are otherwise
+selected entirely by the config file.
 
 ---
 
@@ -986,7 +1047,7 @@ pip install -e ".[dev]"             # installs mypy, pytest, ruff, types-PyYAML
 pre-commit install                  # optional: run the gates on every commit
 ```
 
-Copy the env template if you'll make real calls:
+Copy the env template if you'll make real calls (the CLI auto-loads `mak/.env`):
 
 ```bash
 cp mak/.env.example mak/.env        # then fill in the keys you use

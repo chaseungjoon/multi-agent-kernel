@@ -25,7 +25,7 @@ reassembles the file. Git is used only as an audit log.
 
 ## Run
 
-### 1. Clone from source (Python ≥ 3.11):
+### 1. Clone from source (Python ≥ 3.11)
 
 ```bash
 git clone https://github.com/chaseungjoon/multi-agent-kernel
@@ -34,25 +34,75 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-### 2. Set api keys for the default agents in `mak/.env`, then point MAK at a project:
+### 2. Set the API keys
+
+MAK drives hosted models from **three providers — Anthropic, OpenAI, and Google
+Gemini**. Put the key(s) for the providers you'll use in `mak/.env` (gitignored, and
+loaded automatically); you only need keys for the agents you actually run:
 
 ```bash
-touch mak/.env
-echo 'ANTHROPIC_API_KEY=...' >> mak/.env
-echo 'OPENAI_API_KEY=...' >> mak/.env
-echo 'GEMINI_API_KEY=...' >> mak/.env
-
-python3 -m mak --task "your task here" --work-dir path/to/project
+cp mak/.env.example mak/.env     # Fill in your keys 
 ```
 
-MAK shows the plan for approval before editing (`--no-review` skips it); agents and
-models are configured in `mak/config.yaml`. For a ready-made target, try the bundled
+### 3. Choose the number and types of agents & Run
+
+***For safety reasons, create a separate branch for MAK to work on***
+
+```bash
+# Example with claude 4.8, gpt 5.5 and gemini 3 pro
+python3 -m mak --task "your task" --work-dir path/to/project \
+  --models anthropic:claude-opus-4-8 openai:gpt-5.5 gemini:gemini-3-pro
+
+# Example with claude 4.6 X 5
+python3 -m mak --task "your task" --work-dir path/to/project \
+  --models anthropic --max-agents 5
+```
+
+**Command line arguments**
+```bash
+# Describe task
+--task "Describe your task here"
+
+# Set working directory
+--work-dir /path/to/project
+
+# Omit human review (Not recommended)
+--no-review
+
+# Default model
+--models anthropic
+--models openai
+--models gemini
+
+# Set model
+--models anthropic:claude-opus-4-8
+--models openai:gpt-5.4
+--models gemini:gemini-3-pro
+
+# Use multiple providers
+--models openai:gpt-5.5 gemini:gemini-3-pro
+
+# Use single provider with multiple agents
+--max-agents 5 --models anthropic
+--max-agents 4 --models anthropic:claude-opus-4-8
+
+# Choose a custom config file
+--config /path/to/config.yaml
+
+```
+
+**[Default models list for each provider](mak/config.yaml)**
+
+For a ready-made target, try the bundled
 [demo](demo/):
 
 ```bash
+# Demo MAK
 python3 -m mak --task "Implement every function in the dataforge package per its docstring." \
-  --config demo/config.yaml
-python3 -m pytest demo/project   # verify the result
+  --config demo/config.yaml --no-review
+
+# Verify the result
+python3 -m pytest demo/project
 ```
 
 ## Benchmark
