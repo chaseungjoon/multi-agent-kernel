@@ -135,7 +135,7 @@ maximally-contended workload. Run it yourself (all targets) with
 
 ```bash
 python3 benchmark/run_benchmark.py --mode real \
-  --models anthropic:claude-sonnet-4-6 anthropic:claude-sonnet-4-6 anthropic:claude-sonnet-4-6
+  --models anthropic --max-agents 3
 ```
 
 ## Contribute
