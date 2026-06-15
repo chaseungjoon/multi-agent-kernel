@@ -47,7 +47,17 @@ giant file, and depend on a file only when you truly need its symbols. To split 
 file across sub-tasks, target individual symbols ("pkg/foo.py::function::name"); \
 otherwise one file = one task.
 
-Only assign two sub-tasks to write the same node if one depends on the other."""
+Only assign two sub-tasks to write the same node if one depends on the other.
+
+CRITICAL — CASCADE PREVENTION: If ANY sub-task changes a function's public
+signature (rename, add, remove, or reorder parameters; change the return type or
+default values), you MUST also include sub-tasks for EVERY node that calls that
+function — even across different files. Scan the entire inventory before finalising
+your plan. An incomplete plan that leaves callers with a stale signature forces a
+costly follow-up wave; this is a planning failure. When uncertain whether a caller
+exists, include a fix-up task anyway: a no-op task is far cheaper than a broken
+codebase. Search the inventory for any node whose name suggests it calls a symbol
+you are changing, and include it as a target."""
 
 
 class PlannerLLM(Protocol):

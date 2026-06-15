@@ -45,14 +45,21 @@ def render_plan(subtasks: list[SubTask]) -> str:
 def display_plan_for_review(
     subtasks: list[SubTask],
     *,
+    header: str | None = None,
     prompt_fn: Callable[[str], str] = input,
     printer: Callable[[str], None] = print,
 ) -> list[SubTask]:
     """Show the plan and return the approved (possibly edited) sub-task list.
 
+    ``header`` is printed before the plan when present — used by cascade waves
+    to explain why these extra tasks appeared.
+
     Returns the original list on approval, or a re-parsed list on edit. Raises
     ``PlanReviewAborted`` if the user aborts.
     """
+    if header:
+        printer(header)
+        printer("")
     printer(render_plan(subtasks))
     while True:
         answer = prompt_fn("Approve plan? [a]pprove / [e]dit / a[b]ort: ")

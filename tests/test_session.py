@@ -525,6 +525,86 @@ class TestBundleEnrichment:
         )
 
 
+class TestCascadeDetection:
+    """detect_cascade_tasks() identifies callers broken by signature changes."""
+
+    def test_no_cascade_when_body_only_changes(self, tmp_path: Path) -> None:
+        # Changing a function body (same signature) must not trigger cascades.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        runner = StagingRunner(store, new_source="def a():\n    return 99\n")
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        session.run()
+        assert session.detect_cascade_tasks() == []
+
+    def test_cascade_tasks_for_cross_file_callers(self, tmp_path: Path) -> None:
+        # When apple's signature gains a new parameter, dog (in another file)
+        # calls the old signature and must be included in a cascade wave.
+        (tmp_path / "fruit").mkdir()
+        (tmp_path / "animal").mkdir()
+        (tmp_path / "fruit" / "main.py").write_text(
+            "def apple(x):\n    return x\n"
+        )
+        (tmp_path / "animal" / "main.py").write_text(
+            "from fruit.main import apple\n\ndef dog():\n    return apple(1)\n"
+        )
+        store = _store(tmp_path)
+        runner = StagingRunner(
+            store, new_source="def apple(x, y):\n    return x + y\n"
+        )
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan(
+            [_task("fix_apple", ["fruit/main.py::function::apple"])]
+        )
+        session.run()
+
+        cascade = session.detect_cascade_tasks()
+        assert cascade, "expected cascade tasks after signature change"
+        # At least one cascade task should target a node in animal/main.py.
+        assert any(
+            "animal/main.py" in str(t.target_nodes[0]) for t in cascade
+        )
+        # Context node should point back to the changed function.
+        assert any("fruit/main.py" in str(c) for t in cascade for c in t.context_nodes)
+
+    def test_no_cascade_for_brand_new_function(self, tmp_path: Path) -> None:
+        # A new function has no prior callers; no cascade tasks expected.
+        # We simulate this by changing body only and verifying the new-node path.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        # Stage a non-function so _extract_sig returns None → no cascade.
+        runner = StagingRunner(store, new_source="x = 1\n")
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        session.run()
+        assert session.detect_cascade_tasks() == []
+
+    def test_install_plan_from_completed_enables_cascade_wave(
+        self, tmp_path: Path
+    ) -> None:
+        # install_plan() must succeed after COMPLETED so a cascade wave can be
+        # installed and run without re-initializing the session.
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        runner = StagingRunner(store)
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("first", ["m.py::function::a"])])
+        result1 = session.run()
+        assert result1.ok
+        # Cascade wave: install a second plan from COMPLETED state.
+        session.install_plan([_task("cascade", ["m.py::function::b"])])
+        result2 = session.run()
+        assert result2.ok
+        # First wave's completed list was reset; only cascade task is reported.
+        assert "cascade" in result2.completed
+        assert "first" not in result2.completed
+
+
 class TestTransactionalCommit:
     """The store must not advance unless reconstruction is valid."""
 

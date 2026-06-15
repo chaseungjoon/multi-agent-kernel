@@ -53,6 +53,10 @@ class FakeSession:
         self.calls.append("run")
         return self._result
 
+    def detect_cascade_tasks(self) -> list[object]:
+        self.calls.append("detect_cascade_tasks")
+        return []  # no cascades in the happy-path fake
+
     def teardown(self) -> bool:
         self.calls.append("teardown")
         return self._tests_passed
@@ -131,7 +135,11 @@ class TestMain:
             session_builder=_builder(session),
         )
         assert code == 0
-        assert session.calls == ["initialize", "plan(review=True)", "run", "teardown"]
+        assert session.calls == [
+            "initialize", "plan(review=True)", "run",
+            "detect_cascade_tasks",  # cascade check after each wave
+            "teardown",
+        ]
 
     def test_models_and_max_agents_override_config(self, tmp_path: Path) -> None:
         captured: dict[str, object] = {}

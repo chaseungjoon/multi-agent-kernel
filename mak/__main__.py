@@ -44,6 +44,7 @@ from mak.lock_manager.lock_table import LockTable
 from mak.node_store.store import NodeStore
 from mak.planner.llm import build_planner_llm
 from mak.planner.planner import Planner
+from mak.planner.review import display_plan_for_review
 from mak.session import Session
 
 SessionBuilder = Callable[
@@ -247,6 +248,47 @@ def main(
         session.initialize()
         session.plan(args.task, review=not args.no_review)
         result = session.run()
+
+        # Cascade loop: after each wave, check whether any committed signature
+        # changes broke callers in other files.  If so, surface those as a new
+        # plan for the user to review (same UI as the initial plan), then run
+        # another wave.  Repeat until no cascades remain or the user declines.
+        while True:
+            cascade_tasks = session.detect_cascade_tasks()
+            if not cascade_tasks:
+                break
+            print(
+                f"\nmak: {len(cascade_tasks)} cascade task(s) detected — "
+                "function signatures changed and the following callers need updating.",
+                file=sys.stderr,
+            )
+            if args.no_review:
+                print(
+                    "mak: --no-review is set; skipping cascade wave. "
+                    "Callers may be broken.",
+                    file=sys.stderr,
+                )
+                break
+            try:
+                cascade_tasks = display_plan_for_review(
+                    cascade_tasks,
+                    header=(
+                        "╔══ CASCADE WAVE ════════════════════════════════════════════╗\n"
+                        "║ The previous wave changed function signatures.             ║\n"
+                        "║ The tasks below update call sites across the codebase.     ║\n"
+                        "║ You can approve, edit, or abort this follow-up wave.       ║\n"
+                        "╚════════════════════════════════════════════════════════════╝"
+                    ),
+                )
+            except PlanReviewAborted:
+                print(
+                    "mak: cascade wave declined; callers may still be broken.",
+                    file=sys.stderr,
+                )
+                break
+            session.install_plan(cascade_tasks)
+            result = session.run()
+
         tests_passed = session.teardown()
     except PlanReviewAborted:
         print("mak: plan review aborted; no changes were made.", file=sys.stderr)

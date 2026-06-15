@@ -303,6 +303,9 @@ class Session:
         # Most recent reason a task did not make progress (agent error or a
         # rejection reason), surfaced on the result so a failure is diagnosable.
         self._failure_reasons: dict[str, str] = {}
+        # Per-wave commit log: node_id → (source_before, source_after).
+        # Populated during run(); read by detect_cascade_tasks() after run().
+        self._wave_committed: dict[NodeId, tuple[str | None, str]] = {}
 
     # -- logging helper ----------------------------------------------------
 
@@ -403,9 +406,24 @@ class Session:
         return subtasks
 
     def install_plan(self, subtasks: list[SubTask]) -> None:
-        """Build the DAG + scheduler from a ready plan (bypasses the planner)."""
-        if self.state not in (SessionState.INITIALIZED, SessionState.PLANNED):
+        """Build the DAG + scheduler from a ready plan (bypasses the planner).
+
+        Also accepted from ``COMPLETED`` and ``FAILED`` so a cascade wave can
+        be installed immediately after a finished wave without re-initializing.
+        Per-wave accumulators are reset so the new run starts clean.
+        """
+        if self.state not in (
+            SessionState.INITIALIZED,
+            SessionState.PLANNED,
+            SessionState.COMPLETED,
+            SessionState.FAILED,
+        ):
             raise SessionError(f"cannot install a plan from state {self.state}")
+        # Reset per-wave tracking so the new wave starts with a clean slate.
+        self._completed = []
+        self._failed = []
+        self._failure_reasons = {}
+        self._wave_committed = {}
         subtasks = self._apply_default_agent(subtasks)
         dag = DAG(subtasks)
         self._scheduler = Scheduler(
@@ -715,8 +733,12 @@ class Session:
 
         committed: list[NodeId] = []
         for node_id in staged:
+            old_source = self._node_source(node_id)  # snapshot before commit
             self._node_store.commit_node(node_id)
             committed.append(node_id)
+            new_source = self._node_source(node_id)  # snapshot after commit
+            if new_source is not None:
+                self._wave_committed[node_id] = (old_source, new_source)
         try:
             self._reconstruct_affected(staged)
         except (SyntaxError, OSError) as exc:
@@ -1105,12 +1127,94 @@ class Session:
             progress.completed_nodes = set(task.target_nodes)
         return progress
 
+    # -- cascade detection -------------------------------------------------
+
+    def detect_cascade_tasks(self) -> list[SubTask]:
+        """Return fix-up tasks for callers broken by signature changes this wave.
+
+        After ``run()`` completes, this method compares the old and new AST
+        signature of every node committed during the wave.  When a function's
+        signature changed (parameters or return annotation differ), every node
+        in the store — across all files — that references that symbol by name is
+        a potential broken caller and gets its own SubTask.
+
+        Returns an empty list when no signatures changed, which is the expected
+        outcome when the planner was thorough about including all affected nodes.
+        A non-empty return is a signal that the planner missed callers; the
+        caller (``__main__``) should present these tasks to the user for review
+        before running a second wave.
+        """
+        changed: list[tuple[NodeId, str, str, str]] = []
+        for node_id, (old_src, new_src) in self._wave_committed.items():
+            parts = str(node_id).split("::")
+            if len(parts) < 3:
+                continue
+            old_sig = _extract_sig(old_src) if old_src is not None else None
+            new_sig = _extract_sig(new_src)
+            # Only cascade when an *existing* function's signature changed.
+            # New functions (old_src is None) have no prior callers to break.
+            if old_sig is not None and new_sig is not None and old_sig != new_sig:
+                symbol = parts[2].rsplit(".", 1)[-1]
+                changed.append((node_id, symbol, old_sig, new_sig))
+
+        if not changed:
+            return []
+
+        tasks: list[SubTask] = []
+        already_targeted: set[NodeId] = set()
+
+        for node_id, symbol, old_sig, new_sig in changed:
+            func_file = str(node_id).split("::", 1)[0]
+            pat = re.compile(r"\b" + re.escape(symbol) + r"\b")
+            for xfile_id in self._node_store.list_nodes():
+                if str(xfile_id).split("::", 1)[0] == func_file:
+                    continue  # same-file callers should have been in the plan
+                if xfile_id in already_targeted:
+                    continue
+                source = self._node_source(xfile_id)
+                if not (source and pat.search(source)):
+                    continue
+                already_targeted.add(xfile_id)
+                safe_id = re.sub(r"[^a-zA-Z0-9]", "_", f"cascade_{symbol}_{xfile_id}")
+                tasks.append(SubTask(
+                    task_id=safe_id,
+                    description=(
+                        f"Update call sites of `{symbol}` in `{xfile_id}` — "
+                        f"its signature changed from `{old_sig}` to `{new_sig}`. "
+                        "Adjust every call in this node to match the new signature."
+                    ),
+                    target_nodes=[xfile_id],
+                    context_nodes=[node_id],
+                    depends_on=[],
+                    agent_type=self._default_agent_type or "",
+                ))
+
+        return tasks
+
     # -- helpers -----------------------------------------------------------
 
     def _require_scheduler(self) -> Scheduler:
         if self._scheduler is None:
             raise SessionError("no plan installed; call plan() or install_plan() first")
         return self._scheduler
+
+
+def _extract_sig(source: str) -> str | None:
+    """Return a normalized ``name(args) -> ret`` signature for the first function.
+
+    Returns ``None`` if the source cannot be parsed or contains no function.
+    Used to detect whether a committed edit changed a function's public contract.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = ast.unparse(node.args)
+            ret = f" -> {ast.unparse(node.returns)}" if node.returns else ""
+            return f"{node.name}({args}){ret}"
+    return None
 
 
 def _is_excluded(rel: str, exclude_patterns: tuple[str, ...]) -> bool:
