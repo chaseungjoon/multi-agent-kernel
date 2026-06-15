@@ -212,25 +212,45 @@ class NodeStore:
         """List committed node IDs in source order, optionally filtered by file.
 
         A *whole-file* node — a bare path id equal to ``file_path`` with no
-        ``::kind::name`` suffix — is included for its own file. Such nodes are how a
-        brand-new file is created: the agent returns the entire file as one node, and
-        reconstruction writes it verbatim (a single fragment is already the file).
+        ``::kind::name`` suffix — supersedes all fragment nodes for that file.
+        When one exists, only that node is returned for the file; stale
+        ``path::kind::name`` fragments are ignored so reconstruction uses the
+        authoritative whole-file content instead of concatenating both.
+
+        Without ``file_path``, fragment nodes for files that have a whole-file
+        node are omitted so the planner does not offer them as write targets.
         """
         with self._lock:
             nodes = sorted(self._nodes, key=self._order)
             if file_path is None:
-                return nodes
+                whole_file_paths = {
+                    str(nid) for nid in nodes if "::" not in str(nid)
+                }
+                return [
+                    nid for nid in nodes
+                    if "::" not in str(nid)
+                    or str(nid).split("::", 1)[0] not in whole_file_paths
+                ]
+            whole_file_nid = NodeId(file_path)
+            if whole_file_nid in self._nodes:
+                return [whole_file_nid]
             prefix = f"{file_path}::"
-            return [
-                nid for nid in nodes
-                if str(nid) == file_path or str(nid).startswith(prefix)
-            ]
+            return [nid for nid in nodes if str(nid).startswith(prefix)]
 
     def parse_file_into_nodes(
         self, file_path: str, source: str | None = None
     ) -> list[NodeId]:
-        """Parse a file, store all fragments in order, and return node IDs."""
+        """Parse a file, store all fragments in order, and return node IDs.
+
+        If a whole-file node already exists for ``file_path`` (meaning a prior
+        MAK run wrote the entire file as one node), re-ingestion is skipped.
+        The whole-file node is the authoritative version; fragmenting it again
+        would create stale fragment siblings that contaminate reconstruction.
+        """
         with self._lock:
+            whole_file_nid = NodeId(file_path)
+            if whole_file_nid in self._nodes:
+                return [whole_file_nid]
             fragments = parse_file_into_fragments(file_path, source)
             node_ids: list[NodeId] = []
             for order, frag in enumerate(fragments):
@@ -297,9 +317,12 @@ class NodeStore:
                     )
                 result.append(frag)
             # Brand-new staged nodes have no committed slot yet — append as-is.
-            for nid, frag in staged_overrides.items():
-                if nid not in seen and str(nid).split("::", 1)[0] == file_path:
-                    result.append(frag)
+            # Skip when a whole-file node owns the file: staged fragments would
+            # be appended after the whole-file content and corrupt the preview.
+            if NodeId(file_path) not in self._nodes:
+                for nid, frag in staged_overrides.items():
+                    if nid not in seen and str(nid).split("::", 1)[0] == file_path:
+                        result.append(frag)
             return result
 
     def get_staged(self, node_id: NodeId) -> NodeFragment | None:

@@ -660,6 +660,14 @@ class Session:
                     and self._target_exists(node_id)
                     and self._file_is_syntactically_valid(node_id)
                 ):
+                    # Sync committed node store content to disk.  The on-disk
+                    # file may pre-date the committed version (e.g. an earlier
+                    # MAK run wrote a corrected whole-file node but failed to
+                    # reconstruct because other fragments were still broken).
+                    try:
+                        self._reconstruct_affected([node_id])
+                    except (SyntaxError, OSError):
+                        pass
                     progress.completed_nodes.add(node_id)
                     self._release_lock(task_id, node_id)
 
