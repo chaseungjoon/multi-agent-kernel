@@ -186,10 +186,10 @@ Agent Runner
 │
 ▼
 Collection phase
-  → ast.parse each new fragment             ✓
-  → conflict detector (parse gate + checks) ✓
+  → compile() each new fragment (enforces all Python compile-time rules)      ✓
+  → conflict detector (compile() gate + structural checks)                   ✓
   → reconstruct the affected file from committed fragments + staged versions,
-    ast.parse-validate the result *before* committing (transactional)
+    compile()-validate the result *before* committing (transactional)
   → commit fragment versions, write the file, release A's locks
   → write a [MAK-A] audit commit
 │
@@ -202,7 +202,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **490 tests pass**,
+The **kernel is functionally complete and well-tested**: **540 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -237,9 +237,13 @@ The module-by-module state:
 > An agent never roams the repo or edits disk directly; it returns the new source of
 > each node it was granted (`TaskResult.new_sources`), and the *kernel* stages,
 > validates, conflict-checks, commits, reconstructs, and writes. Anything an agent
-> returns outside its lock grant is ignored. Internalize this and the rest of the
-> codebase follows: the lock table, scheduler, conflict detector, and transactional
-> commit all exist to make that fragment-transform contract safe under concurrency.
+> returns outside its lock grant is ignored. The agent receives its write-target
+> sources plus an automatically-enriched context window: same-file sibling nodes and
+> cross-file callers of the target symbols are included read-only, so the agent
+> always arrives with the full dependency picture even when the planner did not
+> enumerate it (see §3.2). Internalize this and the rest of the codebase follows:
+> the lock table, scheduler, conflict detector, and transactional commit all exist
+> to make that fragment-transform contract safe under concurrency.
 >
 > The concurrency *is* done and proven. `Session.run` dispatches every
 > lock-satisfiable ready task onto a bounded thread pool (`max_concurrent_agents`),
@@ -510,11 +514,25 @@ A whole-file node may also target an **existing** file that was ingested as frag
 (e.g. an "audit / rewrite this whole module" task). Committing it **supersedes** that
 file's fragments: `commit_node` drops every committed/pending `path::…` node
 (`_supersede_fragments`) so the file is now defined by the one whole-file node alone.
-Without this, reconstruction would concatenate the whole file *and* its stale
-fragments and emit every top-level symbol **twice** — a real corruption bug this guards
-against. (An existing file you do *not* whole-file-target stays decomposed into the
-qualified fragments above; mixing fragment-level and whole-file edits to the *same*
-file in one plan is rejected at plan time — see §8.)
+
+This superseding is enforced at two additional levels for robustness:
+
+- **`list_nodes(file_path)`** — when a bare whole-file node exists for a file, only
+  that node is returned; stale `path::kind::name` fragment nodes are excluded. This
+  prevents a scenario where a correctly-written whole-file node from a prior run
+  coexists with re-ingested stale fragments: without this guard, reconstruction would
+  concatenate whole-file content *and* every fragment, emitting every symbol twice.
+- **`parse_file_into_nodes(file_path, …)`** — if a whole-file node is already
+  committed for the file, re-ingestion is skipped entirely and the method returns
+  `[whole_file_nid]`. The whole-file node is the authoritative version; fragmenting
+  it again on `initialize()` would add stale siblings that contaminate reconstruction.
+- **`list_nodes()` (no file filter)** — fragment nodes for files that have a
+  whole-file node are omitted from the full inventory, so the planner never offers
+  them as write targets.
+
+(An existing file you do *not* whole-file-target stays decomposed into the qualified
+fragments above; mixing fragment-level and whole-file edits to the *same* file in one
+plan is rejected at plan time — see §8.)
 
 ### On-disk layout
 
@@ -537,7 +555,15 @@ Runtime state lives under `.mak/` (gitignored):
 
 `NodeStore` (`store.py`) owns versioning and persistence. Key methods:
 `get_node`, `put_node`, `commit_node`, `rollback_node`, `revert_node`, `get_staged`,
-`list_nodes`, `get_committed_fragments`, `parse_file_into_nodes`.
+`list_nodes`, `get_committed_fragments`, `get_preview_fragments`,
+`parse_file_into_nodes`.
+
+`get_preview_fragments(file_path, staged_overrides)` is used by
+`_preview_is_valid` / `_assemble_preview` to build the prospective file *before*
+committing — it substitutes staged versions for their committed counterparts and
+re-applies each fragment's `indent_prefix` so that class methods appear at the
+correct column (dedented method source concatenated directly would always fail the
+`compile()` gate for files containing class methods).
 
 The store **owns version assignment**: `put_node` ignores any version on the
 incoming fragment and stamps it `current_committed + 1`, so callers never guess the
@@ -575,21 +601,38 @@ Mechanics:
 
 ### 3.2 Fragment dispatch (node store → agent)
 
-When a task is dispatched, the session builds a `TaskBundle` and **enriches** it:
-for every write-target node it attaches the current committed source
-(`write_source:<id>`), and for every `context_node` it attaches read-only source
-(`read_source:<id>`). The agent edits with full sight of the current code and its
-read context — it is never asked to edit blind — but it still never sees the whole
-file.
+When a task is dispatched, the session builds a `TaskBundle` and **enriches** it with
+context from four layers, in order:
+
+1. **Write targets** — the current committed source (`write_source:<id>`) for every
+   node the agent will write.
+2. **Planner-specified context nodes** — read-only source (`read_source:<id>`) for
+   every `context_node` the planner included.
+3. **Same-file siblings** — all other committed nodes in the same file(s) as the
+   write targets, automatically included as read context — regardless of whether the
+   planner listed them.
+4. **Cross-file callers** — any node in the entire repo whose stored source contains
+   a word-boundary match for any write-target symbol name (the session scans all
+   stored nodes with a regex). This ensures an agent editing `def apple` also receives
+   context from `def dog` in a different file that calls `apple`, even if the planner
+   did not enumerate that dependency.
+
+The agent therefore arrives with the full dependency picture — same-file context plus
+cross-file callers — without the planner having to enumerate every relationship. It
+still never sees the whole codebase; it sees a semantically-bounded window.
 
 ### 3.3 Collection (agent output → node store)
 
 When an agent returns a `TaskResult`:
-1. `ast.parse` each modified fragment — reject on failure.
+1. `compile()` each modified fragment — reject on failure. `compile()` is used (not
+   `ast.parse()`) because it enforces all Python compile-time rules, including the
+   requirement that `from __future__` imports appear at the very beginning of a
+   module. `ast.parse()` accepts misplaced `from __future__` silently; Python's
+   runtime and `compile()` do not.
 2. Run the [conflict detector](#5-conflict-detector).
 3. **Transactional commit** (see [Session](#10-session-lifecycle)): build the
    prospective file from committed fragments with the staged versions substituted,
-   `ast.parse`-validate it *before* committing. Only if every affected file
+   `compile()`-validate it *before* committing. Only if every affected file
    reconstructs cleanly are the fragment versions committed and the files written.
 4. On success, release the task's locks and write an audit commit. On any failure,
    roll back the staged versions (and revert any commit) so the store and disk
@@ -599,8 +642,9 @@ When an agent returns a `TaskResult`:
 
 `assemble_fragments(fragments)` concatenates fragments **in their stored source
 order** (separated by blank lines). `reconstruct_file(...)` assembles, runs
-`ast.parse` as a guard, formats with `ruff format` (auto-discovering the venv's
-`ruff` binary, falling back to raw source and *logging* on failure — never silently
+`compile()` as a guard (enforcing all Python compile-time rules, not just
+parseability), formats with `ruff format` (auto-discovering the venv's `ruff`
+binary, falling back to raw source and *logging* on failure — never silently
 swallowing), and writes to disk.
 
 ### 3.5 The round-trip invariant (load-bearing)
@@ -690,8 +734,10 @@ and re-queue it.
 
 `mak/conflict_detector/` runs in the collection phase, between an agent's output
 and its acceptance. It is **intentionally shallow** — a structural gate, not a type
-checker. It gates on `ast.parse` success plus three checks; full correctness is the
-test suite's job.
+checker. It gates on `compile()` success plus three checks; full correctness is the
+test suite's job. (`compile()` is used rather than `ast.parse()` because it
+enforces Python's compile-time rules — including `from __future__` placement — which
+`ast.parse()` ignores.)
 
 - **`signature_check.py`** — when one agent rewrites `func_b` and another's fragment
   calls `func_b`, verify the call sites are still compatible with the new signature
@@ -858,9 +904,15 @@ so it is unit-testable without Docker.
   `complete(prompt) -> str`), and validates the JSON plan with `parse_plan`. The
   parser accepts a bare array or `{"subtasks": …}`, strips code fences, validates
   each `SubTask` (including the optional `context_nodes`), and rejects duplicate ids
-  and unknown dependencies. Three further **target-node rules** keep a plan inside
-  what the kernel can actually execute (each raises `ValueError`, so `decompose`
-  retries with the reason fed back and the model self-corrects):
+  and unknown dependencies. The prompt includes a **CASCADE PREVENTION** paragraph
+  that instructs the model: if any sub-task changes a function's public signature
+  (rename, add, remove, or reorder parameters; change defaults or return type), the
+  plan must also include sub-tasks for every node that calls that function across all
+  files. This minimises the need for post-wave cascade detection — it is better for
+  the planner to address call sites upfront than to discover them as cascades after
+  the first wave. Four further **target-node rules** keep a plan inside what the
+  kernel can actually execute (each raises `ValueError`, so `decompose` retries with
+  the reason fed back and the model self-corrects):
     - **Python-only targets.** Every `target_node`'s file component must end in
       `.py` (`is_python_target`). A `.md`/`.json`/`README`/doc target is rejected —
       MAK has no AST node for it, so it could never be ingested or reconstructed
@@ -880,10 +932,13 @@ so it is unit-testable without Docker.
 - **`review.py`** — `display_plan_for_review` renders the subtask list and dependency
   edges and loops **approve / edit (paste corrected JSON) / abort**
   (`PlanReviewAborted`). I/O is injected (`prompt_fn` / `printer`) for testability;
-  `--no-review` skips the call. A bad plan (a missed dependency or hallucinated
-  edge) causes agent collisions or needless serialization that are expensive to
-  unwind mid-session, so this ~5-second human check removes the single point of
-  failure in one-shot LLM DAG generation.
+  `--no-review` skips the call. An optional `header` parameter allows a prefix
+  banner to be shown before the plan — the CASCADE WAVE review uses this to display
+  `=== CASCADE WAVE ===` so the user knows they are reviewing a dynamically
+  generated follow-on plan, not the original. A bad plan (a missed dependency or
+  hallucinated edge) causes agent collisions or needless serialization that are
+  expensive to unwind mid-session, so this ~5-second human check removes the single
+  point of failure in one-shot LLM DAG generation.
 - **`llm.py`** — concrete `PlannerLLM` completion backends (Anthropic / OpenAI /
   Gemini), each a thin prompt-in/text-out wrapper with a lazy SDK and injectable
   client (distinct from the agent adapters, which force a structured `TaskResult`).
@@ -925,18 +980,29 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   persisted `Scheduler`). Tasks whose `agent_type` is empty are normalized to the
   configured default agent.
 - **run** — dispatch lock-satisfiable ready tasks onto the thread pool (enriching
-  each bundle with write/read source); as results arrive, **stage the source each
-  agent returned** (`new_sources`, within the task's grant) via `put_node`; batch
-  concurrently-completing results; gate staged fragments through the conflict
-  detector; **transactionally** commit and reconstruct; write a git audit commit on
-  success. A node the agent claims it changed but provides no source for is dropped,
-  so a misbehaving agent fails its task cleanly rather than crashing the commit.
+  each bundle with write/read source via the four-layer enrichment in §3.2); as
+  results arrive, **stage the source each agent returned** (`new_sources`, within the
+  task's grant) via `put_node`; batch concurrently-completing results; gate staged
+  fragments through the conflict detector; **transactionally** commit and reconstruct;
+  write a git audit commit on success. A node the agent claims it changed but
+  provides no source for is dropped, so a misbehaving agent fails its task cleanly
+  rather than crashing the commit. During each commit, `_wave_committed` records
+  `(old_source, new_source)` for every node committed this wave.
+- **cascade detection** (`detect_cascade_tasks()`) — called after every `run()` wave.
+  Compares old vs new AST signatures for every node committed in `_wave_committed`.
+  When a function's signature changed, it scans all other stored nodes for callers
+  (cross-file, word-boundary search) and generates `SubTask`s for those callers to
+  update. The CLI presents these to the user as a **CASCADE WAVE** (via
+  `display_plan_for_review` with a banner header); if approved, `install_plan` is
+  called and `run()` executes another wave. The loop repeats until no cascades
+  remain or the user declines. If the planner's CASCADE PREVENTION worked, this
+  path fires zero times.
 - **teardown** — run the test suite; push if green and `auto_push` is enabled.
 
 Robustness properties worth knowing:
 
 - **Transactional commit** — the prospective file is reconstructed and
-  `ast.parse`-validated *before* any `commit_node`; a post-commit write failure
+  `compile()`-validated *before* any `commit_node`; a post-commit write failure
   triggers a best-effort revert, so the node store and disk never diverge.
 - **Partial completion** — when a result's `modified_nodes ⊊ target_nodes`, the
   completed grants are accepted and committed and only their locks released; the
@@ -944,12 +1010,16 @@ Robustness properties worth knowing:
   by `SubTaskProgress` and bounded by `max_attempts`.
 - **No-op acceptance** — an "audit / review" task may legitimately inspect an
   already-complete file and return `success=True` with **no** changes. If the agent
-  succeeded, claimed no edits, and the targets already exist (`_target_exists` — the
-  node is committed, or a whole-file target whose file already has fragments), those
-  targets are marked done instead of retried to failure. This is distinct from the
-  misbehaving-agent case (success that *claims* edits but stages no source), which is
-  not accepted; and from a create task whose target does *not* exist and returns
-  nothing, which correctly still fails.
+  succeeded, claimed no edits, the targets already exist (`_target_exists`), and
+  `_file_is_syntactically_valid()` confirms the assembled file passes `compile()`,
+  those targets are marked done. Additionally, the committed node store content is
+  **synced to disk** at this point (`_reconstruct_affected`) — ensuring that if a
+  prior MAK run wrote a correct whole-file node but the on-disk file is out of date
+  (e.g. from a failed run that never reached reconstruction), the file is corrected
+  before teardown's test suite runs. This is distinct from the misbehaving-agent
+  case (success that *claims* edits but stages no source), which is not accepted; and
+  from a create task whose target does *not* exist and returns nothing, which
+  correctly still fails.
 - **Crash recovery** — `recover()` expires stale leases and rebuilds the scheduler
   from `task_graph.json` via `from_persisted`.
 - **Honest stall reporting** — a run is `COMPLETED` *only if* the scheduler is
@@ -1040,15 +1110,23 @@ shell over the composition root, split into testable functions:
   planner via `build_planner_llm`, git helper, logger, default agent).
 - `main(argv, *, session_builder=build_session)` — loads env + config, applies the CLI
   overrides (work-dir, roster, concurrency), validates, builds the session, drives
-  **initialize → plan → run → teardown**, and maps domain errors to friendly messages
-  and exit codes: `0` success, `1` for an aborted review / planner failure /
-  failed-or-blocked run / failing tests, `2` for a config error (including a bad
-  `--models` provider or `--max-agents < 1`) or a missing Docker daemon under
+  **initialize → plan → run → cascade loop → teardown**, and maps domain errors to
+  friendly messages and exit codes: `0` success, `1` for an aborted review / planner
+  failure / failed-or-blocked run / failing tests, `2` for a config error (including
+  a bad `--models` provider or `--max-agents < 1`) or a missing Docker daemon under
   `--sandbox`. The `session_builder` seam lets tests drive `main` end-to-end with a
   fully-faked session. The end-of-run summary counts `completed / failed / skipped /
   blocked` (§10) and prints each failed task's reason and the `skipped`/`blocked`
   lists separately, so a cascade from one root failure reads as one failure plus its
   dependents, not many independent problems.
+
+  **Cascade loop** (between `run()` and `teardown()`): after each wave `main` calls
+  `session.detect_cascade_tasks()`. If any are returned, it prints a warning and
+  (unless `--no-review` is set) calls `display_plan_for_review` with a
+  `=== CASCADE WAVE ===` header. If the user approves, `session.install_plan` and
+  `session.run()` execute the next wave. Under `--no-review`, cascades are skipped
+  with a stderr warning that callers may be broken. The loop repeats until no cascades
+  remain, the user declines, or `--no-review` skips it.
 
 ### 12.1 Choosing agents and concurrency from the command line
 
@@ -1208,7 +1286,7 @@ Tests mirror the source tree (`tests/core/`, `tests/node_store/`,
 Three gates must be green for every change — locally, in pre-commit, and in CI:
 
 ```bash
-pytest -q                  # the full suite (currently 480 tests)
+pytest -q                  # the full suite (currently 540 tests)
 mypy --strict mak          # zero errors
 ruff check mak tests       # zero findings
 ```
@@ -1416,7 +1494,23 @@ integration, and the session; Wave 3.5 + a hotfix hardened the session and wired
 composition root; Wave 4 delivered the CLI, secondary CLI adapters, and the sandbox;
 **Wave 5** made dispatch concurrent and proved the shared-memory thesis with the
 integration gate; **Wave 6** carried the agent's rewritten source over the wire so a
-real agent's edit reaches the store. What remains is the open-problems list above.
+real agent's edit reaches the store.
+
+Post-Wave 6 improvements: **context enrichment** extended to four layers (automatic
+same-file sibling injection and cross-file caller scanning via word-boundary regex,
+in addition to the planner's `context_nodes`); **dynamic cascade detection** —
+`detect_cascade_tasks()` compares AST signatures before/after each wave and
+generates a CASCADE WAVE for the user to review if callers need updating; **planner
+CASCADE PREVENTION** instructions that push the planner to include caller tasks
+upfront; **`compile()` everywhere for validation** — replaced `ast.parse()` in every
+validation gate so that `from __future__` placement and other compile-time rules are
+enforced before acceptance; **`get_preview_fragments`** added to `NodeStore` for
+correctly-indented pre-commit preview assembly; **whole-file node primacy** —
+`list_nodes` and `parse_file_into_nodes` now enforce that a committed whole-file node
+takes exclusive authority over its file (stale fragments are excluded, re-ingestion
+is skipped); and **no-op disk sync** so that the on-disk file is always written from
+the committed node store content when a no-op task completes. What remains is the
+open-problems list above.
 
 ---
 
@@ -1445,6 +1539,13 @@ the grain.
   failure in one-shot LLM DAG generation; bypassable with `--no-review`.
 - **Transactional commit.** Validate the reassembled file before advancing the store,
   so the node store and disk never diverge.
+- **`compile()` for validation, not `ast.parse()`.** `ast.parse()` is lenient about
+  `from __future__` import placement: it accepts them anywhere in a file, even after
+  regular code. Python's runtime and `compile()` both reject this with a
+  `SyntaxError`. Every MAK validation gate (`_preview_is_valid`, conflict detector's
+  parse gate, reconstruction guard, no-op acceptance) uses `compile()` so that the
+  kernel rejects what Python would reject, rather than accepting source that passes
+  the parser but fails the importer.
 - **Sequential-first, concurrency-as-a-gated-wave.** Prove the pipeline end-to-end
   sequentially (Wave 4) before adding the thread pool (Wave 5). Don't add concurrency
   to a pipeline that has never run once — and don't claim the concurrent path works
