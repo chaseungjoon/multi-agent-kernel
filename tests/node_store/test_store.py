@@ -196,3 +196,55 @@ class TestNodeStore:
         alpha_idx = next(i for i, f in enumerate(frags) if "alpha" in f.source)
         beta_idx = next(i for i, f in enumerate(frags) if "beta" in f.source)
         assert alpha_idx < beta_idx
+
+    def test_method_fragment_stored_dedented(self, tmp_path: Path) -> None:
+        # Methods inside a class are stored at column 0; the indent prefix is
+        # saved in metadata so reconstruction can re-apply it.
+        store = NodeStore(tmp_path / "ns")
+        store.parse_file_into_nodes("mod.py", SAMPLE_SOURCE)
+        frag = store.get_node(NodeId("mod.py::method::Calculator.add"))
+        # Stored source must start at column 0 — no leading whitespace on first line.
+        first_line = frag.source.splitlines()[0]
+        assert not first_line.startswith(" "), (
+            f"expected dedented source, got: {first_line!r}"
+        )
+        assert first_line.startswith("def add")
+
+    def test_get_committed_fragments_reindents_methods(self, tmp_path: Path) -> None:
+        # get_committed_fragments() is the reconstruction path: it must return
+        # methods with their original class-body indentation restored.
+        store = NodeStore(tmp_path / "ns")
+        store.parse_file_into_nodes("mod.py", SAMPLE_SOURCE)
+        frags = store.get_committed_fragments("mod.py")
+        add_frag = next(f for f in frags if "add" in f.source)
+        first_line = add_frag.source.splitlines()[0]
+        assert first_line.startswith("    def add"), (
+            f"expected re-indented source, got: {first_line!r}"
+        )
+
+    def test_put_node_dedents_incoming_source(self, tmp_path: Path) -> None:
+        # If an agent returns a method body at class-body indentation, put_node
+        # must strip the common leading whitespace before storing, so both the
+        # conflict detector (ast.parse) and round-trip retrieval work correctly.
+        store = NodeStore(tmp_path / "ns")
+        nid = NodeId("test.py::method::Foo.bar")
+        indented_source = "    def bar(self) -> None:\n        pass\n"
+        store.put_node(nid, _frag(nid, indented_source))
+        store.commit_node(nid)
+        stored = store.get_node(nid).source
+        assert stored == "def bar(self) -> None:\n    pass\n"
+
+    def test_reconstruction_round_trip(self, tmp_path: Path) -> None:
+        # Parsing a file and then concatenating get_committed_fragments() must
+        # reproduce the original source (modulo trailing newline normalisation
+        # and blank lines that ruff format would re-establish).
+        store = NodeStore(tmp_path / "ns")
+        store.parse_file_into_nodes("mod.py", SAMPLE_SOURCE)
+        frags = store.get_committed_fragments("mod.py")
+        reconstructed = "".join(f.source for f in frags)
+        # Every original top-level name must survive the round trip.
+        assert "def greet" in reconstructed
+        assert "class Calculator" in reconstructed
+        assert "def add" in reconstructed
+        # The method must appear at class-body indentation in the reconstruction.
+        assert "    def add" in reconstructed

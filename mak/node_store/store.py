@@ -12,12 +12,29 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import textwrap
 import threading
 from pathlib import Path
 
 from mak.core.exceptions import NodeStoreError
 from mak.core.types import NodeFragment, NodeId
 from mak.node_store.ingestion import parse_file_into_fragments
+
+
+def _extract_indent(source: str) -> tuple[str, str]:
+    """Return ``(dedented_source, indent_prefix)`` for a node fragment.
+
+    ``textwrap.dedent`` strips the common leading whitespace from every
+    non-empty line.  We recover the stripped prefix by comparing the first
+    non-empty line before and after dedenting, so the store can re-apply it
+    during file reconstruction without losing any relative indentation inside
+    the fragment itself.
+    """
+    dedented = textwrap.dedent(source)
+    for orig, ded in zip(source.splitlines(), dedented.splitlines()):
+        if orig.strip():
+            return dedented, orig[: len(orig) - len(ded)]
+    return dedented, ""
 
 
 class NodeStore:
@@ -98,9 +115,17 @@ class NodeStore:
 
         The store assigns the version (``current + 1``); the incoming fragment's
         ``version`` field is ignored so callers cannot collide or skip versions.
+
+        Incoming source is dedented unconditionally: agents receive dedented
+        fragments and should return them at column 0, but if an agent writes
+        code at class-body indentation (the natural mental model), the strip
+        here makes validation and reconstruction correct either way.
         """
         with self._lock:
-            staged = dataclasses.replace(fragment, version=self._next_version(node_id))
+            dedented_source = textwrap.dedent(fragment.source)
+            staged = dataclasses.replace(
+                fragment, source=dedented_source, version=self._next_version(node_id)
+            )
             self._pending[node_id] = staged
             self._write_fragment_to_disk(staged)
             return staged
@@ -125,6 +150,7 @@ class NodeStore:
                 "kind": fragment.kind,
                 "version": fragment.version,
                 "order": order,
+                "indent_prefix": existing.get("indent_prefix", ""),
             }
             if "::" not in str(node_id):
                 self._supersede_fragments(str(node_id))
@@ -208,17 +234,37 @@ class NodeStore:
             fragments = parse_file_into_fragments(file_path, source)
             node_ids: list[NodeId] = []
             for order, frag in enumerate(fragments):
-                self._pending[frag.node_id] = dataclasses.replace(frag, version=1)
-                self._write_fragment_to_disk(self._pending[frag.node_id])
-                self._metadata[frag.node_id] = {"order": order}
+                dedented_source, prefix = _extract_indent(frag.source)
+                staged = dataclasses.replace(frag, source=dedented_source, version=1)
+                self._pending[frag.node_id] = staged
+                self._write_fragment_to_disk(staged)
+                self._metadata[frag.node_id] = {
+                    "order": order,
+                    "indent_prefix": prefix,
+                }
                 self.commit_node(frag.node_id)
                 node_ids.append(frag.node_id)
             return node_ids
 
     def get_committed_fragments(self, file_path: str) -> list[NodeFragment]:
-        """Return all committed fragments for a file, in original source order."""
+        """Return all committed fragments for a file, in original source order.
+
+        Fragments are re-indented to their original column position before
+        being returned so that concatenating them reconstructs valid Python.
+        Agents store and receive source at column 0 (dedented); only the
+        reconstruction path needs the original indentation back.
+        """
         with self._lock:
-            return [self._nodes[nid] for nid in self.list_nodes(file_path)]
+            result: list[NodeFragment] = []
+            for nid in self.list_nodes(file_path):
+                frag = self._nodes[nid]
+                prefix = str(self._metadata.get(nid, {}).get("indent_prefix", ""))
+                if prefix:
+                    frag = dataclasses.replace(
+                        frag, source=textwrap.indent(frag.source, prefix)
+                    )
+                result.append(frag)
+            return result
 
     def get_staged(self, node_id: NodeId) -> NodeFragment | None:
         """Return the pending (staged, uncommitted) fragment for a node, if any.

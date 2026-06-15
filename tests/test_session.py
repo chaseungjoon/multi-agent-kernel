@@ -460,6 +460,7 @@ class TestBundleEnrichment:
         assert "return 0" in bundle.context["write_source:m.py::function::a"]
 
     def test_no_context_nodes_means_only_write_source(self, tmp_path: Path) -> None:
+        # Single-node file: no siblings exist, so no read_source is added.
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
         store = _store(tmp_path)
         runner = StagingRunner(store)
@@ -470,6 +471,58 @@ class TestBundleEnrichment:
         keys = runner.assigned[0].context
         assert any(k.startswith("write_source:") for k in keys)
         assert not any(k.startswith("read_source:") for k in keys)
+
+    def test_same_file_siblings_auto_enriched_without_planner_context(
+        self, tmp_path: Path
+    ) -> None:
+        # When the planner specifies no context_nodes, the agent still receives
+        # all same-file siblings as read_source so it is never blind to its own
+        # file, regardless of what the planner decided.
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        runner = StagingRunner(store)
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        # Task targets only 'a', planner specifies NO context_nodes.
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        session.run()
+        ctx = runner.assigned[0].context
+        # Write target is present under write_source.
+        assert "write_source:m.py::function::a" in ctx
+        # Sibling 'b' is auto-included as read_source even without planner hints.
+        assert "read_source:m.py::function::b" in ctx
+        # The sibling is read-only — not a write target.
+        assert "write_source:m.py::function::b" not in ctx
+
+    def test_cross_file_callers_auto_enriched(self, tmp_path: Path) -> None:
+        # A node in a different file that references the target symbol by name
+        # must be included as read_source so the agent understands its callers
+        # across the whole codebase, not just within its own file.
+        (tmp_path / "fruit").mkdir()
+        (tmp_path / "animal").mkdir()
+        (tmp_path / "fruit" / "main.py").write_text(
+            "def apple():\n    return 1\n"
+        )
+        (tmp_path / "animal" / "main.py").write_text(
+            "from fruit.main import apple\n\ndef dog():\n    return apple()\n"
+        )
+        store = _store(tmp_path)
+        runner = StagingRunner(store)
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        # Task targets apple; planner specifies no context_nodes.
+        session.install_plan(
+            [_task("fix_apple", ["fruit/main.py::function::apple"])]
+        )
+        session.run()
+        ctx = runner.assigned[0].context
+        # apple is the write target.
+        assert "write_source:fruit/main.py::function::apple" in ctx
+        # dog (in a different file) calls apple — must be auto-included.
+        assert any(
+            "animal/main.py" in k and k.startswith("read_source:")
+            for k in ctx
+        )
 
 
 class TestTransactionalCommit:

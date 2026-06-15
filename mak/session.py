@@ -41,6 +41,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import queue
+import re
 import sys
 import threading
 import time
@@ -888,23 +889,71 @@ class Session:
             runner.assign(adapter, bundle)
 
     def _enrich_bundle(self, bundle: TaskBundle) -> TaskBundle:
-        """Attach current source for the task's write targets and read context.
+        """Attach current source for write targets, planner context, and all dependencies.
 
-        The agent receives the source of every node it will modify (so it edits
-        with full sight of the current code) plus the source of the task's
-        ``context_nodes`` (sibling methods, attributes, imports) as read-only
-        context — so the agent never edits blind.
+        Four layers of context, each only adding entries not already present:
+
+        1. ``write_source:<id>`` — every node the agent will modify.
+        2. ``read_source:<id>`` — nodes the planner explicitly listed as context.
+        3. ``read_source:<id>`` — all other nodes in the same file as any write
+           target.  Gives the agent full sight of imports, siblings, and class
+           structure without relying on the planner.
+        4. ``read_source:<id>`` — nodes in *other* files whose source contains
+           any target symbol name (word-boundary match).  Captures cross-file
+           callers and callees so the agent is never blind to dependencies that
+           live outside its own file.
         """
         task = self._dag_task(bundle.task_id)
         context = dict(bundle.context)
+
+        # Layer 1: write targets
         for node_id in bundle.target_nodes:
             source = self._node_source(node_id)
             if source is not None:
                 context[f"write_source:{node_id}"] = source
+
+        # Layer 2: planner-specified context
         for node_id in task.context_nodes:
             source = self._node_source(node_id)
             if source is not None:
                 context[f"read_source:{node_id}"] = source
+
+        # Layer 3: same-file siblings
+        target_files: set[str] = set()
+        for node_id in bundle.target_nodes:
+            file_path = str(node_id).split("::", 1)[0]
+            target_files.add(file_path)
+            for sibling_id in self._node_store.list_nodes(file_path):
+                write_key = f"write_source:{sibling_id}"
+                read_key = f"read_source:{sibling_id}"
+                if write_key not in context and read_key not in context:
+                    source = self._node_source(sibling_id)
+                    if source is not None:
+                        context[read_key] = source
+
+        # Layer 4: cross-file references — nodes in other files that mention
+        # any target symbol by name, covering callers and callees across the
+        # whole codebase.  Symbol = rightmost segment of the qualified name
+        # (e.g. "apple" from "FruitManager.apple" or "apple").
+        symbols: set[str] = set()
+        for nid in bundle.target_nodes:
+            parts = str(nid).split("::")
+            if len(parts) >= 3:
+                symbols.add(parts[2].rsplit(".", 1)[-1])
+        if symbols:
+            symbol_re = re.compile(
+                r"\b(?:" + "|".join(re.escape(s) for s in symbols) + r")\b"
+            )
+            for xfile_id in self._node_store.list_nodes():
+                if str(xfile_id).split("::", 1)[0] in target_files:
+                    continue  # same-file already handled in layer 3
+                write_key = f"write_source:{xfile_id}"
+                read_key = f"read_source:{xfile_id}"
+                if write_key not in context and read_key not in context:
+                    source = self._node_source(xfile_id)
+                    if source and symbol_re.search(source):
+                        context[read_key] = source
+
         return replace(bundle, context=context)
 
     def _stage_returned_sources(
