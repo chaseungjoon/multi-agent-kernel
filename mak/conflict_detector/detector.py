@@ -4,13 +4,12 @@ The detector runs between an agent's output being committed to the node store an
 that output being accepted. It composes the three structural checks — signature
 compatibility, import consistency, and name collision — plus a parse gate, and
 returns a single pass/fail ``ConflictReport`` with human-readable reasons. It is
-intentionally shallow: it gates on ``ast.parse`` success and the structural checks
+intentionally shallow: it gates on ``compile()`` success and the structural checks
 only; full correctness is the test suite's responsibility.
 """
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass, field
 
 from mak.conflict_detector.import_check import check_import_conflicts
@@ -19,7 +18,7 @@ from mak.conflict_detector.signature_check import check_signature_compatibility
 
 
 def _syntax_reason(label: str, exc: SyntaxError) -> str:
-    """Turn a raw ``ast.parse`` failure into an actionable reason.
+    """Turn a raw ``compile()`` failure into an actionable reason.
 
     ``label`` is ``"<check>:<node_id>"`` (e.g. ``"definition:app/main.py::function::f"``
     or ``"definition:docs/design.md"``). A node whose file component is not ``.py`` is
@@ -117,7 +116,7 @@ class ConflictDetector:
         conflicts: list[Conflict] = []
         for label, source in self._all_sources(edits).items():
             try:
-                ast.parse(source)
+                compile(source, "<mak-fragment>", "exec")
             except SyntaxError as exc:
                 conflicts.append(Conflict("syntax", _syntax_reason(label, exc)))
         return conflicts

@@ -278,7 +278,7 @@ class NodeStore:
         this method re-applies the original ``indent_prefix`` — exactly as
         ``get_committed_fragments`` does — so that class methods and other
         indented fragments appear at the correct column in the preview.  The
-        caller therefore gets a correctly-indented source that ``ast.parse``
+        caller therefore gets a correctly-indented source that ``compile()``
         can validate, rather than a flat (dedented) concatenation that would
         always fail for any file containing class methods.
         """

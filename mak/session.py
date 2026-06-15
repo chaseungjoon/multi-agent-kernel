@@ -704,7 +704,7 @@ class Session:
         """Validate, then transactionally commit staged fragments.
 
         Order matters: conflict detection (against this batch's already-committed
-        peers) → *prospective* reconstruction validated against ``ast.parse`` →
+        peers) → *prospective* reconstruction validated against ``compile()`` →
         commit-time lock re-validation → commit → write files. The store is only
         advanced once the would-be file is valid Python and we still own every
         write lock, and a write failure after commit reverts the commit so disk
@@ -781,7 +781,8 @@ class Session:
         files = sorted({str(n).split("::", 1)[0] for n in staged})
         for file_path in files:
             try:
-                ast.parse(self._assemble_preview(file_path, staged_set))
+                src = self._assemble_preview(file_path, staged_set)
+                compile(src, "<mak-preview>", "exec")
             except SyntaxError:
                 return False
         return True
@@ -1025,7 +1026,7 @@ class Session:
         """
         file_path = str(node_id).split("::", 1)[0]
         try:
-            ast.parse(self._assemble_preview(file_path, set()))
+            compile(self._assemble_preview(file_path, set()), "<mak>", "exec")
             return True
         except SyntaxError:
             return False

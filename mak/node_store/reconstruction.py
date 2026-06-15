@@ -9,7 +9,6 @@ comments survive. Reconstruction never round-trips through ``ast.unparse()``
 
 from __future__ import annotations
 
-import ast
 import logging
 import subprocess
 import sys
@@ -77,7 +76,8 @@ def reconstruct_file(
     """Assemble fragments in order, validate, format, and optionally write to disk."""
     assembled = assemble_fragments(fragments)
 
-    ast.parse(assembled)  # guard: reconstructed output must be valid Python
+    # compile() enforces from-__future__ placement; ast.parse() does not
+    compile(assembled, "<mak-recon>", "exec")
 
     if use_ruff:
         assembled = format_with_ruff(assembled)
