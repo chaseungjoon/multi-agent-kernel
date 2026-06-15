@@ -646,16 +646,19 @@ class Session:
             if source is not None:
                 committed_sources[str(node_id)] = source
 
-        # Accept a no-op: an "audit/review" task may inspect an already-complete file
+        # Accept a no-op: an "audit/review" task may inspect an already-correct file
         # and legitimately return success with no changes. If the agent succeeded,
-        # claimed no edits, and the targets already exist, treat them as done rather
-        # than retrying to failure. (A success that *claims* edits but stages nothing
-        # is the misbehaving-agent case above and is not accepted here.)
+        # claimed no edits, the target already exists, AND the file it lives in
+        # currently parses as valid Python, treat it as done. The validity check
+        # is critical: without it, an agent that returns success+no-changes on a
+        # task whose file has a syntax error (the exact bug it was sent to fix)
+        # would be silently accepted as complete, leaving the error in place.
         if result.success and not result.modified_nodes and not result.new_sources:
             for node_id in progress.target_nodes:
                 if (
                     node_id not in progress.completed_nodes
                     and self._target_exists(node_id)
+                    and self._file_is_syntactically_valid(node_id)
                 ):
                     progress.completed_nodes.add(node_id)
                     self._release_lock(task_id, node_id)
@@ -784,24 +787,22 @@ class Session:
         return True
 
     def _assemble_preview(self, file_path: str, staged_set: set[NodeId]) -> str:
-        """Build a file's prospective source: committed fragments + staged swaps."""
-        fragments = []
-        seen: set[NodeId] = set()
-        for node_id in self._node_store.list_nodes(file_path):
-            seen.add(node_id)
-            if node_id in staged_set:
-                fragments.append(
-                    self._node_store.get_staged(node_id)
-                    or self._node_store.get_node(node_id)
-                )
-            else:
-                fragments.append(self._node_store.get_node(node_id))
-        # Brand-new staged nodes have no committed order slot yet (best-effort).
-        for node_id in staged_set - seen:
-            staged_fragment = self._node_store.get_staged(node_id)
-            if staged_fragment is not None:
-                fragments.append(staged_fragment)
-        return assemble_fragments(fragments)
+        """Build a file's prospective source: committed fragments + staged swaps.
+
+        Delegates to ``NodeStore.get_preview_fragments`` so that fragments are
+        re-indented (class methods back to column 4, etc.) before assembly —
+        the same transformation ``get_committed_fragments`` applies during real
+        reconstruction.  Using dedented ``get_node()`` sources here would make
+        any file with class methods fail ``ast.parse`` unconditionally.
+        """
+        staged_overrides = {
+            node_id: frag
+            for node_id in staged_set
+            if (frag := self._node_store.get_staged(node_id)) is not None
+        }
+        return assemble_fragments(
+            self._node_store.get_preview_fragments(file_path, staged_overrides)
+        )
 
     def _build_edit_round(
         self, staged: list[NodeId], peers: dict[str, str] | None = None
@@ -911,7 +912,7 @@ class Session:
             runner.assign(adapter, bundle)
 
     def _enrich_bundle(self, bundle: TaskBundle) -> TaskBundle:
-        """Attach current source for write targets, planner context, and all dependencies.
+        """Attach write targets, planner context, and all dependency sources.
 
         Four layers of context, each only adding entries not already present:
 
@@ -1014,6 +1015,20 @@ class Session:
             return self._node_store.get_node(node_id).source
         except NodeStoreError:
             return None
+
+    def _file_is_syntactically_valid(self, node_id: NodeId) -> bool:
+        """Return True if the committed file containing this node parses as Python.
+
+        Guards the no-op acceptance path: a task whose agent returned success
+        with no changes must not be accepted as complete when the file it was
+        supposed to fix still has a syntax error.
+        """
+        file_path = str(node_id).split("::", 1)[0]
+        try:
+            ast.parse(self._assemble_preview(file_path, set()))
+            return True
+        except SyntaxError:
+            return False
 
     def _release_lock(self, task_id: str, node_id: NodeId) -> None:
         self._lock_table.release(node_id, LockMode.WRITE, task_id)

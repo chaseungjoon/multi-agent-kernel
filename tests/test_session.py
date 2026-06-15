@@ -1134,6 +1134,35 @@ class TestSourceTransport:
         # The file is untouched and still valid.
         assert (tmp_path / "m.py").read_text() == "def a():\n    return 0\n"
 
+    def test_noop_rejected_when_file_has_syntax_error(self, tmp_path: Path) -> None:
+        # The no-op acceptance MUST be blocked when the target file currently has
+        # a syntax error. This is the keybindings bug: agent returns success+no-
+        # changes, MAK silently accepts it as "done", file is never fixed.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        store.parse_file_into_nodes("m.py", "def a():\n    return 0\n")
+        # Force-commit a broken version of the function — simulates a file that
+        # has a syntax error in its committed state (e.g. a misplaced import).
+        nid = NodeId("m.py::function::a")
+        # put_node + commit_node to corrupt the committed source.
+        store.put_node(nid, NodeFragment(nid, "function", "def a(:\n    broken\n", 1))
+        store.commit_node(nid)
+
+        class NoOpRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(task_id=task.task_id, success=True)
+
+        session = _session(
+            tmp_path, runner=NoOpRunner(), node_store=store, max_attempts=2
+        )
+        # Do NOT call session.initialize() — store is already populated above.
+        session.state = SessionState.INITIALIZED  # skip ingestion
+        session.install_plan([_task("fix", ["m.py::function::a"])])
+        result = session.run()
+        # No-op should be REJECTED because the file has a syntax error; the task
+        # must fail (not silently complete) so the user knows MAK didn't fix it.
+        assert result.failed == ("fix",)
+
     def test_noop_create_of_missing_file_still_fails(self, tmp_path: Path) -> None:
         # The no-op acceptance must NOT mask a real miss: a create task whose target
         # does not exist and that returns nothing has produced nothing, so it fails.

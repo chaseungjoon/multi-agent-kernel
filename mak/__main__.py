@@ -273,11 +273,11 @@ def main(
                 cascade_tasks = display_plan_for_review(
                     cascade_tasks,
                     header=(
-                        "╔══ CASCADE WAVE ════════════════════════════════════════════╗\n"
-                        "║ The previous wave changed function signatures.             ║\n"
-                        "║ The tasks below update call sites across the codebase.     ║\n"
-                        "║ You can approve, edit, or abort this follow-up wave.       ║\n"
-                        "╚════════════════════════════════════════════════════════════╝"
+                        "\n=== CASCADE WAVE ===\n"
+                        "Function signatures changed in the previous wave.\n"
+                        "The tasks below update affected call sites.\n"
+                        "Approve, edit, or abort.\n"
+                        "==================="
                     ),
                 )
             except PlanReviewAborted:

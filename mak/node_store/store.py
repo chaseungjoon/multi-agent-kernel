@@ -31,7 +31,7 @@ def _extract_indent(source: str) -> tuple[str, str]:
     the fragment itself.
     """
     dedented = textwrap.dedent(source)
-    for orig, ded in zip(source.splitlines(), dedented.splitlines()):
+    for orig, ded in zip(source.splitlines(), dedented.splitlines(), strict=False):
         if orig.strip():
             return dedented, orig[: len(orig) - len(ded)]
     return dedented, ""
@@ -264,6 +264,42 @@ class NodeStore:
                         frag, source=textwrap.indent(frag.source, prefix)
                     )
                 result.append(frag)
+            return result
+
+    def get_preview_fragments(
+        self,
+        file_path: str,
+        staged_overrides: dict[NodeId, NodeFragment],
+    ) -> list[NodeFragment]:
+        """Like ``get_committed_fragments`` but substitutes staged sources.
+
+        Used by ``_preview_is_valid`` to assemble the prospective file before
+        committing.  The staged sources are dedented (stored at column 0) so
+        this method re-applies the original ``indent_prefix`` — exactly as
+        ``get_committed_fragments`` does — so that class methods and other
+        indented fragments appear at the correct column in the preview.  The
+        caller therefore gets a correctly-indented source that ``ast.parse``
+        can validate, rather than a flat (dedented) concatenation that would
+        always fail for any file containing class methods.
+        """
+        with self._lock:
+            result: list[NodeFragment] = []
+            seen: set[NodeId] = set()
+            for nid in self.list_nodes(file_path):
+                seen.add(nid)
+                frag = staged_overrides.get(nid) or self._nodes.get(nid)
+                if frag is None:
+                    continue
+                prefix = str(self._metadata.get(nid, {}).get("indent_prefix", ""))
+                if prefix:
+                    frag = dataclasses.replace(
+                        frag, source=textwrap.indent(frag.source, prefix)
+                    )
+                result.append(frag)
+            # Brand-new staged nodes have no committed slot yet — append as-is.
+            for nid, frag in staged_overrides.items():
+                if nid not in seen and str(nid).split("::", 1)[0] == file_path:
+                    result.append(frag)
             return result
 
     def get_staged(self, node_id: NodeId) -> NodeFragment | None:
