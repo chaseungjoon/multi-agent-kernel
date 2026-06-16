@@ -28,6 +28,7 @@ _LOGO_LINES = [
 
 _TAGLINE = "A kernel for concurrent multi agent software development"
 _VERSION = "0.2.1 Beta"
+_CREATOR = "Made by chaseungjoon"
 
 # ── Command hints ──────────────────────────────────────────────────────────────
 _HINTS: list[tuple[str, str, str | None]] = [
@@ -59,7 +60,7 @@ def print_logo(console: Console) -> None:
     console.print()
     for line in _LOGO_LINES:
         console.print(f"[bold #ff8c00]{line}[/bold #ff8c00]")
-    console.print(f"  [dim]{_TAGLINE}[/dim]     [dim]{_VERSION}[/dim]")
+    console.print(f"  [dim]{_TAGLINE}[/dim]     [dim]{_VERSION}[/dim]     [dim]{_CREATOR}[/dim]")
     console.print()
 
 
