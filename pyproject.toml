@@ -13,7 +13,7 @@ dependencies = [
     "anthropic>=0.107.1",
     "openai>=2.41.0",
     "google-genai>=2.8.0",
-    "textual>=0.80",
+    "prompt_toolkit>=3.0",
     "rich>=13.0",
 ]
 
