@@ -39,6 +39,7 @@ roadmap, and design rationale.
   - [Session lifecycle](#10-session-lifecycle)
   - [Configuration](#11-configuration)
   - [Command-line interface](#12-command-line-interface)
+  - [Interactive CLI app](#122-interactive-cli-app-cli)
 - [Part III — Developing](#part-iii--developing)
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
@@ -229,6 +230,7 @@ The module-by-module state:
 | CLI subprocess adapters (`claude_code`, `codex`, `copilot`) | Complete |
 | `mak/agent_runner/sandbox.py` (Docker isolation) | Complete |
 | **Concurrent execution** | **Complete (Wave 5)** — see below |
+| `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
 >
@@ -1180,6 +1182,71 @@ To make a roster permanent instead, edit the `agents:` list in `mak/config.yaml`
 flags simply override it for a single run. Agent and planner backends are otherwise
 selected entirely by the config file.
 
+## 12.2 Interactive CLI app (`cli/`)
+
+`cli/` is a Claude Code-style **interactive shell** for MAK — an inline REPL built
+on `prompt_toolkit` + `rich`. It wraps MAK as a library (calling
+`session.initialize()`, `session._planner.decompose()`, `session.install_plan()`,
+`session.run()` directly, not via subprocess) so the full structured plan is
+available in-process and the spinner/progress bar stays in the normal scroll region.
+
+### Starting the app
+
+```bash
+python -m cli
+```
+
+### UX design
+
+- **Logo** — `doom` pyfiglet font, "Multi Agent" + "Kernel" side-by-side, orange
+  `#ff8c00`, 8 lines tall. Rendered once on startup.
+- **Status capsule** — a `HEAVY`-boxed Rich `Panel` with models, agents, workdir,
+  planner model, and approval mode. Re-prints only when a slash command mutates
+  state — never on every keypress.
+- **Hints** — boxed `ROUNDED` `Panel` per command between two `Rule` dividers on
+  startup. Tab-completion and inline auto-suggest powered by `MakCompleter`.
+- **Task flow** — on any non-slash input: (1) capture the pre-task HEAD hash,
+  (2) reset the token counter, (3) build + initialize a MAK session, (4) plan with
+  a spinner, (5) show the plan with wave/dependency graph, (6) optionally wait for
+  human approval, (7) run agents with a `rich.progress` bar, (8) show results,
+  (9) show a per-file git-stat-style diff of every change since the pre-task hash.
+- **Git diff** — `get_git_diff(work_dir, pre_hash)` diffs `{pre_hash}..HEAD`,
+  covering all commits MAK made during the task (not just the last one). Displayed
+  as `+N -N` bars per file in a `ROUNDED` panel.
+- **Token counting** — `install_token_counter()` patches
+  `anthropic.resources.messages.Messages.create` at the class level once at startup
+  so every Anthropic call (planner + all agents) is counted. On Ctrl+C/EOF the
+  exit message shows `Session ended.  N,NNN tokens used.`
+
+### Slash commands
+
+| Command | Description |
+|---|---|
+| `/models [provider:model …]` | Select agent models (same `provider:model` spec as `--models`) |
+| `/max-agents N` | Set the concurrent-agents limit |
+| `/work-dir <path>` | Set MAK's working directory |
+| `/apikey` | Add or update API keys interactively |
+| `/config [path]` | Reset to `mak/config.yaml` or load a custom config file |
+| `/no-review [true\|false]` | Toggle human approval before task execution |
+
+**Adding a new slash command:** add a handler in `commands.py` (call
+`print_status_capsule(console, state)` if it mutates state), register it in
+`handle_command()`, add tab-completion cases in `completer.py`, and add a hint
+tuple to `_HINTS` in `ui.py`.
+
+### API keys
+
+Keys are loaded from `mak/.env` (gitignored) by `cli/core/api_keys.py` and stored
+in `CliState.api_keys`. The first-run wizard (`cli/setup.py`) prompts and writes
+them. Keys are injected into `os.environ` before each MAK session so the adapters
+find them via their `api_key_env` fields.
+
+### Dependencies added by `cli/`
+
+- `prompt_toolkit` — REPL input, history, tab-completion, auto-suggest
+- `rich` — all terminal rendering (panels, rules, progress bars, spinners)
+- `pyfiglet` — ASCII logo (`doom` font)
+
 ---
 
 # Part III — Developing
@@ -1214,6 +1281,19 @@ cp mak/.env.example mak/.env        # then fill in the keys you use
 ## Project layout
 
 ```
+cli/                       # interactive CLI app (prompt_toolkit + rich)
+├── __main__.py            # entry point: MakCli().run()
+├── app.py                 # MakCli: main REPL loop, task execution, token accounting
+├── commands.py            # slash-command handlers (/models, /work-dir, /no-review, …)
+├── completer.py           # MakCompleter: tab-completion for all slash commands
+├── runner.py              # MAK library bridge + token counter + git diff helpers
+├── setup.py               # first-run API key setup wizard
+├── ui.py                  # all Rich rendering (logo, status capsule, plan panels, diff)
+└── core/
+    ├── api_keys.py        # load/save API keys from mak/.env
+    ├── models.py          # provider registry (display names, recommended models)
+    └── state.py           # CliState dataclass (models, agents, workdir, approval flag)
+
 mak/
 ├── __main__.py            # CLI entry point: python -m mak --task "..."
 ├── bootstrap.py           # composition root: build_registry / default_agent_type / validate_config

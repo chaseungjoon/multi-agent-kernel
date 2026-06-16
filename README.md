@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.1.7 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.2.0 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -52,7 +52,9 @@ reassembles the file.
 
 > ⚠️ ***Currently, MAK only supports Python codebases***, there are plans to add other language support in the near future.
 
-### 1. Clone from source (Python ≥ 3.11)
+### CLI App
+
+#### 1. Clone from source (Python ≥ 3.11)
 
 ```bash
 git clone https://github.com/chaseungjoon/multi-agent-kernel
@@ -61,7 +63,38 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-### 2. Set the API keys
+#### 2. Run app from terminal
+
+```bash
+./bin/mak
+```
+
+![](screenshots/mak-cli.png)
+
+**Features**
+
+* Set api keys of providers you will use with `/apikey` command.
+* Set working directory for MAK with `/work-dir <path>`
+* Set models with `/models anthropic:claude-sonnet-4-6`
+* Set number of agents with `/max-agents 3`
+* Use default config or point to a custom config path with `/config` or `/config /path/to/config`
+* Omit user review of planner with `/no-review true` (default false, not recommended to turn on)
+
+---
+
+### CLI Command
+
+
+#### 1. Clone from source (Python ≥ 3.11)
+
+```bash
+git clone https://github.com/chaseungjoon/multi-agent-kernel
+cd multi-agent-kernel
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+#### 2. Set the API keys
 
 Currently, MAK drives hosted models from **three providers — Anthropic, OpenAI, and Google
 Gemini**. 
@@ -73,7 +106,7 @@ You only need keys for the agents you actually run:
 cp mak/.env.example mak/.env     # Fill in your keys 
 ```
 
-### 3. Choose the number and types of agents & Run
+#### 3. Choose the number and types of agents & Run
 
 > ***⚠️ Just to be safe, create a separate branch for MAK to work on***
 
@@ -123,17 +156,6 @@ python3 -m mak --task "your task" --work-dir /path/to/project \
 
 **[Default models list for each provider](mak/config.yaml)**
 
-For a ready-made target, try the bundled
-[demo](demo/):
-
-```bash
-# Demo MAK
-python3 -m mak --task "Implement every function in the dataforge package per its docstring." \
-  --config demo/config.yaml --no-review
-
-# Verify the result
-python3 -m pytest demo/project
-```
 
 ## Benchmark
 
