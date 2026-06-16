@@ -13,7 +13,12 @@ dependencies = [
     "anthropic>=0.107.1",
     "openai>=2.41.0",
     "google-genai>=2.8.0",
+    "textual>=0.80",
+    "rich>=13.0",
 ]
+
+[project.scripts]
+mak = "cli.__main__:main"
 
 [project.optional-dependencies]
 dev = [
@@ -27,7 +32,7 @@ dev = [
 version = {attr = "mak._version.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["mak*"]
+include = ["mak*", "cli*"]
 
 [tool.mypy]
 python_version = "3.11"
