@@ -1,14 +1,15 @@
 # Contributing to the Multi Agent Kernel (MAK)
 
-Welcome, and thank you for considering a contribution to MAK. This document is the
-**single, self-contained reference** for working on the project: it explains what
+Welcome, and thank you for considering a contribution to MAK.
+
+This document is the **single, self-contained reference** for working on the project: it explains what
 MAK is and why, walks through every subsystem in depth, and lays out exactly how to
 set up, build, test, and submit changes.
 
-It is long on purpose. MAK implements an unusual idea (a shared-memory concurrency
+This file is long on purpose. MAK implements an unusual idea (a shared-memory concurrency
 kernel for coding agents), and contributing effectively requires understanding the
-architecture, not just the file layout. Read Part I for the mental model, Part II
-when you need subsystem detail, and Parts III–V for the day-to-day workflow,
+architecture, not just the file layout. Read `Part I` for the mental model, `Part II`
+when you need subsystem detail, and `Parts III–V` for the day-to-day workflow,
 roadmap, and design rationale.
 
 > [Current status](#current-status)

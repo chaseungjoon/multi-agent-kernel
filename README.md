@@ -75,8 +75,8 @@ pip install -e .
 
 * Set api keys of providers you will use with `/apikey` command.
 * Set working directory for MAK with `/work-dir <path>`
-* Set models with `/models anthropic:claude-sonnet-4-6`
-* Set number of agents with `/max-agents 3`
+* Set models with `/models <provider-1>:<model> <provider-2>:<model> ... `
+* Set number of agents with `/max-agents <int>`
 * Use default config or point to a custom config path with `/config` or `/config /path/to/config`
 * Omit user review of planner with `/no-review true` (default false, not recommended to turn on)
 
