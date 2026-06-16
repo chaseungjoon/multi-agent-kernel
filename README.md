@@ -26,7 +26,18 @@ arbitrates shared memory between threads.
 </br>
 
 
-## The idea
+## Table of Contents
+
+- [The Idea](#the-idea)
+- [Run](#run)
+  - [CLI App](#cli-app)
+  - [CLI Command](#cli-command)
+- [Benchmark](#benchmark)
+- [Contribute](#contribute)
+- [License](#license)
+
+
+## The Idea
 
 Most multi-agent coding systems give each agent a Git branch and merge at the end. A **message-passing** model where conflicts surface late, after the dependency
 information needed to resolve them is gone.
