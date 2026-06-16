@@ -60,7 +60,7 @@ def print_logo(console: Console) -> None:
     console.print()
     for line in _LOGO_LINES:
         console.print(f"[bold #ff8c00]{line}[/bold #ff8c00]")
-    console.print(f"  [dim]{_TAGLINE}[/dim]     [dim]{_VERSION}[/dim]     [dim]{_CREATOR}[/dim]")
+    console.print(f"  {_TAGLINE}     {_VERSION}     {_CREATOR}")
     console.print()
 
 
@@ -89,7 +89,7 @@ def print_status_capsule(console: Console, state: CliState) -> None:
 
 def print_hints(console: Console) -> None:
     console.print()
-    console.print(Rule(style="dim"))
+    console.print(Rule(style="white"))
     console.print()
     for cmd, desc, example in _HINTS:
         body = Text()
@@ -99,7 +99,7 @@ def print_hints(console: Console) -> None:
             body.append(f"\n  {example}", style="dim italic")
         console.print(Panel(body, border_style="dim", box=ROUNDED, padding=(0, 1)))
     console.print()
-    console.print(Rule(style="dim"))
+    console.print(Rule(style="white"))
     console.print()
 
 
