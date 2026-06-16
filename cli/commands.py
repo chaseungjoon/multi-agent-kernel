@@ -6,6 +6,7 @@ from pathlib import Path
 from rich.console import Console
 
 from cli.core.models import (
+    ALL_MODELS,
     PROVIDER_DISPLAY,
     PROVIDER_ORDER,
     models_for_provider,
@@ -33,6 +34,8 @@ def handle_command(text: str, state: CliState, console: Console) -> None:
         _cmd_config(args, state, console)
     elif cmd == "/no-review":
         _cmd_no_review(args, state, console)
+    elif cmd == "/planner":
+        _cmd_planner(args, state, console)
     else:
         console.print(f"[red]x  Unknown command:[/red] {cmd}")
 
@@ -152,6 +155,66 @@ def _cmd_config(args: list[str], state: CliState, console: Console) -> None:
         state.config_path = str(p)
         console.print(f"[green]ok  Config set to[/green] {p}")
     print_status_capsule(console, state)
+
+
+def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
+    if not args:
+        _list_planner_models(state, console)
+        return
+
+    model_id = args[0]
+    if ":" in model_id:
+        model_id = model_id.split(":", 1)[1]
+
+    model_info = next((m for m in ALL_MODELS if m.model_id == model_id), None)
+    if model_info is None:
+        console.print(f"[red]x  Unknown model:[/red] {model_id}")
+        console.print("  Run [bold]/planner[/bold] to see available models.")
+        return
+
+    if not state.api_keys.get(model_info.api_key_env, "").strip():
+        console.print(
+            f"[bold red]x  No API key for {model_info.provider}.[/bold red]  "
+            f"Run [bold]/apikey[/bold] to add one."
+        )
+        return
+
+    state.planner_model = model_id
+    if not model_info.planner_ok:
+        console.print(
+            f"[yellow]ok  Planner set to {model_id}.[/yellow]  "
+            "[yellow]⚠ This model may struggle with complex task decomposition.[/yellow]"
+        )
+    else:
+        console.print(f"[green]ok  Planner set to {model_id}.[/green]")
+    print_status_capsule(console, state)
+
+
+def _list_planner_models(state: CliState, console: Console) -> None:
+    console.print(
+        "\n  [yellow]⚠  Models below [bold]claude-sonnet-4-6[/bold] capability are not"
+        " recommended as planners — complex task decomposition may produce malformed"
+        " or incomplete plans.[/yellow]"
+    )
+    for provider in PROVIDER_ORDER:
+        key_env = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai":    "OPENAI_API_KEY",
+            "gemini":    "GEMINI_API_KEY",
+        }[provider]
+        has_key = bool(state.api_keys.get(key_env, "").strip())
+        console.print(
+            f"\n  [bold]{PROVIDER_DISPLAY[provider]}[/bold]"
+            + ("" if has_key else " [dim](no API key)[/dim]")
+        )
+        for m in models_for_provider(provider):
+            active  = " [green]ok[/green]" if m.model_id == state.planner_model else "   "
+            warning = "  [yellow]⚠ not recommended[/yellow]" if not m.planner_ok else ""
+            if has_key:
+                console.print(f"  {active}  {m.model_id}{warning}")
+            else:
+                console.print(f"  [dim]    {m.model_id}[/dim]")
+    console.print()
 
 
 def _cmd_no_review(args: list[str], state: CliState, console: Console) -> None:

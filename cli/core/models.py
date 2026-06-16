@@ -12,27 +12,29 @@ class ModelInfo:
     api_key_env: str
     adapter_type: str
     recommended: bool = False
+    # False = below sonnet-4-6 capability; show a warning when used as planner
+    planner_ok: bool = True
 
 
 ALL_MODELS: list[ModelInfo] = [
     ModelInfo("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6",
-              "ANTHROPIC_API_KEY", "anthropic_api", recommended=True),
+              "ANTHROPIC_API_KEY", "anthropic_api", recommended=True, planner_ok=True),
     ModelInfo("anthropic", "claude-opus-4-8",   "Claude Opus 4.8",
-              "ANTHROPIC_API_KEY", "anthropic_api"),
+              "ANTHROPIC_API_KEY", "anthropic_api",                   planner_ok=True),
     ModelInfo("anthropic", "claude-haiku-4-5",  "Claude Haiku 4.5",
-              "ANTHROPIC_API_KEY", "anthropic_api"),
+              "ANTHROPIC_API_KEY", "anthropic_api",                   planner_ok=False),
     ModelInfo("openai", "gpt-5.5",     "GPT-5.5",
-              "OPENAI_API_KEY", "openai_api", recommended=True),
+              "OPENAI_API_KEY", "openai_api", recommended=True, planner_ok=True),
     ModelInfo("openai", "gpt-4o",      "GPT-4o",
-              "OPENAI_API_KEY", "openai_api"),
+              "OPENAI_API_KEY", "openai_api",                  planner_ok=True),
     ModelInfo("openai", "gpt-4o-mini", "GPT-4o Mini",
-              "OPENAI_API_KEY", "openai_api"),
+              "OPENAI_API_KEY", "openai_api",                  planner_ok=False),
     ModelInfo("gemini", "gemini-3-pro",     "Gemini 3 Pro",
-              "GEMINI_API_KEY", "gemini_api", recommended=True),
+              "GEMINI_API_KEY", "gemini_api", recommended=True, planner_ok=True),
     ModelInfo("gemini", "gemini-2.0-flash", "Gemini 2.0 Flash",
-              "GEMINI_API_KEY", "gemini_api"),
+              "GEMINI_API_KEY", "gemini_api",                   planner_ok=False),
     ModelInfo("gemini", "gemini-1.5-pro",   "Gemini 1.5 Pro",
-              "GEMINI_API_KEY", "gemini_api"),
+              "GEMINI_API_KEY", "gemini_api",                   planner_ok=False),
 ]
 
 PROVIDER_DISPLAY = {"anthropic": "Anthropic", "openai": "OpenAI", "gemini": "Google Gemini"}

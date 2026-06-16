@@ -27,13 +27,16 @@ _LOGO_LINES = [
 ]
 
 _TAGLINE = "A kernel for concurrent multi agent software development"
-_VERSION = "0.2.0 Beta"
+_VERSION = "0.2.1 Beta"
 
 # ── Command hints ──────────────────────────────────────────────────────────────
 _HINTS: list[tuple[str, str, str | None]] = [
     ("/models [provider:model ...]",
      "Choose which AI models to use as agents.",
      "example: /models anthropic:claude-sonnet-4-6 openai:gpt-5.5"),
+    ("/planner [model]",
+     "Switch the model used for task decomposition. Models below sonnet-4-6 capability are not recommended.",
+     "example: /planner claude-opus-4-8  or  /planner gpt-5.5"),
     ("/max-agents <N>",
      "Set how many agents may run in parallel.",
      "example: /max-agents 3"),

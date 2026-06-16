@@ -1224,6 +1224,7 @@ python -m cli
 | Command | Description |
 |---|---|
 | `/models [provider:model …]` | Select agent models (same `provider:model` spec as `--models`) |
+| `/planner [model]` | Switch the planner model; shows a warning for models below `claude-sonnet-4-6` capability |
 | `/max-agents N` | Set the concurrent-agents limit |
 | `/work-dir <path>` | Set MAK's working directory |
 | `/apikey` | Add or update API keys interactively |
@@ -1285,7 +1286,7 @@ cp mak/.env.example mak/.env        # then fill in the keys you use
 cli/                       # interactive CLI app (prompt_toolkit + rich)
 ├── __main__.py            # entry point: MakCli().run()
 ├── app.py                 # MakCli: main REPL loop, task execution, token accounting
-├── commands.py            # slash-command handlers (/models, /work-dir, /no-review, …)
+├── commands.py            # slash-command handlers (/models, /planner, /work-dir, /no-review, …)
 ├── completer.py           # MakCompleter: tab-completion for all slash commands
 ├── runner.py              # MAK library bridge + token counter + git diff helpers
 ├── setup.py               # first-run API key setup wizard

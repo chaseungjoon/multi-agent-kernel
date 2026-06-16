@@ -14,6 +14,7 @@ from cli.core.state import CliState
 
 COMMANDS: list[tuple[str, str]] = [
     ("/models",     "Select agent models  e.g. /models anthropic:claude-sonnet-4-6"),
+    ("/planner",    "Switch planner model  e.g. /planner claude-opus-4-8"),
     ("/max-agents", "Set concurrent agents  e.g. /max-agents 3"),
     ("/work-dir",   "Set working directory  e.g. /work-dir ~/projects/myapp"),
     ("/apikey",     "Add or update API keys for any provider"),
@@ -59,6 +60,9 @@ class MakCompleter(Completer):
         # ── Per-command argument completions ──────────────────────────────────
         if cmd == "/models":
             return self._complete_models(arg)
+
+        if cmd == "/planner":
+            return self._complete_planner(arg)
 
         if cmd == "/max-agents":
             if not arg.strip():
@@ -153,6 +157,35 @@ class MakCompleter(Completer):
                         start_position=-len(partial),
                         display=f"{spec}{rec_marker}",
                         display_meta=PROVIDER_DISPLAY[provider] + key_note,
+                    )
+                )
+        return results
+
+    # ── Planner model completions ─────────────────────────────────────────────
+
+    def _complete_planner(self, arg: str) -> list[Completion]:
+        partial = arg.strip()
+        results: list[Completion] = []
+        for provider in PROVIDER_ORDER:
+            key_env = {
+                "anthropic": "ANTHROPIC_API_KEY",
+                "openai":    "OPENAI_API_KEY",
+                "gemini":    "GEMINI_API_KEY",
+            }[provider]
+            has_key = bool(self._state.api_keys.get(key_env, "").strip())
+            for m in ALL_MODELS:
+                if m.provider != provider:
+                    continue
+                if not m.model_id.startswith(partial):
+                    continue
+                warn     = "  ⚠ not recommended" if not m.planner_ok else ""
+                key_note = "" if has_key else "  -- no API key"
+                results.append(
+                    Completion(
+                        m.model_id,
+                        start_position=-len(partial),
+                        display=m.model_id,
+                        display_meta=PROVIDER_DISPLAY[provider] + warn + key_note,
                     )
                 )
         return results
