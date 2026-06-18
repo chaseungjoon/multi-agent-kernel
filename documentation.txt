@@ -1,0 +1,585 @@
+
+
+========== yaml ==========
+
+Help on package yaml:
+
+NAME
+    yaml
+
+PACKAGE CONTENTS
+    _yaml
+    composer
+    constructor
+    cyaml
+    dumper
+    emitter
+    error
+    events
+    loader
+    nodes
+    parser
+    reader
+    representer
+    resolver
+    scanner
+    serializer
+    tokens
+
+CLASSES
+    builtins.object
+        YAMLObject
+    builtins.type(builtins.object)
+        YAMLObjectMetaclass
+
+    class YAMLObject(builtins.object)
+     |  An object that can dump itself to a YAML stream
+     |  and load itself from a YAML stream.
+     |
+     |  Class methods defined here:
+     |
+     |  from_yaml(loader, node)
+     |      Convert a representation node to a Python object.
+     |
+     |  to_yaml(dumper, data)
+     |      Convert a Python object to a representation node.
+     |
+     |  ----------------------------------------------------------------------
+     |  Data and other attributes defined here:
+     |
+     |  yaml_dumper = <class 'yaml.dumper.Dumper'>
+     |
+     |  yaml_flow_style = None
+     |
+     |  yaml_loader = [<class 'yaml.loader.Loader'>, <class 'yaml.loader.FullL...
+     |
+     |  yaml_tag = None
+
+    class YAMLObjectMetaclass(builtins.type)
+     |  YAMLObjectMetaclass(name, bases, kwds)
+     |
+     |  The metaclass for YAMLObject.
+     |
+     |  Method resolution order:
+     |      YAMLObjectMetaclass
+     |      builtins.type
+     |      builtins.object
+     |
+     |  Methods defined here:
+     |
+     |  __init__(cls, name, bases, kwds)
+     |      Initialize self.  See help(type(self)) for accurate signature.
+     |
+     |  ----------------------------------------------------------------------
+     |  Data and other attributes defined here:
+     |
+     |  __annotations__ = {}
+     |
+     |  ----------------------------------------------------------------------
+     |  Methods inherited from builtins.type:
+     |
+     |  __call__(self, /, *args, **kwargs)
+     |      Call self as a function.
+     |
+     |  __delattr__(self, name, /)
+     |      Implement delattr(self, name).
+     |
+     |  __dir__(self, /)
+     |      Specialized __dir__ implementation for types.
+     |
+     |  __getattribute__(self, name, /)
+     |      Return getattr(self, name).
+     |
+     |  __instancecheck__(self, instance, /)
+     |      Check if an object is an instance.
+     |
+     |  __or__(self, value, /)
+     |      Return self|value.
+     |
+     |  __repr__(self, /)
+     |      Return repr(self).
+     |
+     |  __ror__(self, value, /)
+     |      Return value|self.
+     |
+     |  __setattr__(self, name, value, /)
+     |      Implement setattr(self, name, value).
+     |
+     |  __sizeof__(self, /)
+     |      Return memory consumption of the type object.
+     |
+     |  __subclasscheck__(self, subclass, /)
+     |      Check if a class is a subclass.
+     |
+     |  __subclasses__(self, /)
+     |      Return a list of immediate subclasses.
+     |
+     |  mro(self, /)
+     |      Return a type's method resolution order.
+     |
+     |  ----------------------------------------------------------------------
+     |  Class methods inherited from builtins.type:
+     |
+     |  __prepare__(name, bases, /, **kwds)
+     |      Create the namespace for the class statement
+     |
+     |  ----------------------------------------------------------------------
+     |  Static methods inherited from builtins.type:
+     |
+     |  __new__(*args, **kwargs) class method of builtins.type
+     |      Create and return a new object.  See help(type) for accurate signature.
+     |
+     |  ----------------------------------------------------------------------
+     |  Data descriptors inherited from builtins.type:
+     |
+     |  __abstractmethods__
+     |
+     |  __dict__
+     |
+     |  __text_signature__
+     |
+     |  ----------------------------------------------------------------------
+     |  Data and other attributes inherited from builtins.type:
+     |
+     |  __base__ = <class 'type'>
+     |      type(object) -> the object's type
+     |      type(name, bases, dict, **kwds) -> a new type
+     |
+     |
+     |  __bases__ = (<class 'type'>,)
+     |
+     |  __basicsize__ = 928
+     |
+     |  __dictoffset__ = 264
+     |
+     |  __flags__ = 2155896320
+     |
+     |  __itemsize__ = 40
+     |
+     |  __mro__ = (<class 'yaml.YAMLObjectMetaclass'>, <class 'type'>, <class ...
+     |
+     |  __type_params__ = ()
+     |
+     |  __weakrefoffset__ = 368
+
+FUNCTIONS
+    add_constructor(tag, constructor, Loader=None)
+        Add a constructor for the given tag.
+        Constructor is a function that accepts a Loader instance
+        and a node object and produces the corresponding Python object.
+
+    add_implicit_resolver(
+        tag,
+        regexp,
+        first=None,
+        Loader=None,
+        Dumper=<class 'yaml.dumper.Dumper'>
+    )
+        Add an implicit scalar detector.
+        If an implicit scalar value matches the given regexp,
+        the corresponding tag is assigned to the scalar.
+        first is a sequence of possible initial characters or None.
+
+    add_multi_constructor(tag_prefix, multi_constructor, Loader=None)
+        Add a multi-constructor for the given tag prefix.
+        Multi-constructor is called for a node if its tag starts with tag_prefix.
+        Multi-constructor accepts a Loader instance, a tag suffix,
+        and a node object and produces the corresponding Python object.
+
+    add_multi_representer(
+        data_type,
+        multi_representer,
+        Dumper=<class 'yaml.dumper.Dumper'>
+    )
+        Add a representer for the given type.
+        Multi-representer is a function accepting a Dumper instance
+        and an instance of the given data type or subtype
+        and producing the corresponding representation node.
+
+    add_path_resolver(
+        tag,
+        path,
+        kind=None,
+        Loader=None,
+        Dumper=<class 'yaml.dumper.Dumper'>
+    )
+        Add a path based resolver for the given tag.
+        A path is a list of keys that forms a path
+        to a node in the representation tree.
+        Keys can be string values, integers, or None.
+
+    add_representer(data_type, representer, Dumper=<class 'yaml.dumper.Dumper'>)
+        Add a representer for the given type.
+        Representer is a function accepting a Dumper instance
+        and an instance of the given data type
+        and producing the corresponding representation node.
+
+    compose(stream, Loader=<class 'yaml.loader.Loader'>)
+        Parse the first YAML document in a stream
+        and produce the corresponding representation tree.
+
+    compose_all(stream, Loader=<class 'yaml.loader.Loader'>)
+        Parse all YAML documents in a stream
+        and produce corresponding representation trees.
+
+    dump(data, stream=None, Dumper=<class 'yaml.dumper.Dumper'>, **kwds)
+        Serialize a Python object into a YAML stream.
+        If stream is None, return the produced string instead.
+
+    dump_all(
+        documents,
+        stream=None,
+        Dumper=<class 'yaml.dumper.Dumper'>,
+        default_style=None,
+        default_flow_style=False,
+        canonical=None,
+        indent=None,
+        width=None,
+        allow_unicode=None,
+        line_break=None,
+        encoding=None,
+        explicit_start=None,
+        explicit_end=None,
+        version=None,
+        tags=None,
+        sort_keys=True
+    )
+        Serialize a sequence of Python objects into a YAML stream.
+        If stream is None, return the produced string instead.
+
+    emit(
+        events,
+        stream=None,
+        Dumper=<class 'yaml.dumper.Dumper'>,
+        canonical=None,
+        indent=None,
+        width=None,
+        allow_unicode=None,
+        line_break=None
+    )
+        Emit YAML parsing events into a stream.
+        If stream is None, return the produced string instead.
+
+    full_load(stream)
+        Parse the first YAML document in a stream
+        and produce the corresponding Python object.
+
+        Resolve all tags except those known to be
+        unsafe on untrusted input.
+
+    full_load_all(stream)
+        Parse all YAML documents in a stream
+        and produce corresponding Python objects.
+
+        Resolve all tags except those known to be
+        unsafe on untrusted input.
+
+    load(stream, Loader)
+        Parse the first YAML document in a stream
+        and produce the corresponding Python object.
+
+    load_all(stream, Loader)
+        Parse all YAML documents in a stream
+        and produce corresponding Python objects.
+
+    parse(stream, Loader=<class 'yaml.loader.Loader'>)
+        Parse a YAML stream and produce parsing events.
+
+    safe_dump(data, stream=None, **kwds)
+        Serialize a Python object into a YAML stream.
+        Produce only basic YAML tags.
+        If stream is None, return the produced string instead.
+
+    safe_dump_all(documents, stream=None, **kwds)
+        Serialize a sequence of Python objects into a YAML stream.
+        Produce only basic YAML tags.
+        If stream is None, return the produced string instead.
+
+    safe_load(stream)
+        Parse the first YAML document in a stream
+        and produce the corresponding Python object.
+
+        Resolve only basic YAML tags. This is known
+        to be safe for untrusted input.
+
+    safe_load_all(stream)
+        Parse all YAML documents in a stream
+        and produce corresponding Python objects.
+
+        Resolve only basic YAML tags. This is known
+        to be safe for untrusted input.
+
+    scan(stream, Loader=<class 'yaml.loader.Loader'>)
+        Scan a YAML stream and produce scanning tokens.
+
+    serialize(node, stream=None, Dumper=<class 'yaml.dumper.Dumper'>, **kwds)
+        Serialize a representation tree into a YAML stream.
+        If stream is None, return the produced string instead.
+
+    serialize_all(
+        nodes,
+        stream=None,
+        Dumper=<class 'yaml.dumper.Dumper'>,
+        canonical=None,
+        indent=None,
+        width=None,
+        allow_unicode=None,
+        line_break=None,
+        encoding=None,
+        explicit_start=None,
+        explicit_end=None,
+        version=None,
+        tags=None
+    )
+        Serialize a sequence of representation trees into a YAML stream.
+        If stream is None, return the produced string instead.
+
+    unsafe_load(stream)
+        Parse the first YAML document in a stream
+        and produce the corresponding Python object.
+
+        Resolve all tags, even those known to be
+        unsafe on untrusted input.
+
+    unsafe_load_all(stream)
+        Parse all YAML documents in a stream
+        and produce corresponding Python objects.
+
+        Resolve all tags, even those known to be
+        unsafe on untrusted input.
+
+    warnings(settings=None)
+        #------------------------------------------------------------------------------
+        # XXX "Warnings control" is now deprecated. Leaving in the API function to not
+        # break code that uses it.
+        #------------------------------------------------------------------------------
+
+DATA
+    __with_libyaml__ = True
+
+VERSION
+    6.0.3
+
+FILE
+    /Users/chaseungjun/miniconda3/lib/python3.13/site-packages/yaml/__init__.py
+
+
+
+
+========== rich ==========
+
+Help on package rich:
+
+NAME
+    rich - Rich text and beautiful formatting in the terminal.
+
+PACKAGE CONTENTS
+    __main__
+    _cell_widths
+    _emoji_codes
+    _emoji_replace
+    _export_format
+    _extension
+    _fileno
+    _inspect
+    _log_render
+    _loop
+    _null_file
+    _palettes
+    _pick
+    _ratio
+    _spinners
+    _stack
+    _timer
+    _win32_console
+    _windows
+    _windows_renderer
+    _wrap
+    abc
+    align
+    ansi
+    bar
+    box
+    cells
+    color
+    color_triplet
+    columns
+    console
+    constrain
+    containers
+    control
+    default_styles
+    diagnose
+    emoji
+    errors
+    file_proxy
+    filesize
+    highlighter
+    json
+    jupyter
+    layout
+    live
+    live_render
+    logging
+    markdown
+    markup
+    measure
+    padding
+    pager
+    palette
+    panel
+    pretty
+    progress
+    progress_bar
+    prompt
+    protocol
+    region
+    repr
+    rule
+    scope
+    screen
+    segment
+    spinner
+    status
+    style
+    styled
+    syntax
+    table
+    terminal_theme
+    text
+    theme
+    themes
+    traceback
+    tree
+
+FUNCTIONS
+    get_console() -> 'Console'
+        Get a global :class:`~rich.console.Console` instance. This function is used when Rich requires a Console,
+        and hasn't been explicitly given one.
+
+        Returns:
+            Console: A console instance.
+
+    inspect(
+        obj: Any,
+        *,
+        console: Optional[ForwardRef('Console')] = None,
+        title: Optional[str] = None,
+        help: bool = False,
+        methods: bool = False,
+        docs: bool = True,
+        private: bool = False,
+        dunder: bool = False,
+        sort: bool = True,
+        all: bool = False,
+        value: bool = True
+    ) -> None
+        Inspect any Python object.
+
+        * inspect(<OBJECT>) to see summarized info.
+        * inspect(<OBJECT>, methods=True) to see methods.
+        * inspect(<OBJECT>, help=True) to see full (non-abbreviated) help.
+        * inspect(<OBJECT>, private=True) to see private attributes (single underscore).
+        * inspect(<OBJECT>, dunder=True) to see attributes beginning with double underscore.
+        * inspect(<OBJECT>, all=True) to see all attributes.
+
+        Args:
+            obj (Any): An object to inspect.
+            title (str, optional): Title to display over inspect result, or None use type. Defaults to None.
+            help (bool, optional): Show full help text rather than just first paragraph. Defaults to False.
+            methods (bool, optional): Enable inspection of callables. Defaults to False.
+            docs (bool, optional): Also render doc strings. Defaults to True.
+            private (bool, optional): Show private attributes (beginning with underscore). Defaults to False.
+            dunder (bool, optional): Show attributes starting with double underscore. Defaults to False.
+            sort (bool, optional): Sort attributes alphabetically. Defaults to True.
+            all (bool, optional): Show all attributes. Defaults to False.
+            value (bool, optional): Pretty print value. Defaults to True.
+
+    print(
+        *objects: Any,
+        sep: str = ' ',
+        end: str = '\n',
+        file: Optional[IO[str]] = None,
+        flush: bool = False
+    ) -> None
+        Print object(s) supplied via positional arguments.
+        This function has an identical signature to the built-in print.
+        For more advanced features, see the :class:`~rich.console.Console` class.
+
+        Args:
+            sep (str, optional): Separator between printed objects. Defaults to " ".
+            end (str, optional): Character to write at end of output. Defaults to "\\n".
+            file (IO[str], optional): File to write to, or None for stdout. Defaults to None.
+            flush (bool, optional): Has no effect as Rich always flushes output. Defaults to False.
+
+    print_json(
+        json: Optional[str] = None,
+        *,
+        data: Any = None,
+        indent: Union[NoneType, int, str] = 2,
+        highlight: bool = True,
+        skip_keys: bool = False,
+        ensure_ascii: bool = False,
+        check_circular: bool = True,
+        allow_nan: bool = True,
+        default: Optional[Callable[[Any], Any]] = None,
+        sort_keys: bool = False
+    ) -> None
+        Pretty prints JSON. Output will be valid JSON.
+
+        Args:
+            json (str): A string containing JSON.
+            data (Any): If json is not supplied, then encode this data.
+            indent (int, optional): Number of spaces to indent. Defaults to 2.
+            highlight (bool, optional): Enable highlighting of output: Defaults to True.
+            skip_keys (bool, optional): Skip keys not of a basic type. Defaults to False.
+            ensure_ascii (bool, optional): Escape all non-ascii characters. Defaults to False.
+            check_circular (bool, optional): Check for circular references. Defaults to True.
+            allow_nan (bool, optional): Allow NaN and Infinity values. Defaults to True.
+            default (Callable, optional): A callable that converts values that can not be encoded
+                in to something that can be JSON encoded. Defaults to None.
+            sort_keys (bool, optional): Sort dictionary keys. Defaults to False.
+
+    reconfigure(*args: Any, **kwargs: Any) -> None
+        Reconfigures the global console by replacing it with another.
+
+        Args:
+            *args (Any): Positional arguments for the replacement :class:`~rich.console.Console`.
+            **kwargs (Any): Keyword arguments for the replacement :class:`~rich.console.Console`.
+
+DATA
+    __all__ = ['get_console', 'reconfigure', 'print', 'inspect', 'print_js...
+    __annotations__ = {'_console': typing.Optional[ForwardRef('Console')]}
+
+FILE
+    /Users/chaseungjun/miniconda3/lib/python3.13/site-packages/rich/__init__.py
+
+
+
+
+========== prompt_toolkit ==========
+
+No Python documentation found for 'prompt_toolkit'.
+Use help() to get the interactive help utility.
+Use help(str) for help on the str class.
+
+
+========== anthropic ==========
+
+No Python documentation found for 'anthropic'.
+Use help() to get the interactive help utility.
+Use help(str) for help on the str class.
+
+
+========== openai ==========
+
+No Python documentation found for 'openai'.
+Use help() to get the interactive help utility.
+Use help(str) for help on the str class.
+
+
+========== google.genai ==========
+
+No Python documentation found for 'google.genai'.
+Use help() to get the interactive help utility.
+Use help(str) for help on the str class.

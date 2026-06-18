@@ -14,7 +14,7 @@ graphify-out
 PLANS.md
 AGENTS.md
 TASKS.md
-offline-docs/
+offline-docs.txt
 
 # Build artifacts
 *.egg-info/
