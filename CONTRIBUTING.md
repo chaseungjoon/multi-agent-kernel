@@ -1236,6 +1236,29 @@ python -m cli
 `handle_command()`, add tab-completion cases in `completer.py`, and add a hint
 tuple to `_HINTS` in `ui.py`.
 
+### Session-only configuration (design constraint)
+
+All changes made via slash commands (`/models`, `/work-dir`, `/max-agents`,
+`/planner`, `/no-review`, `/config`) are **session-only**. They live in `CliState`
+in memory and are **never written back to `mak/config.yaml`** or any other file.
+
+`cli/runner.py` enforces two invariants that protect this:
+
+1. **No config file reference passed to MAK.** `build_session()` builds an
+   in-memory `MakConfig` from `CliState` overrides and passes only that object to
+   `mak.__main__.build_session`. The config file path (`state.config_path`) is
+   **not** included in the `args` `SimpleNamespace` forwarded to MAK — removing any
+   pathway for a future MAK refactor to write back to `mak/config.yaml`.
+
+2. **`mak_dir` is anchored to `work_dir`.** When `/work-dir` points to an external
+   project, `_apply_state_to_config` resolves the `mak_dir` (which defaults to the
+   relative `".mak"`) to an absolute path inside that `work_dir`. Without this, the
+   node store, lock table, and session log would be created inside the MAK kernel
+   repo (relative to process CWD) instead of the target project.
+
+If you add new CLI state fields that affect how MAK runs, apply them in
+`_apply_state_to_config` (in-memory only) and never persist them to the config file.
+
 ### API keys
 
 Keys are loaded from `mak/.env` (gitignored) by `cli/core/api_keys.py` and stored

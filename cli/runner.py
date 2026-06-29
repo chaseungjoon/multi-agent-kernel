@@ -51,11 +51,23 @@ def read_token_counter() -> int:
 
 
 def _apply_state_to_config(config: Any, state: CliState) -> Any:
-    """Apply CLI state overrides to a MakConfig (returns a new copy)."""
+    """Apply CLI state overrides to a MakConfig (returns a new copy).
+
+    All overrides are in-memory only — this function never writes to
+    mak/config.yaml or any other file.
+    """
     from mak.bootstrap import agents_from_specs
 
     if state.work_dir and state.work_dir != ".":
-        config = replace(config, session=replace(config.session, work_dir=state.work_dir))
+        work_dir = str(Path(state.work_dir).resolve())
+        # Anchor mak_dir inside the target work_dir so the node store, logs,
+        # and task graph are not accidentally created inside the MAK repo.
+        mak_path = Path(config.session.mak_dir)
+        mak_dir = str((Path(work_dir) / mak_path).resolve()) if not mak_path.is_absolute() else config.session.mak_dir
+        config = replace(config, session=replace(config.session,
+            work_dir=work_dir,
+            mak_dir=mak_dir,
+        ))
     if state.selected_models:
         config = replace(config, agents=agents_from_specs(state.selected_models))
     config = replace(
@@ -103,9 +115,11 @@ def build_session(task: str, state: CliState) -> Any:
         planner=replace(config.planner, model=state.planner_model),
     )
 
+    # Do NOT pass config=state.config_path here.  mak.__main__.build_session
+    # only reads args.agent; passing the file path would create a reference
+    # that could be used to write back to mak/config.yaml in the future.
     args = SimpleNamespace(
         task=task,
-        config=state.config_path,
         work_dir=state.work_dir or ".",
         models=state.selected_models or None,
         max_agents=state.max_agents,
