@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.rule import Rule
 
-from cli.core.api_keys import KEY_NAMES, any_key_set, save_keys
+from cli.core.api_keys import any_key_set, save_keys
 from cli.core.models import (
     PROVIDER_DISPLAY,
     PROVIDER_ORDER,
@@ -14,6 +13,7 @@ from cli.core.models import (
     recommended_planner_for_provider,
 )
 from cli.core.state import CliState
+from cli.ui import ACCENT, print_error, print_ok
 
 
 def run_setup(state: CliState, console: Console, *, editing: bool = False) -> bool:
@@ -25,29 +25,29 @@ def run_setup(state: CliState, console: Console, *, editing: bool = False) -> bo
     from prompt_toolkit import prompt as pt_prompt
     from prompt_toolkit.styles import Style
 
-    pt_style = Style.from_dict({"": "#c9d1d9", "prompt": "#58a6ff bold"})
+    pt_style = Style.from_dict({"": "#c9d1d9", "prompt": f"{ACCENT} bold"})
 
-    title = "Edit API Keys" if editing else "Welcome to MAK  —  Set up your API keys"
+    title = "API keys" if editing else "Welcome to MAK — set up your API keys"
     console.print()
-    console.print(Rule(title, style="cyan"))
+    console.print(Rule(f"[bold]{title}[/bold]", style="dim"))
     console.print()
     console.print(
-        "  [dim]Press Enter to keep an existing value.  "
+        "  [dim]Press Enter to keep an existing value. "
         "Leave blank to skip a provider.[/dim]"
     )
     console.print()
 
     provider_meta = [
-        ("ANTHROPIC_API_KEY", "Anthropic API Key", "claude-sonnet-4-6 recommended"),
-        ("OPENAI_API_KEY",    "OpenAI API Key",    "gpt-4o"),
-        ("GEMINI_API_KEY",    "Google Gemini API Key", "gemini-2.0-flash"),
+        ("ANTHROPIC_API_KEY", "Anthropic", "claude-sonnet-4-6 recommended"),
+        ("OPENAI_API_KEY",    "OpenAI", "gpt-4o"),
+        ("GEMINI_API_KEY",    "Google Gemini", "gemini-2.0-flash"),
     ]
 
     for env_name, label, hint in provider_meta:
         existing = state.api_keys.get(env_name, "")
-        filled = "●●●●●●●●" if existing else ""
+        status = " [green]●[/green] [dim]key set[/dim]" if existing else ""
 
-        console.print(f"  [bold]{label}[/bold]  [dim]{hint}[/dim]")
+        console.print(f"  [bold]{label}[/bold]  [dim]{hint}[/dim]{status}")
         try:
             value = pt_prompt(
                 f"  {env_name}: ",
@@ -56,18 +56,15 @@ def run_setup(state: CliState, console: Console, *, editing: bool = False) -> bo
                 style=pt_style,
             )
         except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]Setup cancelled.[/dim]")
+            console.print("\n  [dim]Setup cancelled.[/dim]")
             return False
         state.api_keys[env_name] = value.strip()
         console.print()
 
     if not any_key_set(state.api_keys):
-        console.print(
-            Panel(
-                "[bold red]✗  At least one API key is required.[/bold red]\n"
-                "Run [bold]/apikey[/bold] to set one.",
-                border_style="red",
-            )
+        print_error(
+            console,
+            "At least one API key is required — run [bold]/apikey[/bold] to set one.",
         )
         return False
 
@@ -78,9 +75,10 @@ def run_setup(state: CliState, console: Console, *, editing: bool = False) -> bo
     if len(available) == 1:
         rec = recommended_planner_for_provider(available[0])
         state.planner_model = rec
-        console.print(
-            f"  [green]✓  Planner:[/green] [bold magenta]{rec}[/bold magenta]  "
-            f"[dim](auto-selected — only {PROVIDER_DISPLAY[available[0]]} key set)[/dim]"
+        print_ok(
+            console,
+            f"Planner: [bold]{rec}[/bold] "
+            f"[dim](auto-selected — only {PROVIDER_DISPLAY[available[0]]} key set)[/dim]",
         )
     else:
         _select_planner(state, console, available)
@@ -99,14 +97,13 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
     from prompt_toolkit import prompt as pt_prompt
     from prompt_toolkit.styles import Style
 
-    pt_style = Style.from_dict({"prompt": "#58a6ff bold"})
+    pt_style = Style.from_dict({"prompt": f"{ACCENT} bold"})
 
-    console.print(Rule("Choose Planner Model", style="dim"))
+    console.print(Rule("[bold]Planner model[/bold]", style="dim"))
     console.print()
     console.print(
-        "  [dim]The planner is the 'brain' that decomposes your task into parallel "
-        "sub-tasks.[/dim]\n"
-        "  [bold cyan]Recommended:[/bold cyan] [dim]Anthropic · claude-sonnet-4-6 or higher[/dim]"
+        "  [dim]The planner decomposes your task into parallel sub-tasks.\n"
+        "  Recommended: Anthropic · claude-sonnet-4-6 or higher.[/dim]"
     )
     console.print()
 
@@ -115,11 +112,11 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
         if provider not in available:
             continue
         for m in models_for_provider(provider):
-            rec_tag = "  (recommended)" if m.recommended else ""
-            display = f"{PROVIDER_DISPLAY[provider]}  ·  {m.display_name}{rec_tag}"
+            rec_tag = "  [dim]★ recommended[/dim]" if m.recommended else ""
+            display = f"{PROVIDER_DISPLAY[provider]} · {m.display_name}{rec_tag}"
             options.append((f"{provider}:{m.model_id}", display))
 
-    for i, (spec, display) in enumerate(options, 1):
+    for i, (_spec, display) in enumerate(options, 1):
         console.print(f"  [dim]{i:>2})[/dim]  {display}")
 
     console.print()
@@ -139,10 +136,8 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
             if 0 <= idx < len(options):
                 full_spec = options[idx][0]
                 state.planner_model = full_spec.split(":")[1]
-                console.print(
-                    f"\n  [green]✓  Planner set to:[/green] "
-                    f"[bold magenta]{full_spec}[/bold magenta]"
-                )
+                console.print()
+                print_ok(console, f"Planner: [bold]{full_spec}[/bold]")
                 return
         except ValueError:
             pass

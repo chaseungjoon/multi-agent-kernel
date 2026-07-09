@@ -1,10 +1,16 @@
-"""Slash-command handlers for the MAK CLI."""
+"""Slash-command handlers for the MAK CLI.
+
+``handle_command`` returns an action for the main loop: ``"exit"`` to quit,
+``"clear"`` to clear the screen, or ``None`` to keep prompting. State feedback
+is a single ✓/✗ line — live settings are always visible in the prompt toolbar.
+"""
 from __future__ import annotations
 
 from pathlib import Path
 
 from rich.console import Console
 
+from cli.completer import COMMANDS
 from cli.core.models import (
     ALL_MODELS,
     PROVIDER_DISPLAY,
@@ -12,13 +18,19 @@ from cli.core.models import (
     models_for_provider,
 )
 from cli.core.state import CliState
-from cli.ui import print_status_capsule
+from cli.ui import print_error, print_ok, print_status, print_warn
+
+_KEY_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai":    "OPENAI_API_KEY",
+    "gemini":    "GEMINI_API_KEY",
+}
 
 
-def handle_command(text: str, state: CliState, console: Console) -> None:
+def handle_command(text: str, state: CliState, console: Console) -> str | None:
     parts = text.strip().split()
     if not parts:
-        return
+        return None
     cmd  = parts[0].lower()
     args = parts[1:]
 
@@ -36,125 +48,132 @@ def handle_command(text: str, state: CliState, console: Console) -> None:
         _cmd_no_review(args, state, console)
     elif cmd == "/planner":
         _cmd_planner(args, state, console)
+    elif cmd == "/status":
+        print_status(console, state)
+    elif cmd == "/help":
+        _cmd_help(console)
+    elif cmd == "/clear":
+        return "clear"
+    elif cmd in ("/exit", "/quit"):
+        return "exit"
     else:
-        console.print(f"[red]x  Unknown command:[/red] {cmd}")
+        print_error(console, f"Unknown command: {cmd}  [dim]— /help lists commands[/dim]")
+    return None
 
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
+def _cmd_help(console: Console) -> None:
+    console.print()
+    width = max(len(name) for name, _ in COMMANDS)
+    for name, desc in COMMANDS:
+        console.print(f"  [bold #ff8c00]{name.ljust(width)}[/bold #ff8c00]  [dim]{desc}[/dim]")
+    console.print()
+    console.print("  [dim]Type [/dim][bold]/[/bold][dim] to browse commands with descriptions,"
+                  " Tab to complete.[/dim]")
+    console.print("  [dim]Enter runs a task · Ctrl+J inserts a newline · Ctrl+C quits.[/dim]")
+    console.print()
+
+
 def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
     if not args:
-        console.print("[dim]Usage: /models [provider[:model] ...][/dim]")
         _list_models(state, console)
         return
 
     valid: list[str] = []
     for spec in args:
         provider = spec.split(":")[0].lower()
-        key_env = {
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai":    "OPENAI_API_KEY",
-            "gemini":    "GEMINI_API_KEY",
-        }.get(provider)
+        key_env = _KEY_ENV.get(provider)
         if key_env is None:
-            console.print(f"[red]x  Unknown provider:[/red] {provider}")
+            print_error(console, f"Unknown provider: {provider}")
             return
         if not state.api_keys.get(key_env, "").strip():
-            console.print(
-                f"[bold red]x  No API key for {provider}.[/bold red]  "
-                f"Run [bold]/apikey[/bold] to add one."
+            print_error(
+                console,
+                f"No API key for {provider} — run [bold]/apikey[/bold] to add one.",
             )
             return
         valid.append(spec)
 
     if state.max_agents < len(valid):
-        console.print(
-            f"[red]x  max-agents ({state.max_agents}) < number of models ({len(valid)}).  "
-            f"Run[/red] [bold]/max-agents {len(valid)}[/bold] [red]first.[/red]"
+        print_error(
+            console,
+            f"max-agents ({state.max_agents}) < number of models ({len(valid)}) — "
+            f"run [bold]/max-agents {len(valid)}[/bold] first.",
         )
         return
 
     state.selected_models = valid
-    console.print(f"[green]ok  Models set to:[/green] {', '.join(valid)}")
-    print_status_capsule(console, state)
+    print_ok(console, f"Models: {', '.join(valid)}")
 
 
 def _list_models(state: CliState, console: Console) -> None:
+    console.print("\n  [dim]Usage: /models provider:model \\[provider:model ...][/dim]")
     for provider in PROVIDER_ORDER:
-        key_env = {
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai":    "OPENAI_API_KEY",
-            "gemini":    "GEMINI_API_KEY",
-        }[provider]
-        has_key = bool(state.api_keys.get(key_env, "").strip())
+        has_key = bool(state.api_keys.get(_KEY_ENV[provider], "").strip())
         console.print(
             f"\n  [bold]{PROVIDER_DISPLAY[provider]}[/bold]"
-            + ("" if has_key else " [dim](no API key)[/dim]")
+            + ("" if has_key else " [dim]— no API key[/dim]")
         )
         for m in models_for_provider(provider):
-            rec    = " [dim](recommended)[/dim]" if m.recommended else ""
+            rec    = " [dim]★ recommended[/dim]" if m.recommended else ""
             spec   = f"{provider}:{m.model_id}"
-            active = " [green]ok[/green]" if spec in state.selected_models else "   "
+            active = "[green]●[/green]" if spec in state.selected_models else "[dim]○[/dim]"
             if has_key:
-                console.print(f"  {active}  {spec}{rec}")
+                console.print(f"    {active} {spec}{rec}")
             else:
-                console.print(f"  [dim]    {spec}{rec}[/dim]")
+                console.print(f"    [dim]○ {spec}[/dim]")
     console.print()
 
 
 def _cmd_max_agents(args: list[str], state: CliState, console: Console) -> None:
     if not args:
-        console.print("[dim]Usage: /max-agents N[/dim]")
+        console.print("  [dim]Usage: /max-agents N[/dim]")
         return
     try:
         n = int(args[0])
         if n < 1:
             raise ValueError
     except ValueError:
-        console.print("[red]x  /max-agents requires a positive integer.[/red]")
+        print_error(console, "/max-agents requires a positive integer.")
         return
     if n < len(state.selected_models):
-        console.print(
-            f"[red]x  {n} < number of selected models ({len(state.selected_models)}).[/red]"
+        print_error(
+            console, f"{n} < number of selected models ({len(state.selected_models)})."
         )
         return
     state.max_agents = n
-    console.print(f"[green]ok  Max agents set to {n}.[/green]")
-    print_status_capsule(console, state)
+    print_ok(console, f"Max agents: {n}")
 
 
 def _cmd_work_dir(args: list[str], state: CliState, console: Console) -> None:
     if not args:
-        console.print("[dim]Usage: /work-dir /path/to/dir[/dim]")
+        console.print("  [dim]Usage: /work-dir /path/to/dir[/dim]")
         return
     p = Path(" ".join(args)).expanduser().resolve()
     if not p.is_dir():
-        console.print(f"[red]x  Directory not found:[/red] {p}")
+        print_error(console, f"Directory not found: {p}")
         return
     state.work_dir = str(p)
-    console.print(f"[green]ok  Working directory set to[/green] {p}")
-    print_status_capsule(console, state)
+    print_ok(console, f"Working directory: {state.work_dir_display()}")
 
 
 def _cmd_apikey(state: CliState, console: Console) -> None:
     from cli.setup import run_setup
     run_setup(state, console, editing=True)
-    # setup already prints its own summary; reprint capsule so state is visible
-    print_status_capsule(console, state)
 
 
 def _cmd_config(args: list[str], state: CliState, console: Console) -> None:
     if not args:
         state.config_path = "mak/config.yaml"
-        console.print("[green]ok  Config reset to mak/config.yaml[/green]")
+        print_ok(console, "Config reset to mak/config.yaml")
     else:
         p = Path(args[0]).expanduser().resolve()
         if not p.exists():
-            console.print(f"[red]x  Config file not found:[/red] {p}")
+            print_error(console, f"Config file not found: {p}")
             return
         state.config_path = str(p)
-        console.print(f"[green]ok  Config set to[/green] {p}")
-    print_status_capsule(console, state)
+        print_ok(console, f"Config: {p}")
 
 
 def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
@@ -168,52 +187,47 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
 
     model_info = next((m for m in ALL_MODELS if m.model_id == model_id), None)
     if model_info is None:
-        console.print(f"[red]x  Unknown model:[/red] {model_id}")
-        console.print("  Run [bold]/planner[/bold] to see available models.")
+        print_error(
+            console,
+            f"Unknown model: {model_id} — run [bold]/planner[/bold] to list models.",
+        )
         return
 
     if not state.api_keys.get(model_info.api_key_env, "").strip():
-        console.print(
-            f"[bold red]x  No API key for {model_info.provider}.[/bold red]  "
-            f"Run [bold]/apikey[/bold] to add one."
+        print_error(
+            console,
+            f"No API key for {model_info.provider} — run [bold]/apikey[/bold] to add one.",
         )
         return
 
     state.planner_model = model_id
     if not model_info.planner_ok:
-        console.print(
-            f"[yellow]ok  Planner set to {model_id}.[/yellow]  "
-            "[yellow]⚠ This model may struggle with complex task decomposition.[/yellow]"
+        print_warn(
+            console,
+            f"Planner: {model_id} — may struggle with complex task decomposition.",
         )
     else:
-        console.print(f"[green]ok  Planner set to {model_id}.[/green]")
-    print_status_capsule(console, state)
+        print_ok(console, f"Planner: {model_id}")
 
 
 def _list_planner_models(state: CliState, console: Console) -> None:
     console.print(
-        "\n  [yellow]⚠  Models below [bold]claude-sonnet-4-6[/bold] capability are not"
-        " recommended as planners — complex task decomposition may produce malformed"
-        " or incomplete plans.[/yellow]"
+        "\n  [dim]Usage: /planner <model>  —  models below claude-sonnet-4-6 capability"
+        " are not recommended.[/dim]"
     )
     for provider in PROVIDER_ORDER:
-        key_env = {
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai":    "OPENAI_API_KEY",
-            "gemini":    "GEMINI_API_KEY",
-        }[provider]
-        has_key = bool(state.api_keys.get(key_env, "").strip())
+        has_key = bool(state.api_keys.get(_KEY_ENV[provider], "").strip())
         console.print(
             f"\n  [bold]{PROVIDER_DISPLAY[provider]}[/bold]"
-            + ("" if has_key else " [dim](no API key)[/dim]")
+            + ("" if has_key else " [dim]— no API key[/dim]")
         )
         for m in models_for_provider(provider):
-            active  = " [green]ok[/green]" if m.model_id == state.planner_model else "   "
+            active  = "[green]●[/green]" if m.model_id == state.planner_model else "[dim]○[/dim]"
             warning = "  [yellow]⚠ not recommended[/yellow]" if not m.planner_ok else ""
             if has_key:
-                console.print(f"  {active}  {m.model_id}{warning}")
+                console.print(f"    {active} {m.model_id}{warning}")
             else:
-                console.print(f"  [dim]    {m.model_id}[/dim]")
+                console.print(f"    [dim]○ {m.model_id}[/dim]")
     console.print()
 
 
@@ -227,20 +241,12 @@ def _cmd_no_review(args: list[str], state: CliState, console: Console) -> None:
         elif flag in ("false", "off", "0", "no"):
             state.no_review = False
         else:
-            console.print(
-                f"[red]x  /no-review expects true or false, got:[/red] {args[0]}\n"
-                "  example: /no-review true   (skip human approval)\n"
-                "           /no-review false  (require approval — default)"
-            )
+            print_error(console, f"/no-review expects true or false, got: {args[0]}")
             return
     if state.no_review:
-        console.print(
-            "[yellow]ok  Human approval disabled.[/yellow]  "
-            "MAK will run plans immediately.  Use [bold]/no-review false[/bold] to re-enable."
+        print_warn(
+            console,
+            "Approval off — plans run immediately. [dim]/no-review false re-enables.[/dim]",
         )
     else:
-        console.print(
-            "[green]ok  Human approval enabled.[/green]  "
-            "MAK will show the plan and wait before running."
-        )
-    print_status_capsule(console, state)
+        print_ok(console, "Approval on — MAK shows the plan and waits before running.")

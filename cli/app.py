@@ -5,10 +5,11 @@ import sys
 import threading
 from typing import Any
 
-from prompt_toolkit import PromptSession, prompt as pt_prompt
+from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-from prompt_toolkit.formatted_text import HTML, FormattedText
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -30,34 +31,47 @@ from cli.runner import (
     run_session_in_thread,
 )
 from cli.setup import run_setup
-from cli.ui import (
-    print_hints,
-    print_logo,
-    print_status_capsule,
-    show_diff,
-    show_plan,
-    show_results,
-)
+from cli.ui import ACCENT, print_banner, show_diff, show_plan, show_results
 
 _STYLE = Style.from_dict({
-    "prompt":                                  "#ff8c00 bold",
+    "prompt":                                  f"{ACCENT} bold",
     "placeholder":                             "#484f58",
+    "completion-menu":                         "bg:#1c2128 #c9d1d9",
     "completion-menu.completion":              "bg:#1c2128 #c9d1d9",
-    "completion-menu.completion.current":      "bg:#0d1117 #58a6ff bold",
+    "completion-menu.completion.current":      f"bg:#30363d {ACCENT} bold",
     "completion-menu.meta.completion":         "bg:#1c2128 #6e7681",
-    "completion-menu.meta.completion.current": "bg:#0d1117 #6e7681",
+    "completion-menu.meta.completion.current": "bg:#30363d #8b949e",
+    "scrollbar.background":                    "bg:#1c2128",
+    "scrollbar.button":                        "bg:#30363d",
     "auto-suggestion":                         "#484f58",
+    "bottom-toolbar":                          "noreverse bg:default #6e7681",
+    "bottom-toolbar.accent":                   f"noreverse bg:default {ACCENT}",
+    "bottom-toolbar.value":                    "noreverse bg:default #8b949e",
 })
 
-_PLACEHOLDER = FormattedText([("class:placeholder", "  What should the agents do?")])
+_PLACEHOLDER = FormattedText(
+    [("class:placeholder", "Describe a task…  (/ for commands)")]
+)
+
+
+def _key_bindings() -> KeyBindings:
+    kb = KeyBindings()
+
+    @kb.add("c-j")
+    def _newline(event: Any) -> None:
+        """Ctrl+J inserts a newline for multi-line tasks."""
+        event.current_buffer.insert_text("\n")
+
+    return kb
 
 
 class MakCli:
     def __init__(self) -> None:
-        self.console         = Console()
+        self.console         = Console(highlight=False)
         self.state           = self._init_state()
         self._history        = InMemoryHistory()
         self._session_tokens = 0
+        self._prompt_session = self._build_session()
         install_token_counter()
 
     # ── Entry point ────────────────────────────────────────────────────────────
@@ -68,22 +82,15 @@ class MakCli:
             if not ok:
                 sys.exit(1)
 
-        print_logo(self.console)
-        print_status_capsule(self.console, self.state)
-        print_hints(self.console)
+        print_banner(self.console, self.state)
 
         while True:
-            # Rebuild each iteration so completions always reflect current state.
-            session = self._build_session()
             try:
-                raw = session.prompt(
+                raw = self._prompt_session.prompt(
                     FormattedText([("class:prompt", "❯ ")]),
                     placeholder=_PLACEHOLDER,
                 )
-            except KeyboardInterrupt:
-                self._print_session_end()
-                break
-            except EOFError:
+            except (KeyboardInterrupt, EOFError):
                 self._print_session_end()
                 break
 
@@ -92,7 +99,13 @@ class MakCli:
                 continue
 
             if text.startswith("/"):
-                handle_command(text, self.state, self.console)
+                action = handle_command(text, self.state, self.console)
+                if action == "exit":
+                    self._print_session_end()
+                    break
+                if action == "clear":
+                    self.console.clear()
+                    print_banner(self.console, self.state)
             else:
                 self._execute_task(text)
 
@@ -103,8 +116,7 @@ class MakCli:
         state   = self.state
 
         console.print()
-        console.print(Rule(f"[bold #ff8c00]{task}[/bold #ff8c00]", style="dim"))
-        console.print()
+        console.print(Rule(f"[bold {ACCENT}]{task}[/bold {ACCENT}]", style="dim"))
 
         # Capture pre-task HEAD so the diff covers every commit MAK makes.
         pre_hash = get_pre_task_hash(state.work_dir)
@@ -114,15 +126,15 @@ class MakCli:
         try:
             mak_session = build_session(task, state)
         except Exception as exc:  # noqa: BLE001
-            console.print(f"[bold red]x  Configuration error:[/bold red] {exc}")
+            console.print(f"  [red]✗[/red] Configuration error: {exc}")
             return
 
         # ── 2. Initialize ──────────────────────────────────────────────────────
-        with console.status("[dim]Initializing...[/dim]", spinner="dots"):
+        with console.status("[dim]Initializing…[/dim]", spinner="dots"):
             try:
                 mak_session.initialize()
             except Exception as exc:  # noqa: BLE001
-                console.print(f"[bold red]x  Initialization failed:[/bold red] {exc}")
+                console.print(f"  [red]✗[/red] Initialization failed: {exc}")
                 return
 
         # ── 3. Plan ────────────────────────────────────────────────────────────
@@ -137,37 +149,24 @@ class MakCli:
 
         threading.Thread(target=_plan, daemon=True).start()
 
-        with console.status("[bold blue]Planning...[/bold blue]", spinner="aesthetic"):
+        with console.status(f"[{ACCENT}]Planning…[/{ACCENT}]", spinner="dots"):
             plan_done.wait()
 
         if plan_error is not None:
-            console.print(f"[bold red]x  Planning failed:[/bold red] {plan_error}")
+            console.print(f"  [red]✗[/red] Planning failed: {plan_error}")
             return
 
         if not subtasks:
-            console.print("[yellow]  Planner produced an empty plan.[/yellow]")
+            console.print("  [yellow]⚠[/yellow] Planner produced an empty plan.")
             return
 
         # ── 4. Show plan ───────────────────────────────────────────────────────
-        show_plan(console, subtasks, task)
+        show_plan(console, subtasks)
 
         # ── 5. Human approval ──────────────────────────────────────────────────
         if not state.no_review:
-            console.print("[dim]  Review the plan above.  Ctrl+C to cancel.[/dim]")
-            console.print()
-            try:
-                ans = pt_prompt(
-                    HTML(
-                        "<ansiyellow><b>  Proceed with this plan?</b></ansiyellow>"
-                        " [<ansigreen>y</ansigreen>/N]  "
-                        "<ansiyellow><b>❯</b></ansiyellow> "
-                    ),
-                    style=_STYLE,
-                ).strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                ans = "n"
-            if ans not in ("y", "yes"):
-                console.print("\n[dim]  Cancelled.[/dim]\n")
+            if not self._confirm_plan():
+                console.print("  [dim]Cancelled.[/dim]\n")
                 return
             console.print()
 
@@ -186,8 +185,8 @@ class MakCli:
         threading.Thread(target=_run, daemon=True).start()
 
         with Progress(
-            SpinnerColumn("aesthetic"),
-            TextColumn("[bold cyan]Working...[/bold cyan]"),
+            SpinnerColumn("dots", style=ACCENT),
+            TextColumn(f"[{ACCENT}]Working…[/{ACCENT}]"),
             TimeElapsedColumn(),
             console=console,
             transient=True,
@@ -196,16 +195,16 @@ class MakCli:
             run_done.wait()
 
         if run_error is not None:
-            console.print(f"[bold red]x  Execution error:[/bold red] {run_error}")
+            console.print(f"  [red]✗[/red] Execution error: {run_error}")
             return
 
         # ── 7. Teardown ────────────────────────────────────────────────────────
         tests_passed = True
-        with console.status("[dim]Running tests...[/dim]", spinner="dots"):
+        with console.status("[dim]Running tests…[/dim]", spinner="dots"):
             try:
                 tests_passed = mak_session.teardown()
             except Exception as exc:  # noqa: BLE001
-                console.print(f"[yellow]  Teardown error:[/yellow] {exc}")
+                console.print(f"  [yellow]⚠[/yellow] Teardown error: {exc}")
 
         # ── 8. Results + diff ──────────────────────────────────────────────────
         self._session_tokens += read_token_counter()
@@ -216,16 +215,54 @@ class MakCli:
         if diff.strip():
             show_diff(console, diff)
 
+    def _confirm_plan(self) -> bool:
+        """Single-line plan approval: Enter/y runs, anything else cancels."""
+        from prompt_toolkit import prompt as pt_prompt
+
+        try:
+            ans = pt_prompt(
+                FormattedText([
+                    ("", "  "),
+                    ("bold", "Run this plan?"),
+                    ("class:placeholder", "  y/N · Ctrl+C cancels  "),
+                    ("class:prompt", "❯ "),
+                ]),
+                style=_STYLE,
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return ans in ("y", "yes")
+
     # ── Helpers ────────────────────────────────────────────────────────────────
+
+    def _toolbar(self) -> FormattedText:
+        """Live session state, rendered under the prompt on every keystroke."""
+        state = self.state
+        fragments: list[tuple[str, str]] = [("class:bottom-toolbar", "  ")]
+
+        def item(label: str, value: str, style: str = "class:bottom-toolbar.value") -> None:
+            if len(fragments) > 1:
+                fragments.append(("class:bottom-toolbar", "  ·  "))
+            fragments.append(("class:bottom-toolbar", f"{label} "))
+            fragments.append((style, value))
+
+        item("model", state.models_display())
+        item("planner", state.planner_model)
+        item("agents", str(state.max_agents))
+        item("dir", state.work_dir_display())
+        item(
+            "approval",
+            "off" if state.no_review else "on",
+            "class:bottom-toolbar.accent" if state.no_review else "class:bottom-toolbar.value",
+        )
+        if self._session_tokens:
+            item("tokens", f"{self._session_tokens:,}")
+        return FormattedText(fragments)
 
     def _print_session_end(self) -> None:
         tokens = self._session_tokens
-        if tokens > 0:
-            self.console.print(
-                f"\n[dim]Session ended.  {tokens:,} tokens used.[/dim]\n"
-            )
-        else:
-            self.console.print("\n[dim]Session ended.[/dim]\n")
+        suffix = f"  ·  {tokens:,} tokens used" if tokens > 0 else ""
+        self.console.print(f"\n  [dim]Session ended{suffix}.[/dim]\n")
 
     def _init_state(self) -> CliState:
         keys  = load_keys()
@@ -246,4 +283,7 @@ class MakCli:
             history=self._history,
             complete_while_typing=True,
             enable_open_in_editor=False,
+            key_bindings=_key_bindings(),
+            bottom_toolbar=self._toolbar,
+            reserve_space_for_menu=7,
         )

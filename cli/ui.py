@@ -1,106 +1,78 @@
-"""All Rich rendering functions for the MAK CLI."""
+"""All Rich rendering functions for the MAK CLI.
+
+Design language (benchmarked against Claude Code / Codex CLI):
+  - one accent color, everything else default or dim
+  - a single compact welcome box; no ASCII banners, no startup command dumps
+  - flat indented lists instead of nested panels
+  - live session state lives in the prompt's bottom toolbar, not in scrollback
+"""
 from __future__ import annotations
 
 from typing import Any
 
-from rich.box import HEAVY, ROUNDED
+from rich.box import ROUNDED
 from rich.console import Console
 from rich.panel import Panel
-from rich.rule import Rule
 from rich.text import Text
 
 from cli.core.state import CliState
+from mak._version import __version_display__
 
-# ── ASCII logo (pyfiglet doom, "Multi Agent" + "Kernel" side-by-side) ──────────
-_LOGO_LINES = [
-    r" ",
-    r" ",
-    r" ",
-    r"    ▗▖  ▗▖▗▖ ▗▖▗▖ ▗▄▄▄▖▗▄▄▄▖     ▗▄▖  ▗▄▄▖▗▄▄▄▖▗▖  ▗▖▗▄▄▄▖    ▗▖ ▗▖▗▄▄▄▖▗▄▄▖ ▗▖  ▗▖▗▄▄▄▖▗▖   ",
-    r"    ▐▛▚▞▜▌▐▌ ▐▌▐▌   █    █      ▐▌ ▐▌▐▌   ▐▌   ▐▛▚▖▐▌  █      ▐▌▗▞▘▐▌   ▐▌ ▐▌▐▛▚▖▐▌▐▌   ▐▌  ",
-    r"    ▐▌  ▐▌▐▌ ▐▌▐▌   █    █      ▐▛▀▜▌▐▌▝▜▌▐▛▀▀▘▐▌ ▝▜▌  █      ▐▛▚▖ ▐▛▀▀▘▐▛▀▚▖▐▌ ▝▜▌▐▛▀▀▘▐▌   ",
-    r"    ▐▌  ▐▌▝▚▄▞▘▐▙▄▄▖█  ▗▄█▄▖    ▐▌ ▐▌▝▚▄▞▘▐▙▄▄▖▐▌  ▐▌  █      ▐▌ ▐▌▐▙▄▄▖▐▌ ▐▌▐▌  ▐▌▐▙▄▄▖▐▙▄▄▖",
-    r" ",
-    r" ",
-    r" ",
-    r" ",
-]
+ACCENT = "#ff8c00"
+DIM = "#6e7681"
 
-_TAGLINE = "A kernel for concurrent multi agent software development"
-_VERSION = "0.2.1 Beta"
-_CREATOR = "Made by chaseungjoon"
-
-# ── Command hints ──────────────────────────────────────────────────────────────
-_HINTS: list[tuple[str, str, str | None]] = [
-    ("/models [provider:model ...]",
-     "Choose which AI models to use as agents.",
-     "example: /models anthropic:claude-sonnet-4-6 openai:gpt-5.5"),
-    ("/planner [model]",
-     "Switch the model used for task decomposition. Models below sonnet-4-6 capability are not recommended.",
-     "example: /planner claude-opus-4-8  or  /planner gpt-5.5"),
-    ("/max-agents <N>",
-     "Set how many agents may run in parallel.",
-     "example: /max-agents 3"),
-    ("/work-dir <path>",
-     "Set the working directory that MAK will edit.",
-     "example: /work-dir ~/projects/myapp"),
-    ("/apikey",
-     "Add or update API keys for any provider.",
-     None),
-    ("/config [path]",
-     "Use the built-in default config, or load a custom YAML file.",
-     "example: /config  or  /config /path/to/config.yaml"),
-    ("/no-review [true|false]",
-     "Control whether MAK waits for your approval before running a plan.",
-     "example: /no-review true  (skip approval)  or  /no-review false  (require approval)"),
-]
+_TAGLINE = "A kernel for concurrent multi-agent software development"
 
 
-def print_logo(console: Console) -> None:
+# ── Welcome ────────────────────────────────────────────────────────────────────
+
+def print_banner(console: Console, state: CliState) -> None:
+    body = Text()
+    body.append("✻ ", style=f"bold {ACCENT}")
+    body.append("MAK", style="bold")
+    body.append(" — Multi-Agent Kernel  ", style="")
+    body.append(f"v{__version_display__.lower()}", style="dim")
+    body.append(f"\n\n  {_TAGLINE}", style="dim")
+    body.append("\n\n  ", style="")
+    body.append("/help", style=ACCENT)
+    body.append(" for commands · ", style="dim")
+    body.append("/status", style=ACCENT)
+    body.append(" for session info", style="dim")
+    body.append(f"\n\n  cwd: {state.work_dir_display()}", style="dim")
     console.print()
-    for line in _LOGO_LINES:
-        console.print(f"[bold #ff8c00]{line}[/bold #ff8c00]")
-    console.print(f"  {_TAGLINE}     {_VERSION}     {_CREATOR}")
+    console.print(Panel(body, border_style=ACCENT, box=ROUNDED, padding=(0, 1), expand=False))
     console.print()
 
 
-def make_status_text(state: CliState) -> Text:
-    t = Text()
-    t.append("  models: ",   style="dim")
-    t.append(state.models_display(), style="bold cyan")
-    t.append("   agents: ", style="dim")
-    t.append(str(state.max_agents), style="bold")
-    t.append("   workdir: ", style="dim")
-    t.append(state.work_dir_display(), style="bold")
-    t.append("   planner: ", style="dim")
-    t.append(state.planner_model, style="bold magenta")
-    t.append("   approval: ", style="dim")
-    t.append("off" if state.no_review else "on",
-             style="bold red" if state.no_review else "bold green")
-    t.append("  ", style="")
-    return t
+# ── Session status (printed by /status) ────────────────────────────────────────
+
+def print_status(console: Console, state: CliState) -> None:
+    rows = [
+        ("models", state.models_display()),
+        ("planner", state.planner_model),
+        ("agents", str(state.max_agents)),
+        ("workdir", state.work_dir_display()),
+        ("config", state.config_path),
+        ("approval", "off — plans run immediately" if state.no_review else "on"),
+    ]
+    console.print()
+    for label, value in rows:
+        console.print(f"  [dim]{label:>9}[/dim]  {value}")
+    console.print()
 
 
-def print_status_capsule(console: Console, state: CliState) -> None:
-    console.print(
-        Panel(make_status_text(state), border_style="bold blue", box=HEAVY, padding=(0, 0))
-    )
+# ── One-line feedback for slash commands ──────────────────────────────────────
+
+def print_ok(console: Console, message: str) -> None:
+    console.print(f"  [green]✓[/green] {message}")
 
 
-def print_hints(console: Console) -> None:
-    console.print()
-    console.print(Rule(style="white"))
-    console.print()
-    for cmd, desc, example in _HINTS:
-        body = Text()
-        body.append(cmd, style="bold cyan")
-        body.append(f"\n  {desc}", style="dim")
-        if example:
-            body.append(f"\n  {example}", style="dim italic")
-        console.print(Panel(body, border_style="dim", box=ROUNDED, padding=(0, 1)))
-    console.print()
-    console.print(Rule(style="white"))
-    console.print()
+def print_warn(console: Console, message: str) -> None:
+    console.print(f"  [yellow]⚠[/yellow] {message}")
+
+
+def print_error(console: Console, message: str) -> None:
+    console.print(f"  [red]✗[/red] {message}")
 
 
 # ── Plan display ───────────────────────────────────────────────────────────────
@@ -120,97 +92,75 @@ def _compute_waves(subtasks: list[Any]) -> list[list[Any]]:
     return waves
 
 
-def _task_node(st: Any) -> Panel:
-    body = Text()
-    body.append(f"  {st.task_id}", style="bold green")
-    body.append("  ", style="")
-    body.append(st.description, style="bold white")
-    for target in st.target_nodes:
-        body.append("\n    target  ", style="dim")
-        body.append(str(target), style="cyan")
-    if st.agent_type:
-        body.append("\n    agent   ", style="dim")
-        body.append(st.agent_type, style="dim magenta")
-    if st.depends_on:
-        body.append("\n    after   ", style="dim")
-        body.append(", ".join(st.depends_on), style="yellow")
-    return Panel(body, border_style="green", box=ROUNDED, padding=(0, 1))
-
-
-def show_plan(console: Console, subtasks: list[Any], task: str) -> None:
+def show_plan(console: Console, subtasks: list[Any]) -> None:
     waves = _compute_waves(subtasks)
     n, w = len(subtasks), len(waves)
 
-    hdr = Text()
-    hdr.append("  PLANNER", style="bold cyan")
-    hdr.append(f"  ──  {n} subtask{'s' if n != 1 else ''}   {w} wave{'s' if w != 1 else ''}  ",
-               style="dim")
     console.print()
-    console.print(Panel(hdr, border_style="cyan", box=HEAVY, padding=(0, 0)))
-    console.print()
-    console.print(f"  [bold]Task:[/bold] [italic]{task}[/italic]")
+    header = Text()
+    header.append("  Plan", style=f"bold {ACCENT}")
+    header.append(
+        f"  ·  {n} task{'s' if n != 1 else ''}"
+        f"  ·  {w} wave{'s' if w != 1 else ''}",
+        style="dim",
+    )
+    console.print(header)
     console.print()
 
     for i, wave in enumerate(waves, 1):
-        note = f"  ({len(wave)} in parallel)" if len(wave) > 1 else ""
-        console.print(
-            Rule(
-                Text.assemble(
-                    ("  WAVE ", "dim"),
-                    (str(i), "bold yellow"),
-                    (note, "dim italic"),
-                    ("  ", ""),
-                ),
-                style="dim",
-            )
-        )
-        console.print()
+        note = f" · {len(wave)} in parallel" if len(wave) > 1 else ""
+        console.print(f"  [dim]wave {i}{note}[/dim]")
         for st in wave:
-            console.print(_task_node(st))
-        console.print()
-
-    # Dependency graph below all waves
-    edges = [(dep, st.task_id) for st in subtasks for dep in st.depends_on]
-    if edges:
-        console.print(Rule(Text.assemble(("  dependencies  ", "dim")), style="dim"))
-        console.print()
-        # Build forward adjacency: upstream → [downstream, ...]
-        adj: dict[str, list[str]] = {}
-        for up, down in edges:
-            adj.setdefault(up, []).append(down)
-        for up in sorted(adj):
-            line = Text()
-            line.append(f"  {up}", style="bold green")
-            line.append("  →  ", style="dim")
-            line.append(",  ".join(adj[up]), style="cyan")
+            line = Text("    ")
+            line.append("●", style=ACCENT)
+            line.append(f" {st.task_id}", style="bold")
+            line.append(f"  {st.description}")
             console.print(line)
+
+            meta = Text("      ")
+            parts: list[tuple[str, str]] = []
+            for target in st.target_nodes:
+                parts.append(("target ", str(target)))
+            if st.agent_type:
+                parts.append(("agent ", st.agent_type))
+            if st.depends_on:
+                parts.append(("after ", ", ".join(st.depends_on)))
+            for j, (label, value) in enumerate(parts):
+                if j > 0:
+                    meta.append(" · ", style="dim")
+                meta.append(label, style="dim")
+                meta.append(value, style=DIM)
+            if parts:
+                console.print(meta)
         console.print()
 
 
 # ── Result summary ─────────────────────────────────────────────────────────────
 
 def show_results(console: Console, result: Any, tests_passed: bool) -> None:
-    ok  = len(result.completed)
+    ok = len(result.completed)
     bad = len(result.failed)
     skp = len(result.skipped)
     blk = len(result.blocked)
 
     ok_flag = result.ok and tests_passed
-    sym   = "+" if ok_flag else "!"
-    style = "bold green" if ok_flag else "bold red"
+    sym, style = ("✓", "bold green") if ok_flag else ("✗", "bold red")
 
-    console.print(Rule(style="dim"))
-    console.print(
-        f"  [{style}]{sym}[/{style}]  "
-        f"[green]{ok} completed[/green]  "
-        f"[red]{bad} failed[/red]  "
-        f"[dim]{skp} skipped  {blk} blocked[/dim]"
-    )
+    line = Text("  ")
+    line.append(sym, style=style)
+    line.append(f" {ok} completed", style="green" if ok else "dim")
+    if bad:
+        line.append(f" · {bad} failed", style="red")
+    if skp or blk:
+        line.append(f" · {skp} skipped · {blk} blocked", style="dim")
+    console.print()
+    console.print(line)
+
     if not tests_passed:
-        console.print("  [yellow]  Test suite did not pass after changes.[/yellow]")
+        console.print("  [yellow]⚠ Test suite did not pass after changes.[/yellow]")
     for task_id in result.failed:
         reason = result.failure_reasons.get(task_id, "")
-        console.print(f"  [red]  - {task_id}:[/red] [dim]{reason}[/dim]")
+        console.print(f"    [red]✗ {task_id}[/red]  [dim]{reason}[/dim]")
     console.print()
 
 
@@ -223,8 +173,8 @@ def show_diff(console: Console, diff: str) -> None:
 
     rows: list[tuple[str, int, int]] = []
     for filename, hunks in files:
-        added   = sum(1 for h in hunks for ln in h
-                      if ln.startswith("+") and not ln.startswith("+++"))
+        added = sum(1 for h in hunks for ln in h
+                    if ln.startswith("+") and not ln.startswith("+++"))
         removed = sum(1 for h in hunks for ln in h
                       if ln.startswith("-") and not ln.startswith("---"))
         if added or removed:
@@ -233,32 +183,21 @@ def show_diff(console: Console, diff: str) -> None:
     if not rows:
         return
 
-    max_fn    = max(len(f) for f, _, _ in rows)
+    max_fn = max(len(f) for f, _, _ in rows)
     max_total = max(a + r for _, a, r in rows) or 1
-    BAR_W     = 24
+    BAR_W = 20
 
-    body = Text()
-    for i, (filename, added, removed) in enumerate(rows):
-        if i > 0:
-            body.append("\n")
-        add_bars = round(added   / max_total * BAR_W)
+    console.print("  [dim]changes[/dim]")
+    for filename, added, removed in rows:
+        add_bars = round(added / max_total * BAR_W)
         rem_bars = round(removed / max_total * BAR_W)
-        body.append(f"  {filename.ljust(max_fn + 2)}")
-        body.append(f"+{added:<4}", style="bold green")
-        body.append(f"-{removed:<4}", style="bold red")
-        body.append("  ")
-        body.append("+" * add_bars, style="green")
-        body.append("-" * rem_bars, style="red")
-
-    console.print(
-        Panel(
-            body,
-            title="[dim]changes[/dim]",
-            border_style="dim",
-            box=ROUNDED,
-            padding=(0, 1),
-        )
-    )
+        line = Text(f"    {filename.ljust(max_fn + 2)}")
+        line.append(f"+{added:<4}", style="green")
+        line.append(f"-{removed:<4}", style="red")
+        line.append(" ")
+        line.append("+" * add_bars, style="green")
+        line.append("-" * rem_bars, style="red")
+        console.print(line)
     console.print()
 
 

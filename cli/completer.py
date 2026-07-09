@@ -1,4 +1,8 @@
-"""prompt_toolkit completers for MAK slash commands and model specs."""
+"""prompt_toolkit completers for MAK slash commands and model specs.
+
+Typing "/" pops the command menu immediately (complete_while_typing is on in
+app.py); each entry carries a one-line description in the meta column.
+"""
 from __future__ import annotations
 
 from prompt_toolkit.completion import (
@@ -13,14 +17,24 @@ from cli.core.models import ALL_MODELS, PROVIDER_DISPLAY, PROVIDER_ORDER
 from cli.core.state import CliState
 
 COMMANDS: list[tuple[str, str]] = [
-    ("/models",     "Select agent models  e.g. /models anthropic:claude-sonnet-4-6"),
-    ("/planner",    "Switch planner model  e.g. /planner claude-opus-4-8"),
-    ("/max-agents", "Set concurrent agents  e.g. /max-agents 3"),
-    ("/work-dir",   "Set working directory  e.g. /work-dir ~/projects/myapp"),
-    ("/apikey",     "Add or update API keys for any provider"),
-    ("/config",     "Use default config or load a custom YAML path"),
-    ("/no-review",  "Toggle human approval  e.g. /no-review true  or  /no-review false"),
+    ("/models",     "Select agent models"),
+    ("/planner",    "Switch the planner model"),
+    ("/max-agents", "Set how many agents run in parallel"),
+    ("/work-dir",   "Set the working directory MAK edits"),
+    ("/apikey",     "Add or update provider API keys"),
+    ("/config",     "Load a config YAML (no arg: default)"),
+    ("/no-review",  "Toggle plan approval before running"),
+    ("/status",     "Show current session settings"),
+    ("/help",       "Show commands and shortcuts"),
+    ("/clear",      "Clear the screen"),
+    ("/exit",       "Quit MAK"),
 ]
+
+_KEY_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai":    "OPENAI_API_KEY",
+    "gemini":    "GEMINI_API_KEY",
+}
 
 
 class MakCompleter(Completer):
@@ -71,7 +85,7 @@ class MakCompleter(Completer):
                         "",
                         start_position=0,
                         display="<number>",
-                        display_meta="positive integer — e.g. /max-agents 3",
+                        display_meta="positive integer, e.g. 3",
                     )
                 ]
             return []
@@ -79,32 +93,14 @@ class MakCompleter(Completer):
         if cmd == "/work-dir":
             return self._complete_path(arg, complete_event)
 
-        if cmd == "/apikey":
-            if not arg.strip():
-                return [
-                    Completion(
-                        "",
-                        start_position=0,
-                        display="(press Enter)",
-                        display_meta="will prompt you to enter or update API keys",
-                    )
-                ]
-            return []
-
         if cmd == "/config":
             if not arg.strip():
                 return [
                     Completion(
                         "",
                         start_position=0,
-                        display="(no argument)",
-                        display_meta="reset to default  mak/config.yaml",
-                    ),
-                    Completion(
-                        "",
-                        start_position=0,
                         display="<path>",
-                        display_meta="path to a custom config YAML file",
+                        display_meta="config YAML file (empty: reset to default)",
                     ),
                 ]
             return self._complete_path(arg, complete_event)
@@ -112,7 +108,7 @@ class MakCompleter(Completer):
         if cmd == "/no-review":
             partial = arg.strip()
             opts = [
-                ("false", "require human approval before running (default)"),
+                ("false", "require approval before running (default)"),
                 ("true",  "skip approval — run plans immediately"),
             ]
             return [
@@ -137,20 +133,15 @@ class MakCompleter(Completer):
 
         results: list[Completion] = []
         for provider in PROVIDER_ORDER:
-            key_env = {
-                "anthropic": "ANTHROPIC_API_KEY",
-                "openai":    "OPENAI_API_KEY",
-                "gemini":    "GEMINI_API_KEY",
-            }[provider]
-            has_key = bool(self._state.api_keys.get(key_env, "").strip())
+            has_key = bool(self._state.api_keys.get(_KEY_ENV[provider], "").strip())
             for m in ALL_MODELS:
                 if m.provider != provider:
                     continue
                 spec = f"{provider}:{m.model_id}"
                 if not spec.startswith(partial):
                     continue
-                rec_marker = "  (recommended)" if m.recommended else ""
-                key_note   = "" if has_key else "  -- no API key"
+                rec_marker = "  ★" if m.recommended else ""
+                key_note   = "" if has_key else " — no API key"
                 results.append(
                     Completion(
                         spec,
@@ -167,19 +158,14 @@ class MakCompleter(Completer):
         partial = arg.strip()
         results: list[Completion] = []
         for provider in PROVIDER_ORDER:
-            key_env = {
-                "anthropic": "ANTHROPIC_API_KEY",
-                "openai":    "OPENAI_API_KEY",
-                "gemini":    "GEMINI_API_KEY",
-            }[provider]
-            has_key = bool(self._state.api_keys.get(key_env, "").strip())
+            has_key = bool(self._state.api_keys.get(_KEY_ENV[provider], "").strip())
             for m in ALL_MODELS:
                 if m.provider != provider:
                     continue
                 if not m.model_id.startswith(partial):
                     continue
-                warn     = "  ⚠ not recommended" if not m.planner_ok else ""
-                key_note = "" if has_key else "  -- no API key"
+                warn     = " — ⚠ not recommended" if not m.planner_ok else ""
+                key_note = "" if has_key else " — no API key"
                 results.append(
                     Completion(
                         m.model_id,
