@@ -18,7 +18,7 @@ from cli.core.models import (
     models_for_provider,
 )
 from cli.core.state import CliState
-from cli.ui import print_error, print_ok, print_status, print_warn
+from cli.ui import ACCENT, print_error, print_ok, print_status, print_warn
 
 _KEY_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
@@ -57,7 +57,9 @@ def handle_command(text: str, state: CliState, console: Console) -> str | None:
     elif cmd in ("/exit", "/quit"):
         return "exit"
     else:
-        print_error(console, f"Unknown command: {cmd}  [dim]— /help lists commands[/dim]")
+        print_error(
+            console, f"Unknown command: {cmd}  [dim]— /help lists commands[/dim]"
+        )
     return None
 
 
@@ -67,11 +69,16 @@ def _cmd_help(console: Console) -> None:
     console.print()
     width = max(len(name) for name, _ in COMMANDS)
     for name, desc in COMMANDS:
-        console.print(f"  [bold #ff8c00]{name.ljust(width)}[/bold #ff8c00]  [dim]{desc}[/dim]")
+        padded = name.ljust(width)
+        console.print(f"  [bold {ACCENT}]{padded}[/bold {ACCENT}]  [dim]{desc}[/dim]")
     console.print()
-    console.print("  [dim]Type [/dim][bold]/[/bold][dim] to browse commands with descriptions,"
-                  " Tab to complete.[/dim]")
-    console.print("  [dim]Enter runs a task · Ctrl+J inserts a newline · Ctrl+C quits.[/dim]")
+    console.print(
+        "  [dim]Type [/dim][bold]/[/bold][dim] to browse commands with descriptions,"
+        " Tab to complete.[/dim]"
+    )
+    console.print(
+        "  [dim]Enter runs a task · Ctrl+J inserts a newline · Ctrl+C quits.[/dim]"
+    )
     console.print()
 
 
@@ -118,7 +125,8 @@ def _list_models(state: CliState, console: Console) -> None:
         for m in models_for_provider(provider):
             rec    = " [dim]★ recommended[/dim]" if m.recommended else ""
             spec   = f"{provider}:{m.model_id}"
-            active = "[green]●[/green]" if spec in state.selected_models else "[dim]○[/dim]"
+            selected = spec in state.selected_models
+            active = "[green]●[/green]" if selected else "[dim]○[/dim]"
             if has_key:
                 console.print(f"    {active} {spec}{rec}")
             else:
@@ -137,10 +145,9 @@ def _cmd_max_agents(args: list[str], state: CliState, console: Console) -> None:
     except ValueError:
         print_error(console, "/max-agents requires a positive integer.")
         return
-    if n < len(state.selected_models):
-        print_error(
-            console, f"{n} < number of selected models ({len(state.selected_models)})."
-        )
+    n_models = len(state.selected_models)
+    if n < n_models:
+        print_error(console, f"{n} < number of selected models ({n_models}).")
         return
     state.max_agents = n
     print_ok(console, f"Max agents: {n}")
@@ -196,7 +203,8 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
     if not state.api_keys.get(model_info.api_key_env, "").strip():
         print_error(
             console,
-            f"No API key for {model_info.provider} — run [bold]/apikey[/bold] to add one.",
+            f"No API key for {model_info.provider} — "
+            "run [bold]/apikey[/bold] to add one.",
         )
         return
 
@@ -222,7 +230,8 @@ def _list_planner_models(state: CliState, console: Console) -> None:
             + ("" if has_key else " [dim]— no API key[/dim]")
         )
         for m in models_for_provider(provider):
-            active  = "[green]●[/green]" if m.model_id == state.planner_model else "[dim]○[/dim]"
+            is_planner = m.model_id == state.planner_model
+            active  = "[green]●[/green]" if is_planner else "[dim]○[/dim]"
             warning = "  [yellow]⚠ not recommended[/yellow]" if not m.planner_ok else ""
             if has_key:
                 console.print(f"    {active} {m.model_id}{warning}")
@@ -246,7 +255,8 @@ def _cmd_no_review(args: list[str], state: CliState, console: Console) -> None:
     if state.no_review:
         print_warn(
             console,
-            "Approval off — plans run immediately. [dim]/no-review false re-enables.[/dim]",
+            "Approval off — plans run immediately."
+            " [dim]/no-review false re-enables.[/dim]",
         )
     else:
         print_ok(console, "Approval on — MAK shows the plan and waits before running.")

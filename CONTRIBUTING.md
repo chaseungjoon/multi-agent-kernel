@@ -1199,21 +1199,30 @@ python -m cli
 
 ### UX design
 
-- **Logo** — `doom` pyfiglet font, "Multi Agent" + "Kernel" side-by-side, orange
-  `#ff8c00`, 8 lines tall. Rendered once on startup.
-- **Status capsule** — a `HEAVY`-boxed Rich `Panel` with models, agents, workdir,
-  planner model, and approval mode. Re-prints only when a slash command mutates
-  state — never on every keypress.
-- **Hints** — boxed `ROUNDED` `Panel` per command between two `Rule` dividers on
-  startup. Tab-completion and inline auto-suggest powered by `MakCompleter`.
+The layout is benchmarked against Claude Code / Codex CLI: one accent color
+(purple `#bd93f9`, the `ACCENT` constant in `cli/ui.py`), everything else default
+or dim, flat indented lists instead of nested panels, and no startup command
+dumps.
+
+- **Welcome box** — a single compact `ROUNDED` panel on startup: name, version
+  (from `mak/_version.py`), tagline, `/help` / `/status` pointers, and cwd.
+- **Bottom toolbar** — live session state (models, planner, agents, workdir,
+  approval, session tokens) rendered under the prompt on every keystroke via
+  `PromptSession(bottom_toolbar=...)`. Because state is always visible there,
+  slash commands print only a one-line `✓`/`⚠`/`✗` confirmation.
+- **Slash menu** — typing `/` immediately pops the completion menu listing every
+  command with a one-line description (`complete_while_typing=True` +
+  `MakCompleter`); typing filters, Tab/Enter completes. Inline auto-suggest from
+  history. Ctrl+J inserts a newline for multi-line tasks.
 - **Task flow** — on any non-slash input: (1) capture the pre-task HEAD hash,
   (2) reset the token counter, (3) build + initialize a MAK session, (4) plan with
-  a spinner, (5) show the plan with wave/dependency graph, (6) optionally wait for
-  human approval, (7) run agents with a `rich.progress` bar, (8) show results,
-  (9) show a per-file git-stat-style diff of every change since the pre-task hash.
+  a spinner, (5) show the plan as a flat wave list (accent `●` bullets with inline
+  `target · agent · after` metadata), (6) optionally wait for human approval,
+  (7) run agents with a `rich.progress` bar, (8) show results, (9) show a per-file
+  git-stat-style diff of every change since the pre-task hash.
 - **Git diff** — `get_git_diff(work_dir, pre_hash)` diffs `{pre_hash}..HEAD`,
   covering all commits MAK made during the task (not just the last one). Displayed
-  as `+N -N` bars per file in a `ROUNDED` panel.
+  as `+N -N` bars per file under a dim `changes` label.
 - **Token counting** — `install_token_counter()` patches
   `anthropic.resources.messages.Messages.create` at the class level once at startup
   so every Anthropic call (planner + all agents) is counted. On Ctrl+C/EOF the
@@ -1230,11 +1239,18 @@ python -m cli
 | `/apikey` | Add or update API keys interactively |
 | `/config [path]` | Reset to `mak/config.yaml` or load a custom config file |
 | `/no-review [true\|false]` | Toggle human approval before task execution |
+| `/status` | Print the full session settings |
+| `/help` | List commands and keyboard shortcuts |
+| `/clear` | Clear the screen and reprint the welcome box |
+| `/exit`, `/quit` | Quit MAK (Ctrl+C / Ctrl+D also work) |
 
-**Adding a new slash command:** add a handler in `commands.py` (call
-`print_status_capsule(console, state)` if it mutates state), register it in
-`handle_command()`, add tab-completion cases in `completer.py`, and add a hint
-tuple to `_HINTS` in `ui.py`.
+**Adding a new slash command:** add a handler in `commands.py` (print a one-line
+`print_ok`/`print_warn`/`print_error` confirmation if it mutates state — the
+bottom toolbar shows live state automatically), register it in
+`handle_command()`, add its entry to `COMMANDS` in `completer.py` (that single
+list drives both the `/` menu and `/help`), and add argument completions in
+`MakCompleter` if it takes arguments. Return `"exit"` or `"clear"` from
+`handle_command()` for commands the main loop must act on.
 
 ### Session-only configuration (design constraint)
 
@@ -1268,9 +1284,8 @@ find them via their `api_key_env` fields.
 
 ### Dependencies added by `cli/`
 
-- `prompt_toolkit` — REPL input, history, tab-completion, auto-suggest
-- `rich` — all terminal rendering (panels, rules, progress bars, spinners)
-- `pyfiglet` — ASCII logo (`doom` font)
+- `prompt_toolkit` — REPL input, history, slash menu, auto-suggest, bottom toolbar
+- `rich` — all terminal rendering (welcome box, plan list, progress bars, spinners)
 
 ---
 
@@ -1313,7 +1328,7 @@ cli/                       # interactive CLI app (prompt_toolkit + rich)
 ├── completer.py           # MakCompleter: tab-completion for all slash commands
 ├── runner.py              # MAK library bridge + token counter + git diff helpers
 ├── setup.py               # first-run API key setup wizard
-├── ui.py                  # all Rich rendering (logo, status capsule, plan panels, diff)
+├── ui.py                  # all Rich rendering (welcome box, status, plan list, diff)
 └── core/
     ├── api_keys.py        # load/save API keys from mak/.env
     ├── models.py          # provider registry (display names, recommended models)

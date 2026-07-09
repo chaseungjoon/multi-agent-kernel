@@ -18,7 +18,7 @@ from rich.text import Text
 from cli.core.state import CliState
 from mak._version import __version_display__
 
-ACCENT = "#ff8c00"
+ACCENT = "#bd93f9"
 DIM = "#6e7681"
 
 _TAGLINE = "A kernel for concurrent multi-agent software development"
@@ -40,7 +40,9 @@ def print_banner(console: Console, state: CliState) -> None:
     body.append(" for session info", style="dim")
     body.append(f"\n\n  cwd: {state.work_dir_display()}", style="dim")
     console.print()
-    console.print(Panel(body, border_style=ACCENT, box=ROUNDED, padding=(0, 1), expand=False))
+    console.print(
+        Panel(body, border_style=ACCENT, box=ROUNDED, padding=(0, 1), expand=False)
+    )
     console.print()
 
 

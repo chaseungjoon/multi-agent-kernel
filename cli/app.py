@@ -240,7 +240,9 @@ class MakCli:
         state = self.state
         fragments: list[tuple[str, str]] = [("class:bottom-toolbar", "  ")]
 
-        def item(label: str, value: str, style: str = "class:bottom-toolbar.value") -> None:
+        def item(
+            label: str, value: str, style: str = "class:bottom-toolbar.value"
+        ) -> None:
             if len(fragments) > 1:
                 fragments.append(("class:bottom-toolbar", "  ·  "))
             fragments.append(("class:bottom-toolbar", f"{label} "))
@@ -250,11 +252,11 @@ class MakCli:
         item("planner", state.planner_model)
         item("agents", str(state.max_agents))
         item("dir", state.work_dir_display())
-        item(
-            "approval",
-            "off" if state.no_review else "on",
-            "class:bottom-toolbar.accent" if state.no_review else "class:bottom-toolbar.value",
+        approval_style = (
+            "class:bottom-toolbar.accent" if state.no_review
+            else "class:bottom-toolbar.value"
         )
+        item("approval", "off" if state.no_review else "on", approval_style)
         if self._session_tokens:
             item("tokens", f"{self._session_tokens:,}")
         return FormattedText(fragments)

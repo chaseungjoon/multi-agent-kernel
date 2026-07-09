@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.2.1 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.3.0 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -84,6 +84,8 @@ pip install -e .
 
 **Features**
 
+* Type `/` to browse all commands with one-line descriptions; Tab completes. `/help` lists commands and shortcuts.
+* Live session status (models, planner, agents, workdir, approval, tokens) in a toolbar under the prompt — `/status` prints the full detail.
 * Set api keys of providers with `/apikey` command.
 * Set working directory with `/work-dir <path>`
 * Set models with `/models <provider-1>:<model> <provider-2>:<model> ... `
@@ -91,6 +93,7 @@ pip install -e .
 * Set number of agents with `/max-agents <int>`
 * Use default config or point to a custom config path with `/config` or `/config /path/to/config`
 * Omit user review of planner with `/no-review true` (default false, not recommended to turn on)
+* `/clear` clears the screen, `/exit` (or `/quit`, Ctrl+C) quits, Ctrl+J inserts a newline for multi-line tasks.
 
 ---
 

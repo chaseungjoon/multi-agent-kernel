@@ -77,8 +77,8 @@ def run_setup(state: CliState, console: Console, *, editing: bool = False) -> bo
         state.planner_model = rec
         print_ok(
             console,
-            f"Planner: [bold]{rec}[/bold] "
-            f"[dim](auto-selected — only {PROVIDER_DISPLAY[available[0]]} key set)[/dim]",
+            f"Planner: [bold]{rec}[/bold] [dim](auto-selected — only "
+            f"{PROVIDER_DISPLAY[available[0]]} key set)[/dim]",
         )
     else:
         _select_planner(state, console, available)
@@ -141,4 +141,6 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
                 return
         except ValueError:
             pass
-        console.print(f"  [red]Please enter a number between 1 and {len(options)}.[/red]")
+        console.print(
+            f"  [red]Please enter a number between 1 and {len(options)}.[/red]"
+        )
