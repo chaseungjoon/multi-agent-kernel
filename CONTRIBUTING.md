@@ -1097,6 +1097,12 @@ Rules and behaviors:
   picks the first of: `./mak.yaml`, `~/.config/mak/config.yaml` (respects
   `$XDG_CONFIG_HOME`), then the packaged default `mak/config.yaml`. This is what
   lets an installed MAK (`uv tool install` / `pipx`) run without a checkout.
+- **Model caveats** — `model_caveat(model_id)` returns a warning string for
+  models that work with MAK but carry footguns (currently `claude-fable-5`:
+  30-day data-retention requirement, `refusal` stop reasons, premium pricing).
+  Every surface where a model is chosen prints it: the TUI's `/models`,
+  `/planner`, and setup wizard, and `mak run` (`warn_model_caveats` in
+  `mak/__main__.py`, once per distinct caveat on stderr).
 - Type coercion is strict and wrapped in `ConfigError` (e.g. `"false"` parses to
   `False`, not Python's truthy `bool("false")`).
 

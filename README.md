@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.3.1 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.3.2 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -174,6 +174,12 @@ mak run --task "your task" --work-dir /path/to/project \
 ```
 
 **[Default models list for each provider](mak/config.yaml)**
+
+> **Note on `claude-fable-5`:** MAK supports Anthropic's most capable model, but it
+> comes with caveats — it requires an org with **30-day data retention** (zero-data-retention
+> orgs get a 400 on every request), it can decline requests with a `refusal` stop reason
+> (which MAK treats as a failed task), and it is priced above Opus tier ($10/$50 per MTok).
+> MAK prints this warning whenever you select it as a planner or agent model.
 
 
 ## Configuration & API Keys
