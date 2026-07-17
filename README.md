@@ -130,11 +130,11 @@ agents you actually run.
 > ***⚠️ Just to be safe, create a separate branch for MAK to work on***
 
 ```bash
-# Example with claude 4.8, gpt 5.5 and gemini 3 pro
+# Example with claude opus 4.8, gpt-5.6 sol and gemini 3.5 flash
 mak run --task "your task" --work-dir /path/to/project \
-  --models anthropic:claude-opus-4-8 openai:gpt-5.5 gemini:gemini-3-pro
+  --models anthropic:claude-opus-4-8 openai:gpt-5.6-sol gemini:gemini-3.5-flash
 
-# Example with claude 4.6 X 5
+# Example with claude sonnet 5 X 5 (provider default model)
 mak run --task "your task" --work-dir /path/to/project \
   --models anthropic --max-agents 5
 ```
@@ -157,12 +157,12 @@ mak run --task "your task" --work-dir /path/to/project \
 
 # Set model
 --models anthropic:claude-opus-4-8
---models openai:gpt-5.4
---models gemini:gemini-3-pro
+--models openai:gpt-5.6-terra
+--models gemini:gemini-3.1-pro-preview
 
 # Use multiple providers
 --models anthropic openai gemini
---models anthropic:claude-opus-4-8 openai:gpt-5.5 gemini:gemini-3-pro
+--models anthropic:claude-opus-4-8 openai:gpt-5.6-sol gemini:gemini-3.5-flash
 
 # Use single provider with multiple agents
 --models anthropic --max-agents 5 

@@ -1057,21 +1057,21 @@ session:
   deadlock_check_interval_s: 5.0
 
 planner:
-  model: "claude-sonnet-4-6"
+  model: "claude-sonnet-5"
   max_retries: 3
   temperature: 0.0
 
 agents:                         # first entry is the default agent
   - type: "anthropic_api"
-    model: "claude-sonnet-4-6"
+    model: "claude-sonnet-5"
     api_key_env: "ANTHROPIC_API_KEY"
     max_instances: 2
     timeout: 300
   - type: "openai_api"
-    model: "gpt-4o"
+    model: "gpt-5.6-sol"
     api_key_env: "OPENAI_API_KEY"
   - type: "gemini_api"
-    model: "gemini-3-pro"
+    model: "gemini-3.5-flash"
     api_key_env: "GEMINI_API_KEY"
 
 git:
@@ -1152,9 +1152,9 @@ required** — because `main` rewrites the loaded `MakConfig` (a frozen dataclas
 
   | Provider (CLI) | Adapter `type` | Key env var | Default model (adapter) |
   |---|---|---|---|
-  | `anthropic` | `anthropic_api` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
-  | `openai` | `openai_api` | `OPENAI_API_KEY` | `gpt-4o` |
-  | `gemini` (alias `google`) | `gemini_api` | `GEMINI_API_KEY` | `gemini-3-pro` |
+  | `anthropic` | `anthropic_api` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
+  | `openai` | `openai_api` | `OPENAI_API_KEY` | `gpt-5.6-sol` |
+  | `gemini` (alias `google`) | `gemini_api` | `GEMINI_API_KEY` | `gemini-3.5-flash` |
 
   With no `:model`, `AgentConfig.model` is left `None` and the adapter's built-in
   default applies. **These three providers are MAK's entire hosted-model surface**
@@ -1180,7 +1180,7 @@ Examples:
 ```bash
 # Three providers, explicit models, default concurrency from config:
 python -m mak --task "..." --work-dir ./proj \
-  --models anthropic:claude-opus-4-8 openai:gpt-5.5 gemini:gemini-3-pro
+  --models anthropic:claude-opus-4-8 openai:gpt-5.6-sol gemini:gemini-3.5-flash
 
 # One provider, five concurrent workers:
 python -m mak --task "..." --work-dir ./proj --models anthropic --max-agents 5
