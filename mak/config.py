@@ -89,7 +89,7 @@ class SessionConfig:
 class PlannerConfig:
     """Planner model configuration."""
 
-    model: str = "claude-sonnet-4-6"
+    model: str = "claude-sonnet-5"
     max_retries: int = 3
     temperature: float = 0.0
 
@@ -152,7 +152,7 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
 
 def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
     return PlannerConfig(
-        model=str(raw.get("model", "claude-sonnet-4-6")),
+        model=str(raw.get("model", "claude-sonnet-5")),
         max_retries=_as_int(raw, "max_retries", 3),
         temperature=_as_float(raw, "temperature", 0.0),
     )

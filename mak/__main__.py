@@ -117,8 +117,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "set the agent roster from the command line, overriding the config's "
             "'agents' list. Each entry is a provider (anthropic, openai, gemini) "
             "with an optional model, e.g. --models anthropic:claude-opus-4-8 "
-            "openai gemini:gemini-3-pro. One model per provider; keys are read from "
-            "the usual env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY)."
+            "openai gemini:gemini-3.5-flash. One model per provider; keys are read "
+            "from the usual env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, "
+            "GEMINI_API_KEY)."
         ),
     )
     parser.add_argument(

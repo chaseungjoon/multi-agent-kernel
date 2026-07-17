@@ -77,7 +77,7 @@ class TestSend:
         adapter.send("{}")
         (call,) = client.models.calls
         cfg = call["config"]
-        assert call["model"] == "gemini-3-pro"
+        assert call["model"] == "gemini-3.5-flash"
         fcc = cfg["tool_config"]["function_calling_config"]
         assert fcc["mode"] == "ANY"
         assert fcc["allowed_function_names"] == ["submit_task_result"]

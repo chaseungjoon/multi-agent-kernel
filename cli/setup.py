@@ -38,9 +38,9 @@ def run_setup(state: CliState, console: Console, *, editing: bool = False) -> bo
     console.print()
 
     provider_meta = [
-        ("ANTHROPIC_API_KEY", "Anthropic", "claude-sonnet-4-6 recommended"),
-        ("OPENAI_API_KEY",    "OpenAI", "gpt-4o"),
-        ("GEMINI_API_KEY",    "Google Gemini", "gemini-2.0-flash"),
+        ("ANTHROPIC_API_KEY", "Anthropic", "claude-sonnet-5 recommended"),
+        ("OPENAI_API_KEY",    "OpenAI", "gpt-5.6-sol"),
+        ("GEMINI_API_KEY",    "Google Gemini", "gemini-3.5-flash"),
     ]
 
     for env_name, label, hint in provider_meta:
@@ -103,7 +103,7 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
     console.print()
     console.print(
         "  [dim]The planner decomposes your task into parallel sub-tasks.\n"
-        "  Recommended: Anthropic · claude-sonnet-4-6 or higher.[/dim]"
+        "  Recommended: claude-sonnet-4-6-class capability or higher.[/dim]"
     )
     console.print()
 
@@ -112,8 +112,13 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
         if provider not in available:
             continue
         for m in models_for_provider(provider):
-            rec_tag = "  [dim]★ recommended[/dim]" if m.recommended else ""
-            display = f"{PROVIDER_DISPLAY[provider]} · {m.display_name}{rec_tag}"
+            # Planner bar: sonnet-4-6-class capability and up is recommended;
+            # anything below gets an explicit warning.
+            tag = (
+                "  [dim]★ recommended[/dim]" if m.planner_ok
+                else "  [yellow]⚠ not recommended[/yellow]"
+            )
+            display = f"{PROVIDER_DISPLAY[provider]} · {m.display_name}{tag}"
             options.append((f"{provider}:{m.model_id}", display))
 
     for i, (_spec, display) in enumerate(options, 1):

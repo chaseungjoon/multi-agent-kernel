@@ -10,12 +10,12 @@ session:
   deadlock_check_interval_s: 5.0
 
 planner:
-  model: "claude-sonnet-4-6"
+  model: "claude-sonnet-5"
   max_retries: 3
 
 agents:
   - type: "anthropic_api"
-    model: "claude-sonnet-4-6"
+    model: "claude-sonnet-5"
     api_key_env: "ANTHROPIC_API_KEY"
 
 git:

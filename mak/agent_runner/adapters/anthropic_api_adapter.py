@@ -26,7 +26,7 @@ from mak.agent_runner.protocol import (
 from mak.core.exceptions import AgentError
 from mak.core.types import TaskBundle, TaskResult
 
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+_DEFAULT_MODEL = "claude-sonnet-5"
 # A node's whole new source travels back in one structured response; a truncated
 # reply is unparseable and fails the task, so give generation real headroom.
 _DEFAULT_MAX_TOKENS = 8192

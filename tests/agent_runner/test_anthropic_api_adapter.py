@@ -72,7 +72,7 @@ class TestSend:
         adapter.send("{}")
         (call,) = client.messages.calls
         assert call["tool_choice"] == {"type": "tool", "name": "submit_task_result"}
-        assert call["model"] == "claude-sonnet-4-6"
+        assert call["model"] == "claude-sonnet-5"
         assert call["tools"][0]["name"] == "submit_task_result"
 
     def test_send_extracts_tool_payload(self) -> None:

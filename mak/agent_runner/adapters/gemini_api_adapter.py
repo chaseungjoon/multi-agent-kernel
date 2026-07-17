@@ -35,7 +35,7 @@ from mak.agent_runner.protocol import (
 from mak.core.exceptions import AgentError
 from mak.core.types import TaskBundle, TaskResult
 
-_DEFAULT_MODEL = "gemini-3-pro"
+_DEFAULT_MODEL = "gemini-3.5-flash"
 _RESULT_FN_NAME = "submit_task_result"
 
 # Gemini function declaration. Schema is the OpenAPI subset Gemini accepts:

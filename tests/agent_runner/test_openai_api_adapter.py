@@ -62,7 +62,7 @@ class TestSend:
         adapter.send("{}")
         (call,) = client.chat.completions.calls
         assert call["response_format"] == {"type": "json_object"}
-        assert call["model"] == "gpt-4o"
+        assert call["model"] == "gpt-5.6-sol"
 
     def test_send_normalizes_payload(self) -> None:
         adapter, _ = _adapter(

@@ -23,7 +23,7 @@ from mak.agent_runner.protocol import (
 from mak.core.exceptions import AgentError
 from mak.core.types import TaskBundle, TaskResult
 
-_DEFAULT_MODEL = "gpt-4o"
+_DEFAULT_MODEL = "gpt-5.6-sol"
 
 _SYSTEM_PROMPT = (
     "You are a MAK coding agent. You receive a single task as a JSON 'task "

@@ -235,10 +235,13 @@ def _list_planner_models(state: CliState, console: Console) -> None:
         )
         for m in models_for_provider(provider):
             is_planner = m.model_id == state.planner_model
-            active  = "[green]●[/green]" if is_planner else "[dim]○[/dim]"
-            warning = "  [yellow]⚠ not recommended[/yellow]" if not m.planner_ok else ""
+            active = "[green]●[/green]" if is_planner else "[dim]○[/dim]"
+            tag = (
+                " [dim]★ recommended[/dim]" if m.planner_ok
+                else "  [yellow]⚠ not recommended[/yellow]"
+            )
             if has_key:
-                console.print(f"    {active} {m.model_id}{warning}")
+                console.print(f"    {active} {m.model_id}{tag}")
             else:
                 console.print(f"    [dim]○ {m.model_id}[/dim]")
     console.print()
