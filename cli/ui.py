@@ -34,7 +34,7 @@ def print_banner(console: Console, state: CliState) -> None:
     body.append(f"v{__version_display__.lower()}", style="dim")
     body.append(f"\n\n  {_TAGLINE}", style="dim")
     body.append("\n  ", style="")
-    body.append("Run ")
+    body.append("Run ", style="dim")
     body.append("mak update", style="")
     body.append("in the shell to update", style="dim")
     body.append("\n\n  ", style="")
