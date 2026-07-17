@@ -36,7 +36,7 @@ def print_banner(console: Console, state: CliState) -> None:
     body.append("\n  ", style="")
     body.append("Run ", style="dim")
     body.append("mak update", style="")
-    body.append("in the shell to update", style="dim")
+    body.append(" in the shell to update", style="dim")
     body.append("\n\n  ", style="")
     body.append("/help", style=ACCENT)
     body.append(" for commands · ", style="dim")
