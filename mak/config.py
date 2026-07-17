@@ -1,7 +1,8 @@
-"""Configuration loading and validation for MAK."""
+"""Configuration loading, discovery, and validation for MAK."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -172,6 +173,41 @@ def _parse_node_store(raw: dict[str, Any]) -> NodeStoreConfig:
         include_patterns=tuple(str(p) for p in include),
         exclude_patterns=tuple(str(p) for p in exclude),
     )
+
+
+def user_config_dir() -> Path:
+    """Return MAK's per-user config directory (respects ``XDG_CONFIG_HOME``).
+
+    This is where an installed MAK looks for user-level state: a custom
+    ``config.yaml`` and the ``.env`` file holding API keys.
+    """
+    base = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    root = Path(base).expanduser() if base else Path.home() / ".config"
+    return root / "mak"
+
+
+def packaged_config_path() -> Path:
+    """Return the default ``config.yaml`` shipped inside the ``mak`` package."""
+    return Path(__file__).resolve().parent / "config.yaml"
+
+
+def discover_config_path() -> Path:
+    """Return the config file to use when none is given explicitly.
+
+    Discovery order:
+
+    1. ``./mak.yaml`` — a per-project config in the current directory.
+    2. ``<user config dir>/config.yaml`` — e.g. ``~/.config/mak/config.yaml``.
+    3. The packaged default (``mak/config.yaml`` inside the installed package;
+       in a source checkout this is the repo's ``mak/config.yaml``).
+    """
+    project_config = Path("mak.yaml")
+    if project_config.is_file():
+        return project_config
+    user_config = user_config_dir() / "config.yaml"
+    if user_config.is_file():
+        return user_config
+    return packaged_config_path()
 
 
 def load_config(path: Path | str) -> MakConfig:

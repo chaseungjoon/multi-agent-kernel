@@ -31,7 +31,12 @@ from mak.bootstrap import (
     default_agent_type,
     validate_config,
 )
-from mak.config import MakConfig, load_config
+from mak.config import (
+    MakConfig,
+    discover_config_path,
+    load_config,
+    user_config_dir,
+)
 from mak.core.exceptions import (
     ConfigError,
     MakError,
@@ -52,15 +57,7 @@ SessionBuilder = Callable[
 ]
 
 
-def load_env_file(path: Path | None = None) -> None:
-    """Load ``mak/.env`` (``KEY=VALUE`` lines) into the environment, if present.
-
-    No external dependency. Already-exported variables win (``setdefault``), so an
-    explicit ``export`` overrides the file. This makes the documented convention —
-    put provider keys in ``mak/.env`` — actually take effect; the agent adapters
-    read those keys from the environment at composition time.
-    """
-    env_path = path or Path(__file__).resolve().parent / ".env"
+def _load_one_env_file(env_path: Path) -> None:
     if not env_path.exists():
         return
     for raw in env_path.read_text(encoding="utf-8").splitlines():
@@ -69,6 +66,24 @@ def load_env_file(path: Path | None = None) -> None:
             continue
         key, _, value = line.partition("=")
         os.environ.setdefault(key.strip(), value.strip())
+
+
+def load_env_file(path: Path | None = None) -> None:
+    """Load MAK ``.env`` files (``KEY=VALUE`` lines) into the environment.
+
+    No external dependency. Already-exported variables win (``setdefault``), so an
+    explicit ``export`` overrides any file. With an explicit ``path`` only that
+    file is read; otherwise two locations are tried, earlier ones winning:
+
+    1. ``<user config dir>/.env`` (e.g. ``~/.config/mak/.env``) — where an
+       installed MAK's ``/apikey`` setup stores keys.
+    2. ``mak/.env`` next to this module — the legacy source-checkout location.
+    """
+    if path is not None:
+        _load_one_env_file(path)
+        return
+    _load_one_env_file(user_config_dir() / ".env")
+    _load_one_env_file(Path(__file__).resolve().parent / ".env")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -82,8 +97,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--config",
-        default="mak/config.yaml",
-        help="path to the MAK config YAML (default: mak/config.yaml)",
+        default=None,
+        help=(
+            "path to the MAK config YAML (default: auto-discover ./mak.yaml, "
+            "then ~/.config/mak/config.yaml, then the built-in default)"
+        ),
     )
     parser.add_argument(
         "--work-dir",
@@ -212,7 +230,7 @@ def main(
     )
 
     try:
-        config = load_config(args.config)
+        config = load_config(args.config or discover_config_path())
         if args.work_dir is not None:
             config = replace(
                 config, session=replace(config.session, work_dir=args.work_dir)

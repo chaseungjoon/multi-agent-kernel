@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# MAK TUI launcher
-# Resolves the project root and runs the TUI via the venv interpreter so the
-# user does not need to activate the virtual environment manually.
+# MAK TUI launcher for source checkouts.
+# Resolves the project root relative to this script and runs the TUI via the
+# repo venv, so the user does not need to activate it manually. Installed users
+# don't need this file — `uv tool install` / `pipx` put a real `mak` on PATH.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="/Users/chaseungjun/everything/Code/multi-agent-kernel"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 VENV_PYTHON="$ROOT/.venv/bin/python"
 if [[ ! -x "$VENV_PYTHON" ]]; then
     echo "error: venv not found at $ROOT/.venv" >&2
     echo "       Run: python3 -m venv .venv && .venv/bin/pip install -e ." >&2
+    echo "       (or install without cloning: uv tool install git+https://github.com/chaseungjoon/multi-agent-kernel)" >&2
     exit 1
 fi
 
-# Run from the project root so mak/config.yaml and mak/.env resolve correctly.
+# Run from the project root so relative paths in the repo resolve correctly.
 cd "$ROOT"
 exec "$VENV_PYTHON" -m cli "$@"

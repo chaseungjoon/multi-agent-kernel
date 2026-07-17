@@ -95,9 +95,9 @@ def build_session(task: str, state: CliState) -> Any:
     """
     from mak.__main__ import build_session as _build_session, load_env_file
     from mak.bootstrap import validate_config
-    from mak.config import load_config
+    from mak.config import discover_config_path, load_config
 
-    load_env_file(Path("mak/.env") if Path("mak/.env").exists() else None)
+    load_env_file()  # ~/.config/mak/.env, then legacy mak/.env; exports win
 
     # Inject API keys into env so MAK adapters find them.
     import os
@@ -105,7 +105,7 @@ def build_session(task: str, state: CliState) -> Any:
         if value:
             os.environ[name] = value
 
-    config = load_config(state.config_path)
+    config = load_config(state.config_path or discover_config_path())
     config = _apply_state_to_config(config, state)
     validate_config(config)
 

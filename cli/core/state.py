@@ -12,8 +12,14 @@ class CliState:
     max_agents: int = 3
     work_dir: str = "."
     planner_model: str = "claude-sonnet-4-6"
-    config_path: str = "mak/config.yaml"
+    # Empty string = auto-discover (./mak.yaml → ~/.config/mak/config.yaml →
+    # the packaged default); a non-empty value is an explicit file from /config.
+    config_path: str = ""
     no_review: bool = False
+
+    def config_display(self) -> str:
+        """Return the config path for status displays ('auto' = discovery)."""
+        return self.config_path or "auto"
 
     def models_display(self) -> str:
         return "  ".join(self.selected_models) if self.selected_models else "none"

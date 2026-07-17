@@ -22,7 +22,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/max-agents", "Set how many agents run in parallel"),
     ("/work-dir",   "Set the working directory MAK edits"),
     ("/apikey",     "Add or update provider API keys"),
-    ("/config",     "Load a config YAML (no arg: default)"),
+    ("/config",     "Load a config YAML (no arg: auto-discover)"),
     ("/no-review",  "Toggle plan approval before running"),
     ("/status",     "Show current session settings"),
     ("/help",       "Show commands and shortcuts"),

@@ -172,8 +172,12 @@ def _cmd_apikey(state: CliState, console: Console) -> None:
 
 def _cmd_config(args: list[str], state: CliState, console: Console) -> None:
     if not args:
-        state.config_path = "mak/config.yaml"
-        print_ok(console, "Config reset to mak/config.yaml")
+        state.config_path = ""
+        print_ok(
+            console,
+            "Config: auto  [dim]— ./mak.yaml → ~/.config/mak/config.yaml → "
+            "built-in default[/dim]",
+        )
     else:
         p = Path(args[0]).expanduser().resolve()
         if not p.exists():

@@ -54,7 +54,7 @@ def print_status(console: Console, state: CliState) -> None:
         ("planner", state.planner_model),
         ("agents", str(state.max_agents)),
         ("workdir", state.work_dir_display()),
-        ("config", state.config_path),
+        ("config", state.config_display()),
         ("approval", "off — plans run immediately" if state.no_review else "on"),
     ]
     console.print()
