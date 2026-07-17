@@ -1088,9 +1088,15 @@ Rules and behaviors:
 - `agents` is **required** and must be non-empty; each entry needs a `type`. Per-agent
   fields `model`, `api_key_env`, and `cmd` are all optional.
 - **API keys are never stored in config** — `api_key_env` names the environment
-  variable to read at composition time. Put real keys in `mak/.env` (gitignored),
-  which the CLI auto-loads at startup (`load_env_file`, §12); `mak/.env.example` lists
-  the expected variable names. Exported environment variables take precedence.
+  variable to read at composition time. Put real keys in `~/.config/mak/.env`
+  (written by the TUI's `/apikey` setup) or, in a source checkout, the legacy
+  `mak/.env` (gitignored); both are auto-loaded at startup (`load_env_file`, §12)
+  and `mak/.env.example` lists the expected variable names. Exported environment
+  variables take precedence.
+- **Config discovery** — when `--config` is omitted, `discover_config_path()`
+  picks the first of: `./mak.yaml`, `~/.config/mak/config.yaml` (respects
+  `$XDG_CONFIG_HOME`), then the packaged default `mak/config.yaml`. This is what
+  lets an installed MAK (`uv tool install` / `pipx`) run without a checkout.
 - Type coercion is strict and wrapped in `ConfigError` (e.g. `"false"` parses to
   `False`, not Python's truthy `bool("false")`).
 
@@ -1099,13 +1105,14 @@ Rules and behaviors:
 `mak/__main__.py` is the entry point: `python -m mak --task "..."`. It is a thin
 shell over the composition root, split into testable functions:
 
-- `load_env_file(path=None)` — loads `mak/.env` (`KEY=VALUE` lines, package-relative
-  by default) into `os.environ` via `setdefault`, so the **documented key convention
-  actually takes effect** and an explicitly `export`ed variable still wins. Called
-  first in `main`; the agent/planner adapters then read keys from the environment at
-  composition time. No `python-dotenv` dependency — it's a dozen lines.
-- `parse_args(argv)` — flags: `--task` (required), `--config` (default
-  `mak/config.yaml`), `--work-dir`, `--models` (roster override, see below),
+- `load_env_file(path=None)` — loads `~/.config/mak/.env`, then the legacy
+  package-relative `mak/.env` (`KEY=VALUE` lines) into `os.environ` via
+  `setdefault`, so the **documented key convention actually takes effect** and an
+  explicitly `export`ed variable still wins. Called first in `main`; the
+  agent/planner adapters then read keys from the environment at composition time.
+  No `python-dotenv` dependency — it's a dozen lines.
+- `parse_args(argv)` — flags: `--task` (required), `--config` (default: auto-discover
+  via `discover_config_path()`, §11), `--work-dir`, `--models` (roster override, see below),
   `--max-agents` (concurrency override), `--agent` (override the default agent type),
   `--no-review`, `--sandbox`, `-v/-vv`.
 - `build_session(args, config, sandbox)` — assembles the `Session` and all its
@@ -1237,7 +1244,7 @@ dumps.
 | `/max-agents N` | Set the concurrent-agents limit |
 | `/work-dir <path>` | Set MAK's working directory |
 | `/apikey` | Add or update API keys interactively |
-| `/config [path]` | Reset to `mak/config.yaml` or load a custom config file |
+| `/config [path]` | Load a custom config file; bare `/config` returns to auto-discovery (§11) |
 | `/no-review [true\|false]` | Toggle human approval before task execution |
 | `/status` | Print the full session settings |
 | `/help` | List commands and keyboard shortcuts |
@@ -1277,10 +1284,13 @@ If you add new CLI state fields that affect how MAK runs, apply them in
 
 ### API keys
 
-Keys are loaded from `mak/.env` (gitignored) by `cli/core/api_keys.py` and stored
-in `CliState.api_keys`. The first-run wizard (`cli/setup.py`) prompts and writes
-them. Keys are injected into `os.environ` before each MAK session so the adapters
-find them via their `api_key_env` fields.
+Keys are loaded by `cli/core/api_keys.py` — from `~/.config/mak/.env` (respects
+`$XDG_CONFIG_HOME`; created `0600` by the setup wizard), with a source-checkout's
+legacy `mak/.env` read at lower precedence and exported environment variables
+winning over both — and stored in `CliState.api_keys`. The first-run wizard
+(`cli/setup.py`) prompts and writes them to the user config dir. Keys are injected
+into `os.environ` before each MAK session so the adapters find them via their
+`api_key_env` fields.
 
 ### Dependencies added by `cli/`
 

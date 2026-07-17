@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.3.0 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.3.1 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -29,9 +29,11 @@ arbitrates shared memory between threads.
 ## Table of Contents
 
 - [The Idea](#the-idea)
+- [Install](#install)
 - [Run](#run)
   - [CLI App](#cli-app)
   - [CLI Command](#cli-command)
+- [Configuration & API Keys](#configuration--api-keys)
 - [Benchmark](#benchmark)
 - [Contribute](#contribute)
 - [License](#license)
@@ -59,25 +61,46 @@ reassembles the file.
 
 > Check out the [knowledge graph](https://mak-kg.vercel.app) for this project. (created with [graphify](https://github.com/safishamsi/graphify))
 
-## Run
+## Install
 
-> ⚠️ ***Currently, MAK only supports Python codebases***, there are plans to add other language support in the near future.
+**Python ≥ 3.11**
 
-### CLI App
+```bash
+# with uv (recommended)
+uv tool install git+https://github.com/chaseungjoon/multi-agent-kernel
 
-#### 1. Clone from source (Python ≥ 3.11)
+# or with pipx
+pipx install git+https://github.com/chaseungjoon/multi-agent-kernel
+```
+
+```bash
+mak --version
+```
+
+<details>
+<summary><b>From source</b> (for contributors)</summary>
 
 ```bash
 git clone https://github.com/chaseungjoon/multi-agent-kernel
 cd multi-agent-kernel
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
+
+./bin/mak
 ```
 
-#### 2. Run app from terminal
+</details>
+
+## Run
+
+> ⚠️ ***Currently, MAK only supports Python codebases***, there are plans to add other language support in the near future.
+
+### CLI App
+
+Launch the interactive app from any directory:
 
 ```bash
-./bin/mak
+mak
 ```
 
 ![](screenshots/mak-cli.png)
@@ -91,7 +114,7 @@ pip install -e .
 * Set models with `/models <provider-1>:<model> <provider-2>:<model> ... `
 * Set planner model with `/planner <provider>:<model>` 
 * Set number of agents with `/max-agents <int>`
-* Use default config or point to a custom config path with `/config` or `/config /path/to/config`
+* Point to a custom config with `/config /path/to/config.yaml` — bare `/config` returns to auto-discovery (see [Configuration & API Keys](#configuration--api-keys))
 * Omit user review of planner with `/no-review true` (default false, not recommended to turn on)
 * `/clear` clears the screen, `/exit` (or `/quit`, Ctrl+C) quits, Ctrl+J inserts a newline for multi-line tasks.
 
@@ -99,39 +122,20 @@ pip install -e .
 
 ### CLI Command
 
-
-#### 1. Clone from source (Python ≥ 3.11)
-
-```bash
-git clone https://github.com/chaseungjoon/multi-agent-kernel
-cd multi-agent-kernel
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-```
-
-#### 2. Set the API keys
-
-Currently, MAK drives hosted models from **three providers — Anthropic, OpenAI, and Google
-Gemini**. 
-
-Put the key(s) for the providers you'll use in `mak/.env`.
-You only need keys for the agents you actually run:
-
-```bash
-cp mak/.env.example mak/.env     # Fill in your keys 
-```
-
-#### 3. Choose the number and types of agents & Run
+For scripted / non-interactive runs, use `mak run` (equivalently `python3 -m mak`
+in a source checkout). Set your API keys first — see
+[Configuration & API Keys](#configuration--api-keys). You only need keys for the
+agents you actually run.
 
 > ***⚠️ Just to be safe, create a separate branch for MAK to work on***
 
 ```bash
 # Example with claude 4.8, gpt 5.5 and gemini 3 pro
-python3 -m mak --task "your task" --work-dir /path/to/project \
+mak run --task "your task" --work-dir /path/to/project \
   --models anthropic:claude-opus-4-8 openai:gpt-5.5 gemini:gemini-3-pro
 
 # Example with claude 4.6 X 5
-python3 -m mak --task "your task" --work-dir /path/to/project \
+mak run --task "your task" --work-dir /path/to/project \
   --models anthropic --max-agents 5
 ```
 
@@ -164,12 +168,31 @@ python3 -m mak --task "your task" --work-dir /path/to/project \
 --models anthropic --max-agents 5 
 --models anthropic:claude-opus-4-8 --max-agents 3
 
-# Choose a custom config file
+# Choose a custom config file (default: auto-discovered, see below)
 --config /path/to/config.yaml
 
 ```
 
 **[Default models list for each provider](mak/config.yaml)**
+
+
+## Configuration & API Keys
+
+**API keys.** MAK drives hosted models from **three providers — Anthropic, OpenAI,
+and Google Gemini**. Keys are read from the environment
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or from
+`~/.config/mak/.env` — the TUI's `/apikey` command (and its first-run setup)
+writes them there for you. Exported environment variables always win.
+In a source checkout, a legacy `mak/.env` is also read.
+
+**Config file.** When `--config` (or `/config`) is not given, MAK auto-discovers
+its configuration, first match wins:
+
+1. `./mak.yaml` — a per-project config in the current directory
+2. `~/.config/mak/config.yaml` (respects `$XDG_CONFIG_HOME`) — your user default
+3. The built-in default shipped with the package ([view it](mak/config.yaml))
+
+To customize, copy the built-in default to either location and edit it.
 
 
 ## Benchmark
