@@ -19,6 +19,7 @@ from cli.core.models import (
 )
 from cli.core.state import CliState
 from cli.ui import ACCENT, print_error, print_ok, print_status, print_warn
+from mak.config import model_caveat
 
 _KEY_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
@@ -112,6 +113,10 @@ def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
 
     state.selected_models = valid
     print_ok(console, f"Models: {', '.join(valid)}")
+    for spec in valid:
+        caveat = model_caveat(spec.partition(":")[2])
+        if caveat:
+            print_warn(console, caveat)
 
 
 def _list_models(state: CliState, console: Console) -> None:
@@ -220,6 +225,9 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
         )
     else:
         print_ok(console, f"Planner: {model_id}")
+    caveat = model_caveat(model_id)
+    if caveat:
+        print_warn(console, caveat)
 
 
 def _list_planner_models(state: CliState, console: Console) -> None:

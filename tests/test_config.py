@@ -13,6 +13,7 @@ from mak.config import (
     SessionConfig,
     discover_config_path,
     load_config,
+    model_caveat,
     packaged_config_path,
     user_config_dir,
 )
@@ -291,3 +292,15 @@ class TestConfigDiscovery:
     ) -> None:
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         assert user_config_dir() == Path.home() / ".config" / "mak"
+
+
+class TestModelCaveat:
+    def test_fable_returns_caveat(self) -> None:
+        caveat = model_caveat("claude-fable-5")
+        assert caveat is not None
+        assert "30-day data retention" in caveat
+        assert "refusal" in caveat
+
+    def test_ordinary_models_have_none(self) -> None:
+        for model in ("claude-sonnet-5", "gpt-5.6-sol", "gemini-3.5-flash", None, ""):
+            assert model_caveat(model) is None

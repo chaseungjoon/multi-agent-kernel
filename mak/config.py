@@ -175,6 +175,29 @@ def _parse_node_store(raw: dict[str, Any]) -> NodeStoreConfig:
     )
 
 
+# Models that work with MAK but carry caveats the user must know about before
+# a run burns tokens (or 400s). Checked wherever a model is chosen: the TUI's
+# /models, /planner, and setup wizard, and `mak run`'s config/--models path.
+_MODEL_CAVEATS: dict[str, str] = {
+    "claude-fable": (
+        "claude-fable-5 requires an org with 30-day data retention "
+        "(zero-data-retention orgs get a 400 on every request), can decline "
+        "requests with a 'refusal' stop reason — which MAK treats as a failed "
+        "task — and is priced above Opus tier ($10/$50 per MTok)."
+    ),
+}
+
+
+def model_caveat(model_id: str | None) -> str | None:
+    """Return the usage caveat for ``model_id``, or None if it has none."""
+    if not model_id:
+        return None
+    for prefix, caveat in _MODEL_CAVEATS.items():
+        if model_id.startswith(prefix):
+            return caveat
+    return None
+
+
 def user_config_dir() -> Path:
     """Return MAK's per-user config directory (respects ``XDG_CONFIG_HOME``).
 

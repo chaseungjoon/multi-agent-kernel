@@ -251,3 +251,31 @@ class TestMain:
             session_builder=_builder(FakeSession()),
         )
         assert code == 2
+
+
+class TestModelCaveatWarnings:
+    def test_fable_models_warn_once_on_stderr(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = _config_file(
+            tmp_path,
+            "planner:\n  model: claude-fable-5\n"
+            "agents:\n  - type: anthropic_api\n    model: claude-fable-5\n",
+        )
+        main(
+            ["--task", "t", "--config", str(cfg)],
+            session_builder=_builder(FakeSession()),
+        )
+        err = capsys.readouterr().err
+        # One deduplicated warning even though planner AND agent are Fable.
+        assert err.count("claude-fable-5") == 1
+        assert "30-day data retention" in err
+
+    def test_ordinary_models_do_not_warn(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(
+            ["--task", "t", "--config", str(_config_file(tmp_path))],
+            session_builder=_builder(FakeSession()),
+        )
+        assert "mak: warning:" not in capsys.readouterr().err

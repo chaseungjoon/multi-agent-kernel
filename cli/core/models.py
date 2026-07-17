@@ -25,6 +25,8 @@ class ModelInfo:
 
 ALL_MODELS: list[ModelInfo] = [
     # Anthropic — https://platform.claude.com/docs/en/about-claude/models/overview
+    ModelInfo("anthropic", "claude-fable-5",    "Claude Fable 5",
+              "ANTHROPIC_API_KEY", "anthropic_api",                   planner_ok=True),
     ModelInfo("anthropic", "claude-opus-4-8",   "Claude Opus 4.8",
               "ANTHROPIC_API_KEY", "anthropic_api",                   planner_ok=True),
     ModelInfo("anthropic", "claude-sonnet-5",   "Claude Sonnet 5",

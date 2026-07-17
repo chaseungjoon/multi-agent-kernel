@@ -13,7 +13,8 @@ from cli.core.models import (
     recommended_planner_for_provider,
 )
 from cli.core.state import CliState
-from cli.ui import ACCENT, print_error, print_ok
+from cli.ui import ACCENT, print_error, print_ok, print_warn
+from mak.config import model_caveat
 
 
 def run_setup(state: CliState, console: Console, *, editing: bool = False) -> bool:
@@ -143,6 +144,9 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
                 state.planner_model = full_spec.split(":")[1]
                 console.print()
                 print_ok(console, f"Planner: [bold]{full_spec}[/bold]")
+                caveat = model_caveat(state.planner_model)
+                if caveat:
+                    print_warn(console, caveat)
                 return
         except ValueError:
             pass

@@ -35,6 +35,7 @@ from mak.config import (
     MakConfig,
     discover_config_path,
     load_config,
+    model_caveat,
     user_config_dir,
 )
 from mak.core.exceptions import (
@@ -174,6 +175,22 @@ def _planner_api_key(config: MakConfig) -> str | None:
     return os.environ.get(fallback_env) if fallback_env else None
 
 
+def warn_model_caveats(config: MakConfig) -> None:
+    """Print one stderr warning per caveated model in the run's configuration.
+
+    Covers every way a model can be chosen for a run — the planner and each
+    agent, whether set via config file or ``--models``. Deduplicated so a run
+    whose planner and agents share a model warns once.
+    """
+    models = [config.planner.model, *(a.model for a in config.agents)]
+    seen: set[str] = set()
+    for model in models:
+        caveat = model_caveat(model)
+        if caveat and caveat not in seen:
+            seen.add(caveat)
+            print(f"mak: warning: {caveat}", file=sys.stderr)
+
+
 def build_session(
     args: argparse.Namespace,
     config: MakConfig,
@@ -251,6 +268,7 @@ def main(
     except ConfigError as exc:
         print(f"mak: configuration error: {exc}", file=sys.stderr)
         return 2
+    warn_model_caveats(config)
 
     sandbox: SandboxConfig | None = None
     if args.sandbox:
