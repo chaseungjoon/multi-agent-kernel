@@ -11,7 +11,10 @@ from mak.config import (
     NodeStoreConfig,
     PlannerConfig,
     SessionConfig,
+    discover_config_path,
     load_config,
+    packaged_config_path,
+    user_config_dir,
 )
 from mak.core.exceptions import ConfigError
 
@@ -242,3 +245,49 @@ def test_frozen_dataclasses_are_immutable() -> None:
     agent = AgentConfig(type="test")
     with pytest.raises(AttributeError):
         agent.type = "other"  # type: ignore[misc]
+
+
+class TestConfigDiscovery:
+    """discover_config_path: ./mak.yaml → user config dir → packaged default."""
+
+    def test_project_config_wins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "mak.yaml").write_text(_MINIMAL_YAML)
+        assert discover_config_path() == Path("mak.yaml")
+
+    def test_user_config_when_no_project_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        user_cfg = tmp_path / "xdg" / "mak" / "config.yaml"
+        user_cfg.parent.mkdir(parents=True)
+        user_cfg.write_text(_MINIMAL_YAML)
+        assert discover_config_path() == user_cfg
+
+    def test_falls_back_to_packaged_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-xdg"))
+        found = discover_config_path()
+        assert found == packaged_config_path()
+        assert found.is_file()  # the packaged default must actually ship
+
+    def test_packaged_default_loads(self) -> None:
+        cfg = load_config(packaged_config_path())
+        assert cfg.agents  # the shipped default names at least one agent
+
+    def test_user_config_dir_respects_xdg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        assert user_config_dir() == tmp_path / "cfg" / "mak"
+
+    def test_user_config_dir_defaults_to_home(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        assert user_config_dir() == Path.home() / ".config" / "mak"

@@ -77,7 +77,7 @@ class TestParseArgs:
     def test_defaults(self) -> None:
         args = parse_args(["--task", "do it"])
         assert args.task == "do it"
-        assert args.config == "mak/config.yaml"
+        assert args.config is None  # None = auto-discover at load time
         assert args.no_review is False
         assert args.sandbox is False
 
