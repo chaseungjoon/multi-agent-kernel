@@ -64,7 +64,7 @@ reassembles the file.
 
 ## Install
 
-**Python ≥ 3.11**
+Prerequisites: **Python ≥ 3.11**, **uv (or pipx)**, **git**
 
 ```bash
 # with uv (recommended)
