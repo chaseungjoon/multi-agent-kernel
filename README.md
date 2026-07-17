@@ -30,6 +30,7 @@ arbitrates shared memory between threads.
 
 - [The Idea](#the-idea)
 - [Install](#install)
+- [Update](#update)
 - [Run](#run)
   - [CLI App](#cli-app)
   - [CLI Command](#cli-command)
@@ -90,6 +91,12 @@ pip install -e .
 ```
 
 </details>
+
+## Update
+
+```bash
+mak update
+```
 
 ## Run
 
