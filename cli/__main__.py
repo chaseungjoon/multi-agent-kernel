@@ -1,24 +1,17 @@
 """Entry point: ``python -m cli`` or the ``mak`` console script.
 
 ``mak`` with no arguments opens the interactive TUI. ``mak run --task "..."``
-forwards to the one-shot kernel CLI (``python -m mak``), so installed users get
-both surfaces from a single command. ``mak --version`` prints the version.
-
-On startup (except for ``--version``/``--help``), a uv-tool install re-runs its
-own install command so users stay on the latest revision. The check is
-best-effort and silent: it only fires when this process actually runs out of a
-``uv tool`` environment (never a source checkout), swallows every failure
-(no uv, offline, timeout), and can be disabled with ``MAK_NO_SELF_UPDATE=1``.
+forwards to the one-shot kernel CLI (``python -m mak``). ``mak update``
+re-runs the uv install command so the tool moves to the latest revision —
+updating is always explicit; launching mak never touches the network.
 """
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
 
 _REPO_SPEC = "git+https://github.com/chaseungjoon/multi-agent-kernel"
-_UPDATE_TIMEOUT_S = 15.0
 
 
 def _is_uv_tool_install() -> bool:
@@ -31,32 +24,25 @@ def _is_uv_tool_install() -> bool:
     return "/uv/tools/" in sys.executable.replace("\\", "/")
 
 
-def _self_update() -> None:
-    """Re-run the uv install command so the next launch is the latest revision."""
-    if os.environ.get("MAK_NO_SELF_UPDATE"):
-        return
+def _update() -> int:
+    """Update mak by re-running its uv install command (``mak update``)."""
     if not _is_uv_tool_install():
-        return
-    uv = shutil.which("uv")
-    if uv is None:
-        return
-    try:
-        result = subprocess.run(
-            [uv, "tool", "install", _REPO_SPEC],
-            capture_output=True,
-            text=True,
-            timeout=_UPDATE_TIMEOUT_S,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return  # offline, hung, or uv broke — never block startup on the check
-    if result.returncode == 0 and "Installed" in (result.stderr + result.stdout):
-        # uv prints "Installed N executables: ..." only when something changed;
-        # an already-current install says "... is already installed" instead.
         print(
-            "mak: updated to the latest version — the update applies on the "
-            "next launch.",
+            "mak: this copy is not a `uv tool` install — update your source "
+            "checkout with `git pull` (then `pip install -e .`) instead.",
             file=sys.stderr,
         )
+        return 1
+    uv = shutil.which("uv")
+    if uv is None:
+        print("mak: `uv` was not found on PATH; cannot update.", file=sys.stderr)
+        return 1
+    # Stream uv's own output so the user sees what happened; uv reports both
+    # "already installed" and a fresh install clearly.
+    result = subprocess.run([uv, "tool", "install", _REPO_SPEC])
+    if result.returncode == 0:
+        print("mak: update complete — changes apply on the next launch.")
+    return result.returncode
 
 
 def main() -> int:
@@ -72,11 +58,13 @@ def main() -> int:
             "usage: mak                 launch the interactive TUI\n"
             "       mak run --task ...  run one task non-interactively "
             "(see: mak run --help)\n"
+            "       mak update          update mak to the newest version\n"
             "       mak --version       print the version"
         )
         return 0
 
-    _self_update()
+    if argv and argv[0] == "update":
+        return _update()
 
     if argv and argv[0] == "run":
         from mak.__main__ import main as run_main
