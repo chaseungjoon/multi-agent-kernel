@@ -64,7 +64,7 @@ reassembles the file.
 
 ## Install
 
-Prerequisites: **Python ≥ 3.11**, **uv (or pipx)**, **git**
+Prerequisites: **Python ≥ 3.11**, **[uv](https://docs.astral.sh/uv/) (or [pipx](https://github.com/pypa/pipx))**, **git**
 
 ```bash
 # with uv (recommended)
