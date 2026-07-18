@@ -775,6 +775,71 @@ class TestDefaultAgentRouting:
         assert session._dag_task("a").agent_type == ""
 
 
+class _ListingRegistry:
+    """A registry that can enumerate its configured agent types."""
+
+    def __init__(self, types: list[str]) -> None:
+        self._types = types
+
+    def get(self, agent_type: str) -> FakeAdapter:
+        return FakeAdapter()
+
+    def list_types(self) -> list[str]:
+        return list(self._types)
+
+
+class TestAgentDistribution:
+    def _session(self, tmp_path: Path, store: NodeStore, pool: list[str]) -> Session:
+        return Session(
+            session_id="s1",
+            config=_config(tmp_path),
+            node_store=store,
+            lock_table=LockTable(),
+            registry=_ListingRegistry(pool),  # type: ignore[arg-type]
+            agent_runner=StagingRunner(store),  # type: ignore[arg-type]
+            default_agent_type=pool[0],
+            agent_pool=pool,
+        )
+
+    def test_empty_types_distributed_round_robin(self, tmp_path: Path) -> None:
+        src = "".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(4))
+        (tmp_path / "m.py").write_text(src)
+        store = _store(tmp_path)
+        pool = ["anthropic_api", "openai_api", "gemini_api"]
+        session = self._session(tmp_path, store, pool)
+        session.initialize()
+        tasks = [
+            SubTask(
+                task_id=f"t{i}",
+                description="x",
+                target_nodes=[NodeId(f"m.py::function::f{i}")],
+            )
+            for i in range(4)
+        ]
+        session.install_plan(tasks)
+        assigned = [session._dag_task(f"t{i}").agent_type for i in range(4)]
+        # Round-robin across the pool, wrapping on the 4th task.
+        assert assigned == [
+            "anthropic_api", "openai_api", "gemini_api", "anthropic_api"
+        ]
+
+    def test_unconfigured_type_remapped_not_crashing(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        pool = ["anthropic_api", "openai_api"]
+        session = self._session(tmp_path, store, pool)
+        session.initialize()
+        bad = SubTask(
+            task_id="a",
+            description="x",
+            target_nodes=[NodeId("m.py::function::a")],
+            agent_type="hallucinated_backend",
+        )
+        session.install_plan([bad])
+        # Remapped to the pool's first entry instead of crashing dispatch.
+        assert session._dag_task("a").agent_type == "anthropic_api"
+
+
 # --- Wave 5: concurrency -----------------------------------------------------
 
 

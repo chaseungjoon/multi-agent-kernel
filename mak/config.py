@@ -76,22 +76,33 @@ class AgentConfig:
 
 @dataclass(frozen=True, slots=True)
 class SessionConfig:
-    """Session-level configuration."""
+    """Session-level configuration.
+
+    ``test_command`` is the shell command MAK runs in the work dir during teardown
+    to gate an ``auto_push`` (and to report a pass/fail after a run). ``None``
+    (the default) skips the test step entirely — nothing is run and teardown
+    reports success. Set e.g. ``"pytest -q"`` to make the gate real.
+    """
 
     work_dir: str = "."
     mak_dir: str = ".mak"
     max_concurrent_agents: int = 3
     lock_timeout_s: float = 300.0
     deadlock_check_interval_s: float = 5.0
+    test_command: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class PlannerConfig:
-    """Planner model configuration."""
+    """Planner model configuration.
+
+    No sampling knob: MAK's current default models (Claude Sonnet 5 / Opus 4.8 /
+    Fable 5, GPT-5.x, Gemini 3.x) reject ``temperature``/``top_p``, and the agent
+    adapters already omit them. Steering is via the prompt, not sampling params.
+    """
 
     model: str = "claude-sonnet-5"
     max_retries: int = 3
-    temperature: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +158,7 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
         lock_timeout_s=_as_float(raw, "lock_timeout_s", 300.0),
         deadlock_check_interval_s=_as_float(
             raw, "deadlock_check_interval_s", 5.0),
+        test_command=_opt_str(raw, "test_command"),
     )
 
 
@@ -154,7 +166,6 @@ def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
     return PlannerConfig(
         model=str(raw.get("model", "claude-sonnet-5")),
         max_retries=_as_int(raw, "max_retries", 3),
-        temperature=_as_float(raw, "temperature", 0.0),
     )
 
 

@@ -57,9 +57,15 @@ class AgentRunner:
         self,
         *,
         timeout_s: float = _DEFAULT_TIMEOUT_S,
+        pool_caps: dict[str, int] | None = None,
         discard_on_failure: bool = True,
     ) -> None:
         self._timeout_s = timeout_s
+        # Per-agent-type cap on retained *idle* subprocesses (from the config's
+        # per-agent ``max_instances``). A freed process beyond the cap is
+        # terminated instead of pooled, so a long session's idle pool can't grow
+        # without bound. Absent/<=0 means unbounded.
+        self._pool_caps = dict(pool_caps or {})
         self._discard_on_failure = discard_on_failure
         self._pool: dict[str, list[subprocess.Popen[str]]] = {}
         self._lock = threading.Lock()
@@ -169,8 +175,17 @@ class AgentRunner:
     ) -> None:
         if proc.poll() is not None:
             return
+        cap = self._pool_caps.get(agent_type, 0)
         with self._lock:
-            self._pool.setdefault(agent_type, []).append(proc)
+            pool = self._pool.setdefault(agent_type, [])
+            if cap > 0 and len(pool) >= cap:
+                # Idle pool already at its configured max_instances — don't retain
+                # this one; terminate it below (outside the lock).
+                pass
+            else:
+                pool.append(proc)
+                return
+        self._terminate(proc)
 
     def _drop(self, agent_type: str, proc: subprocess.Popen[str]) -> None:
         """Remove a process from the pool and terminate it (hard discard)."""

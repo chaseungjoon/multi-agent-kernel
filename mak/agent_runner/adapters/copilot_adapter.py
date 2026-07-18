@@ -1,8 +1,9 @@
 """GitHub Copilot CLI adapter — a secondary/fallback agent backend.
 
-Wraps the ``gh copilot`` CLI. API adapters remain primary; this exists for
-environments that prefer the local CLI. The ``cmd`` override replaces the ``gh``
-binary. See ``CliSubprocessAdapter`` for the wire contract.
+Drives the ``gh copilot`` CLI through the ``copilot`` bridge wrapper. API adapters
+remain primary; this exists for environments that prefer the local CLI. The
+``cmd`` override selects the underlying binary the wrapper drives. See
+``CliSubprocessAdapter`` for the wire contract.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from mak.agent_runner.adapters.cli_adapter import CliSubprocessAdapter
 
 
 class CopilotAdapter(CliSubprocessAdapter):
-    """Drives the ``gh copilot`` CLI over the MAK newline-JSON protocol."""
+    """Drives the ``gh copilot`` CLI over the MAK protocol via its bridge wrapper."""
 
     agent_type = "copilot"
-    default_command = ("gh", "copilot")
+    wrapper_module = "mak.agent_runner.wrappers.copilot"

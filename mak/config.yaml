@@ -4,17 +4,19 @@ session:
   max_concurrent_agents: 3
   lock_timeout_s: 300.0
   deadlock_check_interval_s: 5.0
+  # Command run in the work dir during teardown; a zero exit gates auto_push and
+  # is reported as "tests passed". Unset (the default) skips the test step.
+  # test_command: "pytest -q"
 
 planner:
   model: "claude-sonnet-5"
   max_retries: 3
-  temperature: 0.0
 
-# The first entry is the default agent: tasks whose plan omits an explicit
-# agent_type are routed to it. The API adapters below are implemented. CLI
-# adapter types (e.g. claude_code, codex) are accepted but not yet implemented —
-# they resolve to a clear "not implemented" error if selected. API keys are read
-# from the named env var, never stored here.
+# The first entry is the default agent: a plan's tasks are distributed across the
+# roster round-robin unless a task names its own agent_type. API keys are read
+# from the named env var, never stored here. CLI adapter types (claude_code,
+# codex, copilot) drive the real CLI through a bundled protocol-bridge wrapper —
+# that CLI must be installed on PATH for them to work.
 agents:
   - type: "anthropic_api"
     model: "claude-sonnet-5"
@@ -31,7 +33,7 @@ agents:
     api_key_env: "GEMINI_API_KEY"
     max_instances: 2
     timeout: 300
-  # - type: "claude_code"   # CLI fallback (not yet implemented)
+  # - type: "claude_code"   # CLI fallback — needs the `claude` CLI on PATH
   #   cmd: "claude"
   #   max_instances: 2
   #   timeout: 300

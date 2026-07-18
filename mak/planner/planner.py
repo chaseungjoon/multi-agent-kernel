@@ -225,18 +225,38 @@ def parse_plan(raw: str) -> list[SubTask]:
 class Planner:
     """Turns a natural-language task into a validated list of ``SubTask``."""
 
-    def __init__(self, llm: PlannerLLM, *, max_retries: int = 3) -> None:
+    def __init__(
+        self,
+        llm: PlannerLLM,
+        *,
+        max_retries: int = 3,
+        agent_types: list[str] | None = None,
+    ) -> None:
         if max_retries < 1:
             raise ValueError("max_retries must be at least 1")
         self._llm = llm
         self._max_retries = max_retries
+        # The agent types actually configured for this run, so the plan can name a
+        # real one in each task's "agent_type" instead of guessing (an unconfigured
+        # type would otherwise have to be remapped by the session).
+        self._agent_types = list(agent_types or [])
 
     def _build_prompt(self, user_task: str, node_inventory: list[NodeId]) -> str:
         inventory = "\n".join(f"  - {nid}" for nid in node_inventory) or "  (empty)"
+        if self._agent_types:
+            agents = (
+                "\nCONFIGURED AGENT TYPES (set each task's \"agent_type\" to one of "
+                "these, or leave it empty to let MAK distribute the work):\n"
+                + "\n".join(f"  - {t}" for t in self._agent_types)
+                + "\n"
+            )
+        else:
+            agents = ""
         return (
             f"{_PLAN_INSTRUCTIONS}\n\n"
             f"USER TASK:\n{user_task}\n\n"
             f"NODE INVENTORY (qualified names you may target):\n{inventory}\n"
+            f"{agents}"
         )
 
     def decompose(

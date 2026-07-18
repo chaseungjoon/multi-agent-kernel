@@ -95,8 +95,23 @@ class Scheduler:
         return self._dag
 
     def _lock_requests(self, task: SubTask) -> list[tuple[NodeId, LockMode]]:
-        """Build a write-lock request for each of the task's target nodes."""
-        return [(node_id, LockMode.WRITE) for node_id in task.target_nodes]
+        """Build the lock requests for a task: WRITE targets + READ context.
+
+        Each target node is acquired WRITE (exclusive). Each ``context_node`` the
+        task only reads is acquired READ, so a concurrent task cannot be rewriting
+        that node while this one reads it as context. A node that is both a target
+        and a context node is requested WRITE only (the write lock subsumes the
+        read), so the same node is never double-requested in one acquisition.
+        """
+        targets = set(task.target_nodes)
+        requests: list[tuple[NodeId, LockMode]] = [
+            (node_id, LockMode.WRITE) for node_id in task.target_nodes
+        ]
+        for node_id in task.context_nodes:
+            if node_id not in targets:
+                requests.append((node_id, LockMode.READ))
+                targets.add(node_id)  # dedupe repeated context ids too
+        return requests
 
     def _free_slots(self) -> int | None:
         """Concurrency budget remaining this tick, or ``None`` when unbounded."""
@@ -201,6 +216,7 @@ class Scheduler:
                     "task_id": t.task_id,
                     "description": t.description,
                     "target_nodes": list(t.target_nodes),
+                    "context_nodes": list(t.context_nodes),
                     "depends_on": list(t.depends_on),
                     "agent_type": t.agent_type,
                 }
@@ -247,6 +263,7 @@ class Scheduler:
                 task_id=str(t["task_id"]),
                 description=str(t["description"]),
                 target_nodes=[NodeId(n) for n in t.get("target_nodes", [])],
+                context_nodes=[NodeId(n) for n in t.get("context_nodes", [])],
                 depends_on=[str(d) for d in t.get("depends_on", [])],
                 agent_type=str(t.get("agent_type", "")),
             )

@@ -90,6 +90,65 @@ def _make(
     return sched, lm, runner, registry
 
 
+class TestLockRequests:
+    def _requests(self, task: SubTask) -> list[tuple[str, LockMode]]:
+        sched, _, _, _ = _make([task])
+        return [(str(n), m) for n, m in sched._lock_requests(task)]
+
+    def test_targets_write_context_read(self) -> None:
+        task = SubTask(
+            task_id="a",
+            description="x",
+            target_nodes=[NodeId("m.py::function::a")],
+            context_nodes=[NodeId("m.py::function::helper")],
+            agent_type="anthropic_api",
+        )
+        assert self._requests(task) == [
+            ("m.py::function::a", LockMode.WRITE),
+            ("m.py::function::helper", LockMode.READ),
+        ]
+
+    def test_node_that_is_both_target_and_context_is_write_only(self) -> None:
+        task = SubTask(
+            task_id="a",
+            description="x",
+            target_nodes=[NodeId("m.py::function::a")],
+            context_nodes=[NodeId("m.py::function::a")],  # also a target
+            agent_type="anthropic_api",
+        )
+        assert self._requests(task) == [("m.py::function::a", LockMode.WRITE)]
+
+    def test_read_lock_blocks_a_concurrent_writer(self) -> None:
+        # With a real LockTable: a task holding READ on a context node blocks a
+        # concurrent task that wants to WRITE that same node.
+        from mak.lock_manager.lock_table import LockTable
+
+        lt = LockTable()
+        reader = SubTask(
+            task_id="reader",
+            description="x",
+            target_nodes=[NodeId("m.py::function::r")],
+            context_nodes=[NodeId("shared.py::function::ctx")],
+            agent_type="anthropic_api",
+        )
+        writer = SubTask(
+            task_id="writer",
+            description="x",
+            target_nodes=[NodeId("shared.py::function::ctx")],
+            agent_type="anthropic_api",
+        )
+        sched = Scheduler(DAG([reader]), lt, FakeAgentRunner(), FakeRegistry())
+        # reader acquires WRITE r + READ ctx
+        assert lt.try_acquire_all(sched._lock_requests(reader), holder="reader")
+        # writer cannot WRITE ctx while reader holds it READ
+        assert not lt.try_acquire_all(
+            sched._lock_requests(writer), holder="writer"
+        )
+        # once the reader releases, the writer can proceed
+        lt.release_all("reader")
+        assert lt.try_acquire_all(sched._lock_requests(writer), holder="writer")
+
+
 class TestReadyQueue:
     def test_initial_ready_queue_has_no_dep_tasks(self) -> None:
         sched, _, _, _ = _make([_task("a"), _task("b", depends_on=["a"])])

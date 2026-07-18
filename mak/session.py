@@ -264,12 +264,16 @@ class Session:
         test_runner: TestRunner | None = None,
         max_attempts: int = 3,
         default_agent_type: str | None = None,
+        agent_pool: list[str] | None = None,
         heartbeat_interval_s: float | None = None,
         collect_timeout_s: float = 300.0,
     ) -> None:
         self.session_id = session_id
         self._config = config
         self._default_agent_type = default_agent_type
+        # Healthy configured agent types to distribute unassigned tasks across
+        # (round-robin). Falls back to [default_agent_type] when not provided.
+        self._agent_pool = list(agent_pool) if agent_pool else None
         self._node_store = node_store
         self._lock_table = lock_table
         self._registry = registry
@@ -441,17 +445,54 @@ class Session:
         self.state = SessionState.PLANNED
 
     def _apply_default_agent(self, subtasks: list[SubTask]) -> list[SubTask]:
-        """Route tasks with no explicit ``agent_type`` to the configured default.
+        """Assign a valid agent type to every task before dispatch.
 
-        Without this a planner output that omits ``agent_type`` would reach
-        ``registry.get("")`` and crash dispatch with ``UnknownAgentTypeError``.
+        Three cases, so ``registry.get(agent_type)`` can never raise
+        ``UnknownAgentTypeError`` mid-run and multi-provider rosters are actually
+        used rather than everything landing on the first agent:
+
+        - **empty** ``agent_type`` → distributed round-robin across the agent pool
+          (the healthy configured agent types), so a plan that omits agent types
+          spreads work across every provider instead of only the default;
+        - **unconfigured/hallucinated** ``agent_type`` (planner named a type that
+          is not registered) → remapped to the pool's first entry, with a warning,
+          instead of crashing dispatch;
+        - **valid** ``agent_type`` → left as-is.
+
+        With no pool (e.g. a direct construction that sets every task's type
+        explicitly), tasks are returned unchanged.
         """
-        if self._default_agent_type is None:
+        pool = self._agent_pool or (
+            [self._default_agent_type] if self._default_agent_type else []
+        )
+        if not pool:
             return subtasks
-        return [
-            t if t.agent_type else replace(t, agent_type=self._default_agent_type)
-            for t in subtasks
-        ]
+        known = set(self._known_agent_types())
+        out: list[SubTask] = []
+        rr = 0
+        for task in subtasks:
+            agent_type = task.agent_type
+            if not agent_type:
+                agent_type = pool[rr % len(pool)]
+                rr += 1
+            elif known and agent_type not in known:
+                self._log(
+                    EventType.TASK_COMPLETED,
+                    task_id=task.task_id,
+                    remapped_agent_type=agent_type,
+                    to=pool[0],
+                )
+                agent_type = pool[0]
+            out.append(
+                task if agent_type == task.agent_type
+                else replace(task, agent_type=agent_type)
+            )
+        return out
+
+    def _known_agent_types(self) -> list[str]:
+        """Agent types the registry can resolve (empty if it can't enumerate)."""
+        lister = getattr(self._registry, "list_types", None)
+        return list(lister()) if callable(lister) else []
 
     # -- phase 3: run ------------------------------------------------------
 

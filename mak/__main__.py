@@ -29,6 +29,7 @@ from mak.bootstrap import (
     agents_from_specs,
     build_registry,
     default_agent_type,
+    healthy_agent_types,
     validate_config,
 )
 from mak.config import (
@@ -51,7 +52,8 @@ from mak.node_store.store import NodeStore
 from mak.planner.llm import build_planner_llm
 from mak.planner.planner import Planner
 from mak.planner.review import display_plan_for_review
-from mak.session import Session
+from mak.session import Session, SessionState
+from mak.test_runner import build_test_runner
 
 SessionBuilder = Callable[
     [argparse.Namespace, MakConfig, "SandboxConfig | None"], Session
@@ -94,7 +96,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Multi Agent Kernel — concurrent multi-agent code editing.",
     )
     parser.add_argument(
-        "--task", required=True, help="the natural-language task to perform"
+        "--task",
+        default=None,
+        help="the natural-language task to perform (required unless --recover)",
     )
     parser.add_argument(
         "--config",
@@ -139,6 +143,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-review",
         action="store_true",
         help="skip the human-in-the-loop plan review",
+    )
+    parser.add_argument(
+        "--recover",
+        action="store_true",
+        help=(
+            "resume a crashed session from .mak/task_graph.json instead of "
+            "planning afresh (expires stale locks, re-queues in-flight tasks)"
+        ),
     )
     parser.add_argument(
         "--sandbox",
@@ -206,10 +218,35 @@ def build_session(
         default_timeout=config.session.lock_timeout_s,
     )
     registry = build_registry(config, sandbox=sandbox)
-    agent_runner = AgentRunner()
+    # Health preflight: verify each configured agent is usable *before* dispatch,
+    # so a missing CLI binary or absent API key surfaces now instead of as a
+    # mid-run failure or a long timeout. The healthy set becomes the distribution
+    # pool; the default agent must be among it.
+    default_type = args.agent or default_agent_type(config)
+    configured = [a.type for a in config.agents]
+    healthy, unhealthy = healthy_agent_types(registry, configured)
+    for agent_type in unhealthy:
+        print(
+            f"mak: warning: agent '{agent_type}' failed its health check "
+            "(missing API key/SDK, or CLI not on PATH) — it will not be used.",
+            file=sys.stderr,
+        )
+    if default_type not in healthy:
+        raise ConfigError(
+            f"the default agent '{default_type}' is not usable "
+            "(failed its health check); configure a working agent/key"
+        )
+    # Per-agent config knobs reach the runner here: the read timeout is the
+    # largest configured agent timeout (so no agent is cut short), and each
+    # agent type's max_instances caps its retained idle subprocess pool.
+    agent_runner = AgentRunner(
+        timeout_s=max((a.timeout for a in config.agents), default=300),
+        pool_caps={a.type: a.max_instances for a in config.agents},
+    )
     planner = Planner(
         build_planner_llm(config.planner.model, api_key=_planner_api_key(config)),
         max_retries=config.planner.max_retries,
+        agent_types=healthy,
     )
     git_helper = (
         GitHelper(work_dir, commit_prefix=config.git.commit_prefix)
@@ -230,7 +267,9 @@ def build_session(
         planner=planner,
         git_helper=git_helper,
         logger=logger,
-        default_agent_type=args.agent or default_agent_type(config),
+        test_runner=build_test_runner(config.session.test_command, work_dir),
+        default_agent_type=default_type,
+        agent_pool=healthy,
     )
 
 
@@ -264,6 +303,8 @@ def main(
                     config.session, max_concurrent_agents=args.max_agents
                 ),
             )
+        if not args.recover and not args.task:
+            raise ConfigError("--task is required (or use --recover to resume)")
         validate_config(config)
     except ConfigError as exc:
         print(f"mak: configuration error: {exc}", file=sys.stderr)
@@ -282,8 +323,22 @@ def main(
 
     try:
         session = session_builder(args, config, sandbox)
-        session.initialize()
-        session.plan(args.task, review=not args.no_review)
+        if args.recover:
+            session.recover()
+            if session.state is not SessionState.PLANNED:
+                print(
+                    "mak: nothing to recover — no .mak/task_graph.json for this "
+                    "work dir. Run a normal task instead.",
+                    file=sys.stderr,
+                )
+                return 1
+            print(
+                "mak: resuming the previous session from .mak/task_graph.json.",
+                file=sys.stderr,
+            )
+        else:
+            session.initialize()
+            session.plan(args.task, review=not args.no_review)
         result = session.run()
 
         # Cascade loop: after each wave, check whether any committed signature

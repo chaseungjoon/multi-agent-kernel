@@ -12,34 +12,104 @@ from typing import Any
 from cli.core.state import CliState
 
 # ── Token counting ─────────────────────────────────────────────────────────────
+# Counts input+output tokens across ALL three providers (agent adapters AND the
+# planner), so a run on openai:/gemini: reports real usage instead of 0.
 _token_counter: list[int] = [0]
 _token_counter_installed: bool = False
 
 
+def _num(value: Any) -> int:
+    """Coerce a usage field to int; 0 for None/non-numbers."""
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
+def anthropic_tokens(usage: Any) -> int:
+    """Input + output tokens from an Anthropic ``response.usage``."""
+    if usage is None:
+        return 0
+    return _num(getattr(usage, "input_tokens", 0)) + _num(
+        getattr(usage, "output_tokens", 0)
+    )
+
+
+def openai_tokens(usage: Any) -> int:
+    """Total tokens from an OpenAI ``response.usage`` (prompt+completion fallback)."""
+    if usage is None:
+        return 0
+    total = getattr(usage, "total_tokens", None)
+    if total is not None:
+        return _num(total)
+    return _num(getattr(usage, "prompt_tokens", 0)) + _num(
+        getattr(usage, "completion_tokens", 0)
+    )
+
+
+def gemini_tokens(usage: Any) -> int:
+    """Total tokens from a Gemini ``response.usage_metadata``."""
+    if usage is None:
+        return 0
+    total = getattr(usage, "total_token_count", None)
+    if total is not None:
+        return _num(total)
+    return _num(getattr(usage, "prompt_token_count", 0)) + _num(
+        getattr(usage, "candidates_token_count", 0)
+    )
+
+
+def _count_anthropic() -> None:
+    from anthropic.resources.messages import Messages
+
+    orig = Messages.create
+
+    def counted(self: Any, *args: Any, **kwargs: Any) -> Any:
+        response = orig(self, *args, **kwargs)
+        _token_counter[0] += anthropic_tokens(getattr(response, "usage", None))
+        return response
+
+    Messages.create = counted  # type: ignore[method-assign]
+
+
+def _count_openai() -> None:
+    from openai.resources.chat.completions import Completions
+
+    orig = Completions.create
+
+    def counted(self: Any, *args: Any, **kwargs: Any) -> Any:
+        response = orig(self, *args, **kwargs)
+        _token_counter[0] += openai_tokens(getattr(response, "usage", None))
+        return response
+
+    Completions.create = counted  # type: ignore[method-assign]
+
+
+def _count_gemini() -> None:
+    from google.genai.models import Models
+
+    orig = Models.generate_content
+
+    def counted(self: Any, *args: Any, **kwargs: Any) -> Any:
+        response = orig(self, *args, **kwargs)
+        _token_counter[0] += gemini_tokens(getattr(response, "usage_metadata", None))
+        return response
+
+    Models.generate_content = counted  # type: ignore[method-assign]
+
+
 def install_token_counter() -> None:
-    """Patch anthropic.resources.messages.Messages.create to count all tokens."""
+    """Patch each provider SDK's call to accumulate input+output tokens.
+
+    Best-effort per provider: a provider whose SDK is not installed (or whose
+    internals moved) is skipped without affecting the others.
+    """
     global _token_counter_installed
     if _token_counter_installed:
         return
-    try:
-        from anthropic.resources.messages import Messages
-
-        _orig_create = Messages.create
-
-        def _counted_create(self: Any, *args: Any, **kwargs: Any) -> Any:
-            response = _orig_create(self, *args, **kwargs)
-            usage = getattr(response, "usage", None)
-            if usage is not None:
-                _token_counter[0] += (
-                    getattr(usage, "input_tokens", 0)
-                    + getattr(usage, "output_tokens", 0)
-                )
-            return response
-
-        Messages.create = _counted_create  # type: ignore[method-assign]
-        _token_counter_installed = True
-    except Exception:
-        pass
+    for patch in (_count_anthropic, _count_openai, _count_gemini):
+        try:
+            patch()
+        except Exception:  # noqa: BLE001 - missing/renamed SDK internals: skip it
+            pass
+    _token_counter_installed = True
 
 
 def reset_token_counter() -> None:
@@ -93,7 +163,8 @@ def build_session(task: str, state: CliState) -> Any:
     Returned session has been built but NOT yet initialized — call
     ``session.initialize()`` before planning.
     """
-    from mak.__main__ import build_session as _build_session, load_env_file
+    from mak.__main__ import build_session as _build_session
+    from mak.__main__ import load_env_file
     from mak.bootstrap import validate_config
     from mak.config import discover_config_path, load_config
 

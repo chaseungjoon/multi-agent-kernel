@@ -1,20 +1,23 @@
 """Shared base for CLI subprocess adapters (secondary/fallback agents).
 
-The primary agent path is the direct-API adapters. CLI adapters are a fallback for
-backends with no stable API; they are driven by the agent runner's idle-process
+The primary agent path is the direct-API adapters. CLI adapters are a fallback
+for backends with no stable API; they are driven by the agent runner's idle-process
 pool over the MAK wire protocol: the runner writes one ``TaskBundle`` JSON line to
 the process's stdin and reads one ``TaskResult`` JSON line back from stdout.
 
-``CliSubprocessAdapter`` implements that contract once. A concrete adapter only
-declares its ``agent_type`` and ``default_command`` (the argv to launch). Because
-real CLIs do not natively speak MAK's line protocol, a deployment typically points
-``cmd`` at a thin wrapper that adapts the CLI's I/O — the adapter does not assume a
-particular CLI's flags.
+Real CLIs (``claude``, ``codex``, ``gh copilot``) do not speak that protocol, so
+each concrete adapter launches a **bridge wrapper**
+(``python -m mak.agent_runner.wrappers.<name>``) which translates between the MAK
+protocol and the CLI's own I/O. The ``cmd`` config override selects which
+underlying binary the wrapper drives; the wrapper's ``--health-check`` mode
+verifies that binary is installed, so a missing CLI is caught at dispatch instead
+of hanging until timeout.
 """
 
 from __future__ import annotations
 
 import subprocess
+import sys
 from collections.abc import Sequence
 
 from mak.agent_runner.adapters.base_adapter import SubprocessAgentAdapter
@@ -26,11 +29,11 @@ _HEALTH_TIMEOUT_S = 10.0
 
 
 class CliSubprocessAdapter(SubprocessAgentAdapter):
-    """Drives a CLI agent over the MAK newline-JSON protocol via stdin/stdout."""
+    """Drives a CLI agent over the MAK protocol via a bridge wrapper subprocess."""
 
     agent_type = "cli"
-    default_command: tuple[str, ...] = ()
-    version_args: tuple[str, ...] = ("--version",)
+    # The bridge wrapper module launched to speak the MAK protocol for this CLI.
+    wrapper_module: str = ""
 
     def __init__(
         self,
@@ -40,20 +43,25 @@ class CliSubprocessAdapter(SubprocessAgentAdapter):
         agent_id: str | None = None,
         sandbox: SandboxConfig | None = None,
     ) -> None:
-        base = list(command) if command is not None else list(self.default_command)
-        if cmd is not None:
-            base = [cmd, *base[1:]] if base else [cmd]
-        self._command = base
+        if command is not None:
+            # Explicit argv: launch it verbatim as the protocol speaker (used by
+            # tests to inject a stub, or to point at a custom bridge).
+            self._command = list(command)
+        else:
+            self._command = [sys.executable, "-m", self.wrapper_module]
+            if cmd is not None:
+                # Tell the wrapper which underlying binary to drive.
+                self._command += ["--cli", cmd]
         self._sandbox = sandbox
         self.agent_id = agent_id or f"{self.agent_type}-0"
 
     @property
     def command(self) -> list[str]:
-        """The argv used to launch the agent (before any sandbox wrapping)."""
+        """The argv used to launch the bridge (before any sandbox wrapping)."""
         return list(self._command)
 
     def spawn(self, working_dir: str) -> subprocess.Popen[str]:
-        """Launch the CLI agent with stdin/stdout pipes, optionally sandboxed."""
+        """Launch the bridge wrapper with stdin/stdout pipes, optionally sandboxed."""
         argv = self._command
         if self._sandbox is not None:
             argv = self._sandbox.wrap(argv, working_dir)
@@ -74,12 +82,17 @@ class CliSubprocessAdapter(SubprocessAgentAdapter):
         return decode_task_result(raw_output)
 
     def health_check(self) -> bool:
-        """Return whether the CLI binary is installed and responsive."""
+        """Return whether the underlying CLI is installed and responsive.
+
+        Runs the bridge wrapper's ``--health-check`` mode, which checks the CLI
+        binary is on PATH. This is what lets a missing CLI fail fast at dispatch
+        rather than hang until the task timeout.
+        """
         if not self._command:
             return False
         try:
             result = subprocess.run(
-                [self._command[0], *self.version_args],
+                [*self._command, "--health-check"],
                 capture_output=True,
                 timeout=_HEALTH_TIMEOUT_S,
                 check=False,

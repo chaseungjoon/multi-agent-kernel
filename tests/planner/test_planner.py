@@ -213,6 +213,17 @@ class TestDecompose:
         assert "m.py::class::Foo" in llm.prompts[0]
         assert "do stuff" in llm.prompts[0]
 
+    def test_prompt_lists_configured_agent_types(self) -> None:
+        llm = StubLLM([_VALID_PLAN])
+        Planner(llm, agent_types=["openai_api", "gemini_api"]).decompose("t", [])
+        assert "openai_api" in llm.prompts[0]
+        assert "gemini_api" in llm.prompts[0]
+
+    def test_prompt_omits_agent_section_when_unset(self) -> None:
+        llm = StubLLM([_VALID_PLAN])
+        Planner(llm).decompose("t", [])
+        assert "CONFIGURED AGENT TYPES" not in llm.prompts[0]
+
     def test_retries_after_malformed(self) -> None:
         llm = StubLLM(["not json", _VALID_PLAN])
         tasks = Planner(llm, max_retries=3).decompose("t", [])

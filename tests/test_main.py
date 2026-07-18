@@ -31,13 +31,21 @@ class FakeSession:
         result: SessionResult | None = None,
         tests_passed: bool = True,
         plan_error: Exception | None = None,
+        recover_state: SessionState = SessionState.PLANNED,
     ) -> None:
         self._result = result or SessionResult(
             state=SessionState.COMPLETED, completed=("a",), failed=(), blocked=()
         )
         self._tests_passed = tests_passed
         self._plan_error = plan_error
+        self._recover_state = recover_state
+        self.state = SessionState.CREATED
         self.calls: list[str] = []
+
+    def recover(self) -> int:
+        self.calls.append("recover")
+        self.state = self._recover_state  # PLANNED = found a graph; else nothing
+        return 0
 
     def initialize(self) -> list[str]:
         self.calls.append("initialize")
@@ -70,9 +78,12 @@ def _builder(session: FakeSession) -> cli.SessionBuilder:
 
 
 class TestParseArgs:
-    def test_task_required(self) -> None:
-        with pytest.raises(SystemExit):
-            parse_args([])
+    def test_task_optional_at_parse_time(self) -> None:
+        # --task is no longer argparse-required (a --recover run has no task);
+        # main() enforces "task required unless --recover" instead.
+        args = parse_args([])
+        assert args.task is None
+        assert args.recover is False
 
     def test_defaults(self) -> None:
         args = parse_args(["--task", "do it"])
@@ -80,6 +91,7 @@ class TestParseArgs:
         assert args.config is None  # None = auto-discover at load time
         assert args.no_review is False
         assert args.sandbox is False
+        assert args.recover is False
 
     def test_flags(self) -> None:
         args = parse_args(
@@ -140,6 +152,37 @@ class TestMain:
             "detect_cascade_tasks",  # cascade check after each wave
             "teardown",
         ]
+
+    def test_recover_resumes_without_planning(self, tmp_path: Path) -> None:
+        session = FakeSession(recover_state=SessionState.PLANNED)
+        code = main(
+            ["--recover", "--config", str(_config_file(tmp_path))],
+            session_builder=_builder(session),
+        )
+        assert code == 0
+        # recover replaces initialize+plan; run/teardown still happen.
+        assert "recover" in session.calls
+        assert "initialize" not in session.calls
+        assert not any(c.startswith("plan") for c in session.calls)
+        assert "run" in session.calls
+
+    def test_recover_with_nothing_to_resume_returns_one(
+        self, tmp_path: Path
+    ) -> None:
+        session = FakeSession(recover_state=SessionState.CREATED)
+        code = main(
+            ["--recover", "--config", str(_config_file(tmp_path))],
+            session_builder=_builder(session),
+        )
+        assert code == 1
+        assert "run" not in session.calls
+
+    def test_task_required_without_recover(self, tmp_path: Path) -> None:
+        code = main(
+            ["--config", str(_config_file(tmp_path))],
+            session_builder=_builder(FakeSession()),
+        )
+        assert code == 2  # config error: --task required
 
     def test_models_and_max_agents_override_config(self, tmp_path: Path) -> None:
         captured: dict[str, object] = {}

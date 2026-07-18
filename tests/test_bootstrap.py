@@ -9,11 +9,13 @@ from mak.agent_runner.adapters.claude_code_adapter import ClaudeCodeAdapter
 from mak.agent_runner.adapters.copilot_adapter import CopilotAdapter
 from mak.agent_runner.adapters.gemini_api_adapter import GeminiApiAdapter
 from mak.agent_runner.adapters.openai_api_adapter import OpenAiApiAdapter
+from mak.agent_runner.registry import AdapterRegistry
 from mak.agent_runner.sandbox import SandboxConfig
 from mak.bootstrap import (
     agents_from_specs,
     build_registry,
     default_agent_type,
+    healthy_agent_types,
     validate_config,
 )
 from mak.config import AgentConfig, MakConfig
@@ -132,7 +134,8 @@ class TestBuildRegistry:
         )
         adapter = registry.get("claude_code")
         assert isinstance(adapter, ClaudeCodeAdapter)
-        assert adapter.command == ["my-claude"]
+        # cmd now selects the underlying binary the bridge wrapper drives.
+        assert adapter.command[-2:] == ["--cli", "my-claude"]
 
     def test_cli_adapter_threads_sandbox(self) -> None:
         sandbox = SandboxConfig(image="busybox")
@@ -182,3 +185,42 @@ class TestDefaultAgentType:
     def test_empty_agents_raises(self) -> None:
         with pytest.raises(ConfigError, match="no agents"):
             default_agent_type(MakConfig(agents=()))
+
+
+class TestHealthyAgentTypes:
+    def _registry(self) -> AdapterRegistry:
+        reg = AdapterRegistry()
+
+        class Good:
+            agent_type = "g"
+
+            def health_check(self) -> bool:
+                return True
+
+        class Bad:
+            agent_type = "b"
+
+            def health_check(self) -> bool:
+                return False
+
+        class Boom:
+            agent_type = "x"
+
+            def health_check(self) -> bool:
+                raise RuntimeError("no key")
+
+        reg.register_factory("good", lambda: Good())  # type: ignore[arg-type,return-value]
+        reg.register_factory("bad", lambda: Bad())  # type: ignore[arg-type,return-value]
+        reg.register_factory("boom", lambda: Boom())  # type: ignore[arg-type,return-value]
+        return reg
+
+    def test_splits_healthy_from_unhealthy(self) -> None:
+        healthy, unhealthy = healthy_agent_types(
+            self._registry(), ["good", "bad", "boom"]
+        )
+        assert healthy == ["good"]
+        assert unhealthy == ["bad", "boom"]
+
+    def test_preserves_order(self) -> None:
+        healthy, _ = healthy_agent_types(self._registry(), ["bad", "good"])
+        assert healthy == ["good"]

@@ -33,7 +33,6 @@ session:
 planner:
   model: "claude-opus-4"
   max_retries: 5
-  temperature: 0.7
 
 agents:
   - type: "claude_code"
@@ -85,7 +84,6 @@ def test_load_full_yaml(tmp_path: Path) -> None:
     assert cfg.planner == PlannerConfig(
         model="claude-opus-4",
         max_retries=5,
-        temperature=0.7,
     )
     assert cfg.agents == (
         AgentConfig(type="claude_code", max_instances=3, timeout=600),

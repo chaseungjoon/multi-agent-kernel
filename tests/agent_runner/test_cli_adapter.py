@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -17,21 +18,29 @@ from mak.core.types import NodeId, TaskBundle, TaskResult
 
 
 class TestCommandConstruction:
-    def test_default_commands(self) -> None:
-        assert ClaudeCodeAdapter().command == ["claude"]
-        assert CodexAdapter().command == ["codex"]
-        assert CopilotAdapter().command == ["gh", "copilot"]
+    def test_default_commands_launch_bridge_wrappers(self) -> None:
+        import sys
+
+        assert ClaudeCodeAdapter().command == [
+            sys.executable, "-m", "mak.agent_runner.wrappers.claude_code"
+        ]
+        assert CodexAdapter().command == [
+            sys.executable, "-m", "mak.agent_runner.wrappers.codex"
+        ]
+        assert CopilotAdapter().command == [
+            sys.executable, "-m", "mak.agent_runner.wrappers.copilot"
+        ]
 
     def test_agent_types(self) -> None:
         assert ClaudeCodeAdapter().agent_type == "claude_code"
         assert CodexAdapter().agent_type == "codex"
         assert CopilotAdapter().agent_type == "copilot"
 
-    def test_cmd_override_replaces_binary_only(self) -> None:
-        # Single-element command: cmd replaces it.
-        assert ClaudeCodeAdapter(cmd="/opt/claude").command == ["/opt/claude"]
-        # Multi-element command: cmd replaces only the first element.
-        assert CopilotAdapter(cmd="/usr/bin/gh").command == ["/usr/bin/gh", "copilot"]
+    def test_cmd_override_passed_to_wrapper(self) -> None:
+        # cmd selects the underlying binary the wrapper drives (--cli <binary>).
+        assert ClaudeCodeAdapter(cmd="/opt/claude").command[-2:] == [
+            "--cli", "/opt/claude"
+        ]
 
 
 class TestFormatAndParse:
@@ -62,7 +71,9 @@ class TestSpawn:
 
         monkeypatch.setattr(cli_mod.subprocess, "Popen", fake_popen)
         ClaudeCodeAdapter(cmd="claude").spawn(str(tmp_path))
-        assert captured["argv"] == ["claude"]
+        # Launches the bridge wrapper with the CLI override; runs in the work dir.
+        assert captured["argv"][:2] == [sys.executable, "-m"]
+        assert captured["argv"][-2:] == ["--cli", "claude"]
         assert captured["cwd"] == str(tmp_path)
 
     def test_spawn_wraps_in_sandbox(

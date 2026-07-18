@@ -197,3 +197,24 @@ def default_agent_type(config: MakConfig) -> str:
     if not config.agents:
         raise ConfigError("no agents configured; cannot pick a default agent type")
     return config.agents[0].type
+
+
+def healthy_agent_types(
+    registry: AdapterRegistry, agent_types: list[str]
+) -> tuple[list[str], list[str]]:
+    """Health-check each agent type once; return ``(healthy, unhealthy)``.
+
+    Order is preserved. An adapter that cannot even be constructed (missing SDK,
+    missing key) or whose ``health_check`` returns False (e.g. a CLI whose binary
+    is not on PATH) is reported unhealthy — so a missing binary or key is caught
+    at startup instead of as a mid-run task failure or a long timeout.
+    """
+    healthy: list[str] = []
+    unhealthy: list[str] = []
+    for agent_type in agent_types:
+        try:
+            ok = registry.get(agent_type).health_check()
+        except Exception:
+            ok = False
+        (healthy if ok else unhealthy).append(agent_type)
+    return healthy, unhealthy

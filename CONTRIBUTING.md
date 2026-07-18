@@ -828,11 +828,27 @@ so the Anthropic adapter's default `max_tokens` is **8192** (overridable per ada
 pair a big-file workload with a model and limit that can emit it in one response.
 
 CLI subprocess adapters (`claude_code`, `codex`, `copilot`) are a **secondary
-fallback**, implemented over a shared `CliSubprocessAdapter` base (`cli_adapter.py`):
-they speak MAK's newline-JSON wire protocol over a pooled subprocess, take a `cmd`
-override, and can run inside a Docker sandbox (see §7.6). Real CLIs typically need a
-thin wrapper to speak the line protocol, so the adapter does not hard-code any one
-CLI's flags. The API adapters remain primary.
+fallback**, implemented over a shared `CliSubprocessAdapter` base (`cli_adapter.py`).
+Real CLIs (`claude`, `codex`, `gh copilot`) don't speak MAK's newline-JSON protocol,
+so each adapter launches a **bridge wrapper** — `python -m
+mak.agent_runner.wrappers.<name>` — instead of the raw binary. The wrapper
+(`mak/agent_runner/wrappers/`) reads a `TaskBundle` line, turns it into a prompt that
+asks the CLI for the rewritten source of each target node as a strict JSON object,
+invokes the CLI non-interactively, and writes back a `TaskResult` line. The `cmd`
+override selects which underlying binary the wrapper drives (passed through as
+`--cli <binary>`), and the invocation is further overridable per wrapper via
+`MAK_<AGENT>_CMD` (e.g. `MAK_CLAUDE_CODE_CMD="claude -p --model …"`). These run over a
+pooled subprocess and can be Docker-sandboxed (§7.6). The API adapters remain primary;
+see §14 for how to actually use a CLI agent.
+
+**Health check at dispatch.** Every adapter implements `health_check()`, and the
+composition root now *calls* it: `bootstrap.healthy_agent_types(registry, types)`
+health-checks each configured agent once at startup (`build_session`). For a CLI
+adapter this runs the wrapper's `--health-check` mode (which verifies the binary is on
+PATH); for an API adapter it confirms the SDK client constructs. Unhealthy agents are
+dropped from the run (with a warning) and the run aborts if the *default* agent is
+unusable — so a missing CLI or absent key fails fast instead of hanging until the
+task timeout.
 
 ### 7.3 Registry and composition root
 
@@ -880,7 +896,9 @@ routes by adapter type:
   per agent type — write the task as a JSON line, read the result back under a
   timeout (the reader tolerates noisy preamble and multiline pretty-printed JSON),
   SIGTERM on timeout, discard a process on failure rather than returning it to the
-  pool.
+  pool. The runner's read timeout comes from the largest configured agent `timeout`,
+  and each agent type's `max_instances` caps its retained idle-process pool
+  (`AgentRunner(timeout_s=…, pool_caps=…)`, wired in `build_session`).
 
 Every path returns a `TaskResult`: backend failures become `success=False` (so the
 scheduler can re-queue); a genuinely misconfigured adapter raises `AgentError`.
@@ -980,8 +998,14 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
 
 - **initialize** — ingest the working dir's Python files into the node store.
 - **plan** — planner → optional HitL review → `install_plan` (builds the DAG +
-  persisted `Scheduler`). Tasks whose `agent_type` is empty are normalized to the
-  configured default agent.
+  persisted `Scheduler`). `install_plan` normalizes every task's `agent_type`
+  (`_apply_default_agent`): a task with **no** `agent_type` is distributed
+  **round-robin across the healthy agent pool** (so a multi-provider roster is
+  actually used, not just the first agent); a task naming an **unconfigured/
+  hallucinated** type is remapped to the pool's first entry (with a warning) rather
+  than crashing dispatch with `UnknownAgentTypeError`; a valid type is left as-is.
+  The pool is the healthy set from the startup preflight (§7.2); the planner prompt
+  also lists the configured agent types so the model can pick one directly.
 - **run** — dispatch lock-satisfiable ready tasks onto the thread pool (enriching
   each bundle with write/read source via the four-layer enrichment in §3.2); as
   results arrive, **stage the source each agent returned** (`new_sources`, within the
@@ -1000,7 +1024,12 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   called and `run()` executes another wave. The loop repeats until no cascades
   remain or the user declines. If the planner's CASCADE PREVENTION worked, this
   path fires zero times.
-- **teardown** — run the test suite; push if green and `auto_push` is enabled.
+- **teardown** — run the project's test suite and push if green (when `auto_push`).
+  The suite is the `session.test_command` (e.g. `pytest -q`) run in the work dir by a
+  `TestRunner` built in the composition root (`mak/test_runner.py`); it reports a real
+  `(passed, output)`. With **no** `test_command` configured the step is skipped
+  entirely (teardown reports success) rather than pretending a suite passed — so the
+  `auto_push` gate is only meaningful when a command is set.
 
 Robustness properties worth knowing:
 
@@ -1024,7 +1053,13 @@ Robustness properties worth knowing:
   from a create task whose target does *not* exist and returns nothing, which
   correctly still fails.
 - **Crash recovery** — `recover()` expires stale leases and rebuilds the scheduler
-  from `task_graph.json` via `from_persisted`.
+  from `task_graph.json` via `from_persisted` (which also restores each task's
+  `context_nodes`, so recovered tasks re-acquire their read locks). It is reachable
+  from the CLI: `mak run --recover` calls `recover()` instead of `initialize()`/
+  `plan()` and resumes the persisted plan (so a fresh run's `initialize()` — which
+  clears the lock table — never destroys the crash state). `--task` is optional when
+  `--recover` is set; if there is no `task_graph.json` to resume, the CLI exits
+  non-zero with a message.
 - **Honest stall reporting** — a run is `COMPLETED` *only if* the scheduler is
   genuinely done; otherwise `SessionResult` splits the strays so the outcome is
   legible: `failed` (a task that exhausted `max_attempts`), `skipped` (a task with a
@@ -1055,11 +1090,11 @@ session:
   max_concurrent_agents: 3      # used by Wave 5's thread pool
   lock_timeout_s: 300.0
   deadlock_check_interval_s: 5.0
+  test_command: "pytest -q"     # run in the work dir at teardown; gates auto_push
 
 planner:
   model: "claude-sonnet-5"
   max_retries: 3
-  temperature: 0.0
 
 agents:                         # first entry is the default agent
   - type: "anthropic_api"
@@ -1117,13 +1152,18 @@ shell over the composition root, split into testable functions:
   explicitly `export`ed variable still wins. Called first in `main`; the
   agent/planner adapters then read keys from the environment at composition time.
   No `python-dotenv` dependency — it's a dozen lines.
-- `parse_args(argv)` — flags: `--task` (required), `--config` (default: auto-discover
-  via `discover_config_path()`, §11), `--work-dir`, `--models` (roster override, see below),
-  `--max-agents` (concurrency override), `--agent` (override the default agent type),
-  `--no-review`, `--sandbox`, `-v/-vv`.
+- `parse_args(argv)` — flags: `--task` (optional; **required unless `--recover`**,
+  enforced in `main`), `--config` (default: auto-discover via `discover_config_path()`,
+  §11), `--work-dir`, `--models` (roster override, see below), `--max-agents`
+  (concurrency override), `--agent` (override the default agent type), `--no-review`,
+  `--recover` (resume a crashed session from `task_graph.json`, §10), `--sandbox`,
+  `-v/-vv`.
 - `build_session(args, config, sandbox)` — assembles the `Session` and all its
-  collaborators (node store, lock table, registry via `build_registry`, agent runner,
-  planner via `build_planner_llm`, git helper, logger, default agent).
+  collaborators (node store, lock table, registry via `build_registry`, agent runner
+  with per-agent `timeout`/`max_instances` wired in, planner via `build_planner_llm`
+  seeded with the healthy agent types, git helper, logger, the `test_command`
+  `TestRunner`, the default agent, and the healthy `agent_pool`). It runs the startup
+  **health preflight** here (§7.2).
 - `main(argv, *, session_builder=build_session)` — loads env + config, applies the CLI
   overrides (work-dir, roster, concurrency), validates, builds the session, drives
   **initialize → plan → run → cascade loop → teardown**, and maps domain errors to
@@ -1171,9 +1211,11 @@ required** — because `main` rewrites the loaded `MakConfig` (a frozen dataclas
   entry becomes the routing default (overridable with `--agent`).
 
 - **`--max-agents N`** overrides `session.max_concurrent_agents` — the size of the
-  bounded worker pool in `Session` (§10), i.e. **how many agents run at once**. (Note:
-  `AgentConfig.max_instances` is config metadata only; concurrency is governed solely
-  by `max_concurrent_agents`.) `N < 1` is a `ConfigError`.
+  bounded worker pool in `Session` (§10), i.e. **how many agents run at once**. This
+  governs live concurrency. `AgentConfig.max_instances` is a *different* knob: it caps
+  each agent type's retained **idle CLI-subprocess pool** in `AgentRunner` (so a long
+  session doesn't accumulate idle processes); it does not bound live concurrency.
+  `N < 1` is a `ConfigError`.
 
 - **Planner key fallback.** The planner has its own model (`planner.model`, default a
   Claude model). `_planner_api_key` first looks for that provider's `api_key_env`
@@ -1195,6 +1237,42 @@ python -m mak --task "..." --work-dir ./proj --models anthropic --max-agents 5
 To make a roster permanent instead, edit the `agents:` list in `mak/config.yaml`; the
 flags simply override it for a single run. Agent and planner backends are otherwise
 selected entirely by the config file.
+
+### 12.1.1 Using a local CLI agent (`claude_code` / `codex` / `copilot`)
+
+The `--models` flag only builds the three hosted-API providers. To run a **local
+CLI** agent instead — the `claude`, `codex`, or `gh copilot` you already have
+installed — add it to the config's `agents:` list by `type` (there is no
+`--models` shorthand for CLI agents):
+
+```yaml
+# ~/.config/mak/config.yaml (or ./mak.yaml, or mak/config.yaml)
+agents:
+  - type: claude_code       # drives your local `claude` via the bridge wrapper
+    max_instances: 2
+    timeout: 300
+  # - type: codex           # drives `codex`
+  # - type: copilot         # drives `gh copilot`
+```
+
+Then run normally: `mak run --task "..." --work-dir ./proj`. What happens:
+
+1. **Prerequisite:** the underlying binary must be on your `PATH`. The startup
+   health preflight runs the wrapper's `--health-check` (which is just
+   `shutil.which("claude")` etc.); if it's missing, that agent is dropped with a
+   warning, and the run aborts if it was the default.
+2. On dispatch, the adapter launches `python -m mak.agent_runner.wrappers.claude_code`,
+   which hands the CLI a prompt containing each target node's current source and asks
+   for a JSON object mapping node id → rewritten source, then returns a `TaskResult`.
+3. **Override the invocation** if your CLI needs different flags, without editing
+   MAK: set `MAK_CLAUDE_CODE_CMD` (or `MAK_CODEX_CMD` / `MAK_COPILOT_CMD`), e.g.
+   `export MAK_CLAUDE_CODE_CMD="claude -p --model claude-opus-4-8"`. The config
+   `cmd:` field selects just the binary (`--cli <binary>`); the env var replaces the
+   whole command line.
+
+CLI agents are the **secondary** path — the API adapters are more robust because they
+force structured output. Caveat: `gh copilot` is oriented toward shell-command
+suggestions, so it's the weakest fit for MAK's node-rewrite protocol.
 
 ## 12.2 Interactive CLI app (`cli/`)
 
@@ -1236,10 +1314,12 @@ dumps.
 - **Git diff** — `get_git_diff(work_dir, pre_hash)` diffs `{pre_hash}..HEAD`,
   covering all commits MAK made during the task (not just the last one). Displayed
   as `+N -N` bars per file under a dim `changes` label.
-- **Token counting** — `install_token_counter()` patches
-  `anthropic.resources.messages.Messages.create` at the class level once at startup
-  so every Anthropic call (planner + all agents) is counted. On Ctrl+C/EOF the
-  exit message shows `Session ended.  N,NNN tokens used.`
+- **Token counting** — `install_token_counter()` patches **all three** provider SDKs
+  at the class level once at startup — `anthropic …Messages.create`, `openai
+  …Completions.create`, and `google.genai …Models.generate_content` — so every call
+  (planner + agents, any provider) is counted, not just Anthropic. Each patch is
+  best-effort: a provider whose SDK isn't installed is skipped. On Ctrl+C/EOF the exit
+  message shows `Session ended.  N,NNN tokens used.`
 
 ### Slash commands
 
@@ -1393,16 +1473,22 @@ mak/
 │   ├── registry.py        # AdapterRegistry (instance, not global)
 │   ├── protocol.py        # TaskBundle/TaskResult wire (de)serialization
 │   ├── sandbox.py         # Docker isolation for CLI agents (--sandbox)
-│   └── adapters/
-│       ├── base_adapter.py
-│       ├── anthropic_api_adapter.py   # primary
-│       ├── openai_api_adapter.py      # primary
-│       ├── gemini_api_adapter.py      # primary
-│       ├── cli_adapter.py             # shared CliSubprocessAdapter base
-│       ├── claude_code_adapter.py     # secondary (claude CLI)
-│       ├── codex_adapter.py           # secondary (codex CLI)
-│       └── copilot_adapter.py         # secondary (gh copilot CLI)
+│   ├── adapters/
+│   │   ├── base_adapter.py
+│   │   ├── anthropic_api_adapter.py   # primary
+│   │   ├── openai_api_adapter.py      # primary
+│   │   ├── gemini_api_adapter.py      # primary
+│   │   ├── cli_adapter.py             # shared CliSubprocessAdapter base
+│   │   ├── claude_code_adapter.py     # secondary (claude CLI)
+│   │   ├── codex_adapter.py           # secondary (codex CLI)
+│   │   └── copilot_adapter.py         # secondary (gh copilot CLI)
+│   └── wrappers/          # bridge: MAK protocol ↔ a real CLI's I/O
+│       ├── bridge.py      # decode bundle → prompt → invoke CLI → TaskResult
+│       ├── claude_code.py # python -m …wrappers.claude_code (drives `claude`)
+│       ├── codex.py
+│       └── copilot.py
 │
+├── test_runner.py         # build the teardown TestRunner from session.test_command
 └── git_integration/
     └── git.py             # audit-log commits, log parsing, push
 
@@ -1599,11 +1685,15 @@ here so contributors don't mistake them for bugs:
   can flag a call to a same-named-but-unrelated function in another module — a false
   positive that costs a bounded retry, not correctness. It is a structural gate, not a
   type checker, by design.
-- **`context_nodes` are read but not read-locked.** This is intentional: a *hard*
-  dependency on another task's output belongs in `depends_on` (which the DAG
-  enforces); `context_nodes` are *soft* reference (sibling methods, attributes) read
-  at dispatch. Read-locking them would add serialization for no correctness gain on
-  the cases the DAG already covers.
+- **`context_nodes` are read-locked at dispatch.** The scheduler acquires a WRITE
+  lock on each target node and a **READ lock** on each `context_node` (deduped against
+  the write set) in the same atomic `try_acquire_all`, so a concurrent task cannot be
+  rewriting a node this task reads as context. Multiple readers coexist; a writer
+  waits for readers and vice-versa (the canonical conflict matrix). Atomic
+  pre-allocation keeps this deadlock-free, and `from_persisted` restores
+  `context_nodes` so recovery re-takes the read locks. A *hard* dependency on another
+  task's output still belongs in `depends_on` (the DAG enforces ordering);
+  `context_nodes` are the *soft* reference layer.
 - **The deadlock watchdog never fires.** Atomic lock pre-allocation means a waiting
   task holds no locks, so the wait graph is acyclic by construction. The
   `DeadlockDetector` runs each iteration as genuine defense-in-depth that, by design,
@@ -1615,8 +1705,9 @@ here so contributors don't mistake them for bugs:
   conflict-detector splat handling, config coercion).
 - Improve error messages — make failures point at the fix.
 - Documentation: clarify a subsystem in this file, or add module-level examples.
-- Harden a CLI adapter: add a real wrapper that makes `claude`/`codex`/`gh copilot`
-  speak the MAK line protocol, or extend the sandbox (host allowlisting).
+- Harden a CLI bridge wrapper (`mak/agent_runner/wrappers/`): tighten a CLI's prompt
+  or output parsing for a specific `claude`/`codex`/`gh copilot` version, or extend the
+  sandbox (host allowlisting).
 
 ## How MAK was built (history)
 

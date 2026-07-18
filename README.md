@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.3.2 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.4.0 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -157,6 +157,9 @@ mak run --task "your task" --work-dir /path/to/project \
 # Omit human review (Not recommended)
 --no-review
 
+# Resume a crashed run from .mak/task_graph.json (no --task needed)
+--recover
+
 # Default model
 --models anthropic
 --models openai
@@ -167,7 +170,7 @@ mak run --task "your task" --work-dir /path/to/project \
 --models openai:gpt-5.6-terra
 --models gemini:gemini-3.1-pro-preview
 
-# Use multiple providers
+# Use multiple providers (tasks are distributed round-robin across them)
 --models anthropic openai gemini
 --models anthropic:claude-opus-4-8 openai:gpt-5.6-sol gemini:gemini-3.5-flash
 
