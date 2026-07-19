@@ -42,22 +42,28 @@ def extract_defined_symbols(source: str) -> list[SymbolDef]:
 
 
 def check_name_collisions(symbol_edits: dict[str, str]) -> list[str]:
-    """Detect symbols defined by more than one agent in the same file.
+    """Detect symbols defined by more than one edit in the same file.
 
-    ``symbol_edits`` maps an agent id to the source that agent introduced. Returns
-    a list of human-readable collision reasons (empty if there are none).
+    ``symbol_edits`` maps an edit key to the source that edit introduced. A key may
+    be a plain agent id, or a MAK node id of the form ``file::kind::name`` — when
+    the key carries a file component, the collision is scoped **per file**: the
+    same symbol name defined in two *different* files (e.g. the ``_register_all``
+    of two separate registry tables, edited by one task) is legitimate and must
+    not be flagged. Keys without a file component all share one scope, preserving
+    the plain agent-id usage. Returns human-readable collision reasons.
     """
-    # qualified_name -> set of agents defining it
-    owners: dict[str, set[str]] = {}
-    for agent, source in symbol_edits.items():
+    # (file_scope, qualified_name) -> set of edit keys defining it
+    owners: dict[tuple[str, str], set[str]] = {}
+    for edit_key, source in symbol_edits.items():
+        file_scope = edit_key.split("::", 1)[0] if "::" in edit_key else ""
         for symbol in extract_defined_symbols(source):
-            owners.setdefault(symbol.qualified_name, set()).add(agent)
+            owners.setdefault((file_scope, symbol.qualified_name), set()).add(edit_key)
 
     reasons: list[str] = []
-    for name, agents in sorted(owners.items()):
-        if len(agents) > 1:
+    for (_scope, name), editors in sorted(owners.items()):
+        if len(editors) > 1:
             reasons.append(
                 f"name collision: '{name}' defined by agents: "
-                f"{', '.join(sorted(agents))}"
+                f"{', '.join(sorted(editors))}"
             )
     return reasons
