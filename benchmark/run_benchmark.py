@@ -4,12 +4,14 @@ Usage (from the repository root)::
 
     python benchmark/run_benchmark.py --mode mock                 # keyless self-test (all projects)
     python benchmark/run_benchmark.py --mode real                 # real models, all projects
-    python benchmark/run_benchmark.py --mode real --project 2      # just the heavy project
-    python benchmark/run_benchmark.py --mode real --models anthropic:claude-sonnet-4-6 \\
-        openai:gpt-4o gemini:gemini-3-pro
+    python benchmark/run_benchmark.py --mode real --project 3      # just the real-world project
+    python benchmark/run_benchmark.py --mode real --models anthropic:claude-sonnet-5 \\
+        openai:gpt-5.6-sol gemini:gemini-3.5-flash
 
-There are two workloads: ``basic`` (9 ops, 3 modules) and ``2`` (90 ops, 9 modules of
-real-utility-style functions). Each runs both coordination models — MAK and git
+There are three workloads: ``basic`` (9 ops, 3 modules) and ``2`` (90 ops, 9 modules
+of real-utility-style functions) are *maximally contended* (one shared registry every
+task edits); ``3`` (58 feature tasks, 8 modules, 4 shared tables) is the *partially
+contended* real-world target. Each runs both coordination models — MAK and git
 worktrees — on a fresh copy with the *same* agents and assignment; only coordination
 differs.
 Every project's last run is saved separately, so the reports
@@ -22,6 +24,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import importlib.util
 import json
 import os
 import shutil
@@ -54,6 +57,7 @@ def _load_env() -> None:
 
 _load_env()
 
+from harness.accuracy import ensure_pytest_available  # noqa: E402
 from harness.agents import AgentSpec, Usage, make_backends  # noqa: E402
 from harness.mak_runner import run_mak  # noqa: E402
 from harness.metrics import RunResult  # noqa: E402
@@ -67,9 +71,14 @@ from harness.report import (  # noqa: E402
 from harness.traditional import run_traditional  # noqa: E402
 from harness.workload import WORKLOADS, Workload, assign  # noqa: E402
 
-# Render order: lighter project first, heavier second.
-_PROJECT_ORDER = ["basic", "2"]
+# Render order: lighter projects first, the real-world target last.
+_PROJECT_ORDER = ["basic", "2", "3"]
 _LEGACY_RUN = BENCH / ".last_run.json"
+_PROVIDER_PACKAGES = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "gemini": "google.genai",
+}
 
 
 def _run_path(project: str) -> Path:
@@ -196,9 +205,9 @@ def _write_reports() -> None:
 
 
 _DEFAULT_SPECS = [
-    AgentSpec("claude", "anthropic", "claude-sonnet-4-6"),
-    AgentSpec("gpt", "openai", "gpt-4o"),
-    AgentSpec("gemini", "gemini", "gemini-3-pro"),
+    AgentSpec("claude", "anthropic", "claude-sonnet-5"),
+    AgentSpec("gpt", "openai", "gpt-5.6-sol"),
+    AgentSpec("gemini", "gemini", "gemini-3.5-flash"),
 ]
 
 
@@ -217,6 +226,30 @@ def _parse_specs(raw: list[str] | None, num_agents: int) -> list[AgentSpec]:
         AgentSpec(f"agent{i}-{model}", provider, model)
         for i, (provider, model) in enumerate(pairs)
     ]
+
+
+def _ensure_real_provider_packages(specs: list[AgentSpec]) -> None:
+    """Fail before a real run when a selected provider SDK is not installed."""
+    unknown = sorted({
+        spec.provider for spec in specs if spec.provider not in _PROVIDER_PACKAGES
+    })
+    if unknown:
+        raise SystemExit(
+            f"unknown benchmark provider(s): {', '.join(unknown)}; choose from "
+            f"{', '.join(sorted(_PROVIDER_PACKAGES))}"
+        )
+    missing = sorted({
+        package
+        for spec in specs
+        if (package := _PROVIDER_PACKAGES[spec.provider])
+        and importlib.util.find_spec(package) is None
+    })
+    if missing:
+        raise SystemExit(
+            "benchmark is missing SDKs for the selected providers: "
+            f"{', '.join(missing)}. Install project dependencies with: "
+            "python3 -m pip install -e ."
+        )
 
 
 def _fresh_copy(template: Path, dest: Path) -> Path:
@@ -300,6 +333,7 @@ def _run_project(
         label=workload.label,
         modules=len(workload.modules),
         repeats=repeats,
+        shared_functions=len(workload.shared_modules),
     )
     _save_run(workload.name, mak_agg, trad_agg, meta,
               samples=samples if repeats > 1 else None)
@@ -313,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="MAK vs git-worktree benchmark")
     parser.add_argument("--mode", choices=("mock", "real"), default="mock")
     parser.add_argument("--agents", type=int, default=3)
-    parser.add_argument("--project", choices=("basic", "2", "all"), default="all",
+    parser.add_argument("--project", choices=("basic", "2", "3", "all"), default="all",
                         help="which workload to run (default: all)")
     parser.add_argument("--repeat", type=int, default=1,
                         help="run each project N times and report the mean (default: 1)")
@@ -328,8 +362,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.render_only:
         _write_reports()
         return 0
+    if args.agents < 1:
+        parser.error("--agents must be at least 1")
 
     specs = _parse_specs(args.models, args.agents)
+    ensure_pytest_available()
+    if args.mode == "real":
+        _ensure_real_provider_packages(specs)
     projects = _PROJECT_ORDER if args.project == "all" else [args.project]
     runs_root = BENCH / ".runs"
     shutil.rmtree(runs_root, ignore_errors=True)  # clear any stale copies from a crash

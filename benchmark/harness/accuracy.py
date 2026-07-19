@@ -8,12 +8,22 @@ rather than silently dropped from the denominator.
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 _SUMMARY = re.compile(r"(\d+) (passed|failed|error|errors)")
+
+
+def ensure_pytest_available() -> None:
+    """Fail before a benchmark run when its accuracy oracle is unavailable."""
+    if importlib.util.find_spec("pytest") is None:
+        raise SystemExit(
+            "benchmark requires pytest to measure accuracy; install the development "
+            "dependencies with: python3 -m pip install -e '.[dev]'"
+        )
 
 
 def measure(project_dir: Path) -> int:

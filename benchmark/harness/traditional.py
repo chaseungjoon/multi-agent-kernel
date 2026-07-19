@@ -1,10 +1,13 @@
 """Run the workload the *traditional* way: one git worktree per agent, then merge.
 
-Each agent gets its own branch + worktree, implements its assigned module(s) and
-appends its ``register(...)`` lines to ``_register_all`` there, and commits. The
-branches are then merged one by one. Module files merge cleanly (each is owned by a
-single agent), but ``_register_all`` was edited in every branch, so every merge
-after the first collides there and must be resolved — the cost MAK does not pay.
+Each agent gets its own branch + worktree, implements its assigned module(s), and
+appends its ``register(...)`` lines to the shared ``_register_all`` function of every
+table its tasks register into, then commits. The branches are merged one by one.
+Feature-module files merge cleanly (each is owned by a single agent), but every
+shared table was edited in several branches, so merges collide there — on *one*
+registry file in the toolkit templates, and on up to **four** cross-cutting files
+(routes/events/errors/settings) in the real-world template — and each conflicted
+file must be resolved. That is the cost MAK does not pay.
 
 Timing model: the agents implement in parallel, so the implementation phase is
 charged as ``max`` over agents of that agent's total call time (not the sum); the
@@ -64,6 +67,7 @@ def run_traditional(
 ) -> RunResult:
     """Implement the workload via git worktrees + merge; return measured results."""
     operations = workload.operations
+    shared_files = workload.shared_files()
     _git(["init", "-q"], project_dir)
     _git(["config", "user.email", "benchmark@mak.local"], project_dir)
     _git(["config", "user.name", "MAK Benchmark"], project_dir)
@@ -90,7 +94,7 @@ def run_traditional(
         branches.append(branch)
         elapsed = 0.0
         for op in ops_for[i]:
-            module_path = worktree / f"toolkit/{op.module}.py"
+            module_path = worktree / workload.package / f"{op.module}.py"
             module_src = module_path.read_text()
             stub = _extract_function(module_src, op.func)
             start = time.monotonic()
@@ -118,19 +122,28 @@ def run_traditional(
                 continue
             module_path.write_text(new_module)
 
-            reg_path = worktree / "toolkit/registry.py"
-            reg_src = reg_path.read_text()
-            current = _extract_function(reg_src, "_register_all")
-            updated = add_registration(current, op.register_line)
-            reg_path.write_text(_splice_function(reg_src, "_register_all", updated))
+            # Apply every shared-table registration this op performs (0..n files).
+            for reg in op.registrations:
+                table_path = worktree / workload.package / f"{reg.module}.py"
+                table_src = table_path.read_text()
+                current = _extract_function(table_src, "_register_all")
+                updated = add_registration(current, reg.line)
+                table_path.write_text(
+                    _splice_function(table_src, "_register_all", updated)
+                )
         _git(["add", "-A"], worktree)
-        _git(["commit", "-q", "-m", branch], worktree)
+        # A backend outage or wholly malformed output can leave this branch unchanged.
+        # Keep its branch mergeable so one failed agent cannot abort the entire run.
+        _git(["commit", "-q", "--allow-empty", "-m", branch], worktree)
         agent_seconds[backend.name] = elapsed
 
     parallel_seconds = max(agent_seconds.values(), default=0.0)
 
-    # -- merge phase (sequential; _register_all collides every time but the first) --
-    base_registry = _git(["show", f"{base}:toolkit/registry.py"], project_dir).stdout
+    # -- merge phase (sequential; every shared table edited in >1 branch collides) --
+    base_tables = {
+        path: _git(["show", f"{base}:{path}"], project_dir).stdout
+        for path in shared_files
+    }
     resolver = backends[0]
     conflicts = 0
     resolutions = 0
@@ -142,28 +155,32 @@ def run_traditional(
         conflicted = _git(
             ["diff", "--name-only", "--diff-filter=U"], project_dir
         ).stdout.split()
-        conflicts += 1
-        if conflicted != ["toolkit/registry.py"]:
-            notes.append(f"unexpected conflicts: {conflicted}")
-        reg_path = project_dir / "toolkit" / "registry.py"
-        try:
-            merged_register_all, usage = resolver.resolve([reg_path.read_text()])
-        except Exception as exc:  # fall back to a deterministic union so the run finishes
-            notes.append(f"{resolver.name} failed to resolve conflict: {exc}")
-            merged_register_all = _union_registry([reg_path.read_text()])
-            usage = Usage(calls=1)
-        resolutions += 1
-        total_usage = total_usage + usage
-        calls_by_agent[resolver.name] = calls_by_agent.get(resolver.name, 0) + usage.calls
-        reg_path.write_text(
-            _splice_function(base_registry, "_register_all", merged_register_all)
-        )
-        _git(["add", "toolkit/registry.py"], project_dir)
-        # If other files conflicted, take the merged-in side to avoid wedging.
+        conflicts += len(conflicted)
+        unexpected = [path for path in conflicted if path not in shared_files]
+        if unexpected:
+            notes.append(f"unexpected conflicts: {unexpected}")
         for path in conflicted:
-            if path != "toolkit/registry.py":
+            if path not in shared_files:
+                # Not a shared table: take the merged-in side to avoid wedging.
                 _git(["checkout", "--theirs", path], project_dir, check=False)
                 _git(["add", path], project_dir)
+                continue
+            table_path = project_dir / path
+            try:
+                merged_register_all, usage = resolver.resolve([table_path.read_text()])
+            except Exception as exc:  # deterministic union fallback so the run finishes
+                notes.append(f"{resolver.name} failed to resolve conflict: {exc}")
+                merged_register_all = _union_registry([table_path.read_text()])
+                usage = Usage(calls=1)
+            resolutions += 1
+            total_usage = total_usage + usage
+            calls_by_agent[resolver.name] = (
+                calls_by_agent.get(resolver.name, 0) + usage.calls
+            )
+            table_path.write_text(
+                _splice_function(base_tables[path], "_register_all", merged_register_all)
+            )
+            _git(["add", path], project_dir)
         _git(["commit", "-q", "--no-edit"], project_dir)
     merge_seconds = time.monotonic() - merge_start
 

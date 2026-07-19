@@ -1,10 +1,11 @@
 """Run the workload through the real MAK kernel.
 
 This builds a genuine :class:`mak.session.Session` over a copy of the project and
-installs one subtask per operation, each targeting its function node **and** the
-shared ``_register_all`` node. Because every task contends on that one registry
-node, MAK's node-level write lock serializes the registry edits — so every
-registration is preserved and there is nothing to merge. The agent work itself is
+installs one subtask per operation, targeting its function node **and** every
+shared ``_register_all`` node it registers into (zero, one, or several — MAK's
+atomic lock pre-allocation claims them together). Contended nodes serialize under
+MAK's node-level write locks so no registration is ever lost; tasks touching
+different shared tables (or none) run fully in parallel. The agent work itself is
 delegated to the same backends the traditional runner uses.
 """
 
@@ -18,12 +19,7 @@ from typing import cast
 
 from harness.agents import Backend, Usage
 from harness.metrics import RunResult
-from harness.workload import (
-    REGISTRY_NODE,
-    Workload,
-    add_registration,
-    operation_by_func_node,
-)
+from harness.workload import Workload, add_registration, operation_by_func_node
 from mak.config import GitConfig, MakConfig, NodeStoreConfig, SessionConfig
 from mak.core.types import NodeId, SubTask, TaskBundle, TaskResult
 from mak.lock_manager.lock_table import LockTable
@@ -60,13 +56,17 @@ class _BenchmarkRunner:
         agent_type = getattr(adapter, "agent_type", "")
         backend = self._backends[agent_type]
 
-        func_node = next(n for n in bundle.target_nodes if str(n) != REGISTRY_NODE)
-        op = operation_by_func_node(self._workload.operations, str(func_node))
+        # The subtask targets the op's function node first, then its shared nodes.
+        func_node = str(bundle.target_nodes[0])
+        op = operation_by_func_node(self._workload.operations, func_node)
         stub = bundle.context.get(f"write_source:{op.func_node}", "")
         func_source, usage = backend.implement(op, stub)
 
-        current_registry = bundle.context.get(f"write_source:{REGISTRY_NODE}", "")
-        new_registry = add_registration(current_registry, op.register_line)
+        new_sources: dict[NodeId, str] = {NodeId(op.func_node): func_source}
+        for reg in op.registrations:
+            node = op.shared_node(reg)
+            current = bundle.context.get(f"write_source:{node}", "")
+            new_sources[NodeId(node)] = add_registration(current, reg.line)
 
         with self._guard:
             self.usage = self.usage + usage
@@ -77,10 +77,7 @@ class _BenchmarkRunner:
         return TaskResult(
             task_id=bundle.task_id,
             success=True,
-            new_sources={
-                NodeId(op.func_node): func_source,
-                NodeId(REGISTRY_NODE): new_registry,
-            },
+            new_sources=new_sources,
         )
 
     def shutdown(self) -> None:  # parity with mak.AgentRunner
@@ -114,7 +111,10 @@ def run_mak(
         SubTask(
             task_id=op.name,
             description=f"implement and register operation '{op.name}'",
-            target_nodes=[NodeId(op.func_node), NodeId(REGISTRY_NODE)],
+            target_nodes=[
+                NodeId(op.func_node),
+                *(NodeId(op.shared_node(reg)) for reg in op.registrations),
+            ],
             agent_type=backends[assignment[i]].name,
         )
         for i, op in enumerate(workload.operations)

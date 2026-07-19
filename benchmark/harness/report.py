@@ -29,6 +29,7 @@ class RunMeta:
     label: str = "Basic toolkit"  # human label
     modules: int = 3  # module count of the workload
     repeats: int = 1  # how many runs the numbers are averaged over
+    shared_functions: int = 1  # contended `_register_all` tables in the workload
 
 
 @dataclass(frozen=True)
@@ -73,9 +74,10 @@ def _summary_table(mak: RunResult, trad: RunResult) -> str:
     return "\n".join(lines)
 
 
-def _takeaway(mak: RunResult, trad: RunResult) -> str:
+def _takeaway(mak: RunResult, trad: RunResult, meta: RunMeta) -> str:
     """An honest, computed reading of the numbers (no hard-coded conclusions)."""
     mt, tt = _tokens(mak), _tokens(trad)
+    fully_contended = meta.shared_functions <= 1
     lines: list[str] = []
     if tt and mt < tt:
         lines.append(
@@ -101,22 +103,43 @@ def _takeaway(mak: RunResult, trad: RunResult) -> str:
             f"Traditional {trad.accuracy:.0%} ({worse} lost work in the merge)."
         )
     if mak.wall_seconds > trad.wall_seconds:
-        lines.append(
-            f"- **Time:** the worktree run was faster here "
-            f"({trad.wall_seconds:.1f}s vs {mak.wall_seconds:.1f}s): *every* task "
-            f"contends on the one shared registry node, so MAK serializes them while "
-            f"the worktrees run fully in parallel and reconcile afterwards. On a "
-            f"workload with more independent work, MAK parallelizes that part too — "
-            f"this benchmark deliberately maximizes contention."
-        )
+        if fully_contended:
+            lines.append(
+                f"- **Time:** the worktree run was faster here "
+                f"({trad.wall_seconds:.1f}s vs {mak.wall_seconds:.1f}s): *every* task "
+                f"contends on the one shared registry node, so MAK serializes them "
+                f"while the worktrees run fully in parallel and reconcile afterwards. "
+                f"On a workload with more independent work, MAK parallelizes that "
+                f"part too — this benchmark deliberately maximizes contention."
+            )
+        else:
+            lines.append(
+                f"- **Time:** the worktree run was faster here "
+                f"({trad.wall_seconds:.1f}s vs {mak.wall_seconds:.1f}s); MAK "
+                f"serializes only same-table edits across the "
+                f"{meta.shared_functions} shared tables, so the gap is the residual "
+                f"contention plus the sequential merge phase on the other side."
+            )
     else:
+        extra = (
+            "" if fully_contended else
+            " — contention is spread over "
+            f"{meta.shared_functions} shared tables, so most tasks proceed in "
+            f"parallel while the worktree side still pays a sequential "
+            f"merge-and-resolve phase"
+        )
         lines.append(
             f"- **Time:** MAK was faster ({mak.wall_seconds:.1f}s vs "
-            f"{trad.wall_seconds:.1f}s)."
+            f"{trad.wall_seconds:.1f}s){extra}."
         )
+    conflict_noun = (
+        "each an extra resolution call" if fully_contended
+        else "spread across the shared tables, each an extra resolution call"
+    )
     lines.append(
         f"- **Coordination:** MAK hit **0** merge conflicts by construction; the "
-        f"worktree run hit **{_num(trad.conflicts)}**, each an extra resolution call."
+        f"worktree run hit **{_num(trad.conflicts)}** conflicted files, "
+        f"{conflict_noun}."
     )
     return "\n".join(lines)
 
@@ -156,7 +179,7 @@ def _readme_section(run: ProjectRun) -> str:
         "",
         "**Reading the numbers:**",
         "",
-        _takeaway(run.mak, run.trad),
+        _takeaway(run.mak, run.trad, meta),
     ])
 
 
@@ -213,7 +236,9 @@ def _stats_section(run: ProjectRun) -> list[str]:
         f"- **Mode:** `{meta.mode}`",
         f"- **Agents:** {meta.num_agents} ({', '.join(meta.models)})",
         f"- **Workload:** {meta.operations} operations across {meta.modules} modules "
-        f"+ 1 shared registry function; {meta.tests} tests as the accuracy oracle.",
+        f"+ {meta.shared_functions} shared registry "
+        f"function{'s' if meta.shared_functions != 1 else ''}; "
+        f"{meta.tests} tests as the accuracy oracle.",
         "",
         _mode_note(meta),
         "",
@@ -223,7 +248,7 @@ def _stats_section(run: ProjectRun) -> list[str]:
         "",
         "### Reading the numbers",
         "",
-        _takeaway(mak, trad),
+        _takeaway(mak, trad, meta),
         "",
         "### Token detail",
         "",
@@ -246,16 +271,20 @@ def _stats_section(run: ProjectRun) -> list[str]:
             f"{trad.per_agent_calls.get(agent, 0)} |"
         )
     lines += _samples_lines(run)
+    tables = (
+        "the shared `_register_all`" if meta.shared_functions <= 1
+        else f"the {meta.shared_functions} shared `_register_all` tables"
+    )
     lines += [
         "",
         "### Coordination",
         "",
-        f"- **MAK** held a node-level write lock on the shared `_register_all`, "
-        f"serializing the {meta.operations} registry edits: "
+        f"- **MAK** held node-level write locks on {tables}, "
+        f"serializing only same-table registry edits: "
         f"**{_num(mak.conflicts)} conflicts**, "
         f"**{_num(mak.resolutions)} resolution calls**.",
         f"- **Traditional** merged {meta.num_agents} branches that all edited "
-        f"`_register_all`: **{_num(trad.conflicts)} conflicts**, "
+        f"{tables}: **{_num(trad.conflicts)} conflicted files**, "
         f"**{_num(trad.resolutions)} resolution calls**.",
         "",
     ]
