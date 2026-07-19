@@ -66,3 +66,26 @@ class TestCheckNameCollisions:
         assert len(reasons) == 1
         for agent in ("a1", "a2", "a3"):
             assert agent in reasons[0]
+
+    def test_same_name_in_different_files_is_not_a_collision(self) -> None:
+        # One task may legitimately edit the `_register_all` of two *different*
+        # registry tables (node-id keys carry the file); that is not a collision.
+        edits = {
+            "app/routes.py::function::_register_all": (
+                "def _register_all() -> None:\n    pass\n"
+            ),
+            "app/errors.py::function::_register_all": (
+                "def _register_all() -> None:\n    pass\n"
+            ),
+        }
+        assert check_name_collisions(edits) == []
+
+    def test_same_name_same_file_node_keys_still_collides(self) -> None:
+        # Two different edits to the same file both defining `helper` collide.
+        edits = {
+            "m.py::function::a": "def a(): pass\ndef helper(): pass\n",
+            "m.py::function::b": "def b(): pass\ndef helper(): pass\n",
+        }
+        reasons = check_name_collisions(edits)
+        assert len(reasons) == 1
+        assert "helper" in reasons[0]
