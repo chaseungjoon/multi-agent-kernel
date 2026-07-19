@@ -4,13 +4,12 @@ from shutil import copytree
 
 import pytest
 
-
 BENCHMARK_DIR = Path(__file__).resolve().parents[1] / "benchmark"
 sys.path.insert(0, str(BENCHMARK_DIR))
 
 from harness.agents import Usage  # noqa: E402
 from harness.traditional import run_traditional  # noqa: E402
-from harness.workload import Operation, WORKLOADS, assign  # noqa: E402
+from harness.workload import WORKLOADS, Operation, assign  # noqa: E402
 
 
 class _FailingBackend:
