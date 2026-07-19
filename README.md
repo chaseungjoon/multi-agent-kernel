@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.4.0 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.4.1 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -242,7 +242,7 @@ Run it yourself (all targets) with
 
 ```bash
 python3 benchmark/run_benchmark.py --mode real \
-  --models anthropic --max-agents 3
+  --models anthropic:claude-sonnet-5 anthropic:claude-sonnet-5 anthropic:claude-sonnet-5
 ```
 
 ## Contribute
