@@ -60,6 +60,11 @@ dependency graph is still explicit.
 locks on, edits them in isolation, and returns the modified fragments. The kernel
 reassembles the file.
 
+- Before dispatch, the kernel cross-checks the planner's proposed plan against that
+same AST-derived dependency graph — grounding hallucinated node ids, adding missing
+`depends_on` edges, and flagging spurious ones — so a bad LLM guess is corrected
+before it reaches the scheduler, not after a collision.
+
 > Check out the [knowledge graph](https://mak-kg.vercel.app) for this project. (created with [graphify](https://github.com/safishamsi/graphify))
 
 ## Install

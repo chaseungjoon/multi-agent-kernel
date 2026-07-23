@@ -204,7 +204,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **540 tests pass**,
+The **kernel is functionally complete and well-tested**: **633 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -965,6 +965,75 @@ so it is unit-testable without Docker.
   client (distinct from the agent adapters, which force a structured `TaskResult`).
   `build_planner_llm(model)` picks the backend from the model-id prefix, so the CLI
   can construct a working planner from `config.planner.model` alone.
+- **`depgraph.py`** (Wave 10) — a static dependency-graph extractor, purpose-built to
+  *validate* a plan rather than detect a live conflict (that job stays in
+  `mak/conflict_detector/*`, which is untouched). `build_dep_graph(sources)` parses
+  each `{node_id: source}` pair and produces a `DepGraph`: `references` (node →
+  frozenset of nodes it calls or reads) and `definers` (short symbol name → defining
+  node ids, methods keyed both as `name` and `Class.name`). Resolution is
+  deliberately shallow and conservative — a same-file call resolves to a same-file
+  definer; a cross-file reference resolves only through a parsed import table
+  (`from a import b`, `import x.y`, relative imports, aliases) to a **uniquely**
+  resolvable file; anything ambiguous (an unresolved import, `self.foo()`, a chained
+  call) yields **no edge** rather than a guess. `dep_graph_from_store(node_store)` is
+  the convenience wrapper the session actually calls, rebuilding the graph from the
+  node store's current committed state on every `install_plan` (cheap — one
+  `ast.parse` per node — and never cached across waves, since a commit invalidates
+  it).
+- **`validation.py`** (Wave 10) — `validate_plan(plan, graph, inventory)` cross-checks
+  an LLM-produced plan against the `DepGraph` and returns a `ValidationResult` (a
+  corrected copy of the plan — the input is never mutated — plus a list of
+  `PlanFinding`s for HitL/logging). The auto-fix policy is deliberately asymmetric,
+  because a false correction is worse in one direction than the other:
+    - **Missing `depends_on` edges are auto-added.** If task A's target references a
+      node task B writes, and B isn't already reachable from A, the edge is added —
+      but only if it's acyclic-safe (checked via DFS over the accumulated edge set as
+      each candidate is applied); a mutual pair that would cycle is reported as a
+      finding instead ("mutual — consider merging or manual ordering") and left
+      unapplied. Every addition is still surfaced as a finding so HitL shows exactly
+      what changed and the user can strip it via the edit flow.
+    - **Hallucinated node ids are auto-corrected only on a single confident match.**
+      Grounding tries, in order: an exact id with the wrong `::kind::` segment; the
+      same file/short name modulo case or underscores (`fooBar` ≈ `foo_bar`); a
+      method missing its `Class.` prefix (a unique suffix match); then
+      `difflib.get_close_matches` at a 0.8 cutoff, accepted only at ratio ≥ 0.9.
+      Multiple or weak candidates become an `unknown_node` finding with suggestions
+      and the plan is left as-is — an LLM decomposition targeting a genuinely new
+      symbol or new file (no candidate at all) produces no finding, since that's a
+      legitimate part of the planner's existing contract.
+    - **Spurious `depends_on` edges are flagged, never removed** — a declared edge
+      with no reference either direction between the two tasks' nodes becomes a
+      `spurious_dep` finding, because the LLM may know a semantic ordering the AST
+      can't see; validation suggests and corrects, it never silently discards intent.
+    - **Unknown `context_nodes` are dropped** (with a `context_dropped` finding) —
+      context is soft, so a phantom id is just removed rather than corrected, to
+      avoid acquiring a read lock on a node that doesn't exist.
+    - A correction is reverted (downgraded back to a suggestion finding) if applying
+      it would violate a `parse_plan` invariant, e.g. create a second whole-file
+      owner for one file.
+  `PlanFinding.kind` is one of `missing_dep` / `spurious_dep` / `unknown_node` /
+  `corrected_node` / `context_dropped`.
+- **Config-gated strategy and self-critique** (Wave 10, `Planner`, `planner.py`) —
+  two opt-in refinements on top of the default one-shot `decompose`, both off by
+  default so nothing about the default LLM call count changes:
+    - `strategy="outline"` (`planner.strategy: outline`) runs two passes instead of
+      one: a file-level **outline** call (steps naming which files they touch and
+      their `depends_on` on each other, validated for uniqueness and acyclicity via
+      a small Kahn check) followed by one **detail** call per outline step, each
+      given only the node inventory restricted to that step's files. Detail-call
+      task ids are namespaced `s<k>.<id>` and an outline edge `S1 → S2` adds every
+      `S1` task id to every `S2` task's `depends_on` (correct-by-construction and
+      deliberately conservative — the validation pass above is what surfaces
+      resulting over-serialization to HitL). The merged result is re-run through
+      `parse_plan`'s invariants exactly once before being returned.
+    - `self_critique=True` (`planner.self_critique: true`) adds one reflection call
+      after a plan is produced (either strategy): the plan is shown back to the
+      model, which replies `{"verdict": "ok"}` or a corrected full plan in the same
+      schema. A `verdict: ok` or anything that fails to parse **keeps the original
+      plan** — a broken critique response must never break a good plan — and no
+      retry budget is spent on it. Deterministic validation (above) always runs
+      *after* critique, so the order in `Session.plan()` is decompose(+critique) →
+      validate → review.
 
 ## 9. Git integration
 
@@ -997,8 +1066,19 @@ failure — nothing is swallowed.
 machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILED | ABORTED}`.
 
 - **initialize** — ingest the working dir's Python files into the node store.
-- **plan** — planner → optional HitL review → `install_plan` (builds the DAG +
-  persisted `Scheduler`). `install_plan` normalizes every task's `agent_type`
+- **plan** — planner (+ optional self-critique) → deterministic validation → optional
+  HitL review → `install_plan` (builds the DAG + persisted `Scheduler`).
+  `install_plan` **always** re-validates the incoming plan — this is the one wire-in
+  point that covers every path into it: `Session.plan()`, the CLI/TUI's direct
+  `_planner.decompose()` + `install_plan()` call, cascade waves, and a user's edited
+  plan from the review flow. When `planner.validate` (default on), `install_plan`
+  rebuilds the dependency graph from the node store's current committed state
+  (`dep_graph_from_store`, §8) and runs `validate_plan` before normalizing agent
+  types; the corrected plan is what actually gets installed, and
+  `session.last_plan_findings` holds the findings (richer on the first pass inside
+  `plan()`, since `install_plan`'s re-validation of an already-corrected plan is a
+  cheap, mostly-empty second pass). One `PLAN_VALIDATED` event is logged with a
+  per-kind finding count. `install_plan` also normalizes every task's `agent_type`
   (`_apply_default_agent`): a task with **no** `agent_type` is distributed
   **round-robin across the healthy agent pool** (so a multi-provider roster is
   actually used, not just the first agent); a task naming an **unconfigured/
@@ -1074,6 +1154,16 @@ Robustness properties worth knowing:
   but staged nothing. `SessionResult.failure_reasons` carries it for the failed
   tasks, and the CLI prints one line per failed task — so a failure is never a bare
   task id with no explanation.
+- **Plan-quality metrics** (Wave 10) — `_run_loop` samples `len(scheduler.dispatched)`
+  after every `tick()` into `_concurrency_samples`; `_reject` increments
+  `_conflict_rejections` and `_handle_incomplete` increments `_redispatches` on a
+  partial-completion re-dispatch. `_finalize` computes `max_concurrency`,
+  `mean_concurrency` (2 dp), `conflict_rejections`, `redispatches`,
+  `tasks_completed`, and `tasks_failed` into `SessionResult.metrics` (an additive
+  dict field, default `{}`, so every prior `SessionResult(...)` construction and
+  equality check stays valid) and logs one `PLAN_METRICS` event — a per-wave signal
+  for whether a plan's `depends_on` structure is actually realizing parallelism or
+  serializing/colliding more than it should.
 
 All collaborators are injected behind `Protocol`s, so the session is testable with
 fakes.
@@ -1095,6 +1185,10 @@ session:
 planner:
   model: "claude-sonnet-5"
   max_retries: 3
+  validate: true          # cross-check the plan against the code dependency graph —
+                          # ground node ids, add missing depends_on edges (Wave 10)
+  strategy: "oneshot"     # "oneshot" or "outline" (outline -> per-step detail)
+  self_critique: false    # one extra LLM reflection pass over the produced plan
 
 agents:                         # first entry is the default agent
   - type: "anthropic_api"
@@ -1122,6 +1216,18 @@ node_store:
 Rules and behaviors:
 - `agents` is **required** and must be non-empty; each entry needs a `type`. Per-agent
   fields `model`, `api_key_env`, and `cmd` are all optional.
+- **`config.yaml` is the single source of truth for model choice.**
+  `PlannerConfig.model` defaults to `""` (unset) in `mak/config.py` — the dataclass
+  carries no hardcoded model name, mirroring `AgentConfig.model` (`str | None = None`).
+  A missing `planner.model` key is not silently backfilled with a name the user never
+  chose; it comes from `config.yaml` (the bundled default names one) or, for the
+  interactive CLI, from whatever `/planner` last wrote back to it. The CLI only
+  touches `config.yaml` when the user explicitly changes a model.
+- `planner.validate`/`strategy`/`self_critique` are parsed by `_parse_planner`
+  (Wave 10, §8): `strategy` must be `"oneshot"` or `"outline"` or `_PLANNER_STRATEGIES`
+  raises `ConfigError`; the two booleans go through `_as_bool`. All three default to
+  the safe, cheapest behavior (validate on, oneshot, no critique) so an existing
+  `config.yaml` without them is unaffected.
 - **API keys are never stored in config** — `api_key_env` names the environment
   variable to read at composition time. Put real keys in `~/.config/mak/.env`
   (written by the TUI's `/apikey` setup) or, in a source checkout, the legacy
@@ -1464,9 +1570,12 @@ mak/
 │   └── name_collision_check.py
 │
 ├── planner/
-│   ├── planner.py         # LLM decomposition, SubTask schema, retry logic
+│   ├── planner.py         # LLM decomposition, SubTask schema, retry logic,
+│   │                      #   config-gated outline strategy + self-critique
 │   ├── llm.py             # PlannerLLM completion backends (build_planner_llm)
-│   └── review.py          # human-in-the-loop DAG review
+│   ├── review.py          # human-in-the-loop DAG review + finding rendering
+│   ├── depgraph.py        # static call/import dependency graph (Wave 10)
+│   └── validation.py      # deterministic plan grounding/augmentation (Wave 10)
 │
 ├── agent_runner/
 │   ├── runner.py          # routes to API/subprocess adapters; failure policy
@@ -1634,19 +1743,20 @@ from the environment and doesn't auto-load `.env`. Then: a `mak` console entry p
 SDKs are heavy), a CI release workflow (OIDC trusted publishing), and a `Dockerfile`
 that bind-mounts the target repo (`docker run -v "$PWD:/work" …`).
 
-### 4. Planner quality
+### 4. Planner quality — **[RESOLVED — Wave 10]**
 
-One-shot decomposition + HitL degrades on large, interdependent tasks (missed
+One-shot decomposition + HitL degraded on large, interdependent tasks (missed
 dependency edges → runtime collisions, hallucinated node ids, over/under
-serialization). The standout MAK-specific idea: **ground the plan in the real
-call/import graph**. MAK can build a static dependency graph from the node store, then
-**cross-check the planner's `depends_on` against actual code dependencies** — flagging
-missing edges (B writes a node A calls → B should depend on A) and spurious ones. That
-turns the plan from an LLM guess into an LLM proposal *validated against code
-structure*. Also: node grounding / hallucination guards (fuzzy-match bad ids, or
-constrain target nodes to the real inventory), an outline→detail planner, a
-self-critique pass, few-shot examples, and plan-quality metrics (realized parallelism,
-conflict/re-dispatch rate) as a feedback signal.
+serialization). Shipped: a static dependency graph over the node store
+(`mak/planner/depgraph.py`) and deterministic plan validation against it
+(`mak/planner/validation.py`, §8) that grounds hallucinated node ids, auto-adds
+acyclic-safe missing `depends_on` edges, flags (never removes) spurious ones, and
+drops unknown context nodes — every change surfaced to HitL, which remains the
+backstop. Also shipped: a config-gated outline→detail planner and self-critique pass
+(both default off), and plan-quality metrics (realized concurrency,
+conflict/re-dispatch rate) recorded in `SessionResult.metrics` and the session log.
+**Not done:** few-shot exemplar plans in the prompt — a smaller, separate,
+prompt-only item, still open.
 
 ### 5. Local LLM support
 
@@ -1736,7 +1846,12 @@ correctly-indented pre-commit preview assembly; **whole-file node primacy** —
 `list_nodes` and `parse_file_into_nodes` now enforce that a committed whole-file node
 takes exclusive authority over its file (stale fragments are excluded, re-ingestion
 is skipped); and **no-op disk sync** so that the on-disk file is always written from
-the committed node store content when a no-op task completes. What remains is the
+the committed node store content when a no-op task completes. **Wave 10** (out of
+numeric order — it didn't depend on Waves 7–9) added deterministic plan validation: a
+static dependency graph over the node store (`depgraph.py`) grounds hallucinated node
+ids and augments/flags a plan's `depends_on` edges against real code structure
+(`validation.py`) before every `install_plan`, plus config-gated outline→detail
+planning, a self-critique pass, and plan-quality metrics. What remains is the
 open-problems list above.
 
 ---
