@@ -19,10 +19,31 @@ from collections.abc import Callable
 from mak.core.exceptions import PlanReviewAborted
 from mak.core.types import SubTask
 from mak.planner.planner import parse_plan
+from mak.planner.validation import PlanFinding
+
+# Findings that represent an automatic change validation made (shown with ✎),
+# vs. those that are advisory only and need the reviewer's judgement (shown with ⚠).
+_APPLIED_KINDS = frozenset({"corrected_node", "context_dropped"})
 
 
-def render_plan(subtasks: list[SubTask]) -> str:
-    """Render the sub-task list and dependency edges as human-readable text."""
+def _render_findings(findings: list[PlanFinding]) -> list[str]:
+    """Render validation findings: ✎ for applied changes, ⚠ for suggestions."""
+    lines = ["", "Plan validation:"]
+    for finding in findings:
+        applied = finding.kind in _APPLIED_KINDS or "added:" in finding.message
+        mark = "✎" if applied else "⚠"
+        suffix = (
+            f"  (candidates: {', '.join(finding.suggestions)})"
+            if finding.suggestions else ""
+        )
+        lines.append(f"  {mark} [{finding.task_id}] {finding.message}{suffix}")
+    return lines
+
+
+def render_plan(
+    subtasks: list[SubTask], findings: list[PlanFinding] | None = None
+) -> str:
+    """Render the sub-task list, dependency edges, and any validation findings."""
     if not subtasks:
         return "(empty plan — no sub-tasks)"
     lines: list[str] = ["Proposed plan:", ""]
@@ -39,6 +60,8 @@ def render_plan(subtasks: list[SubTask]) -> str:
         for dep in task.depends_on
     ]
     lines.extend(edges or ["  (none — all sub-tasks are independent)"])
+    if findings:
+        lines.extend(_render_findings(findings))
     return "\n".join(lines)
 
 
@@ -46,13 +69,16 @@ def display_plan_for_review(
     subtasks: list[SubTask],
     *,
     header: str | None = None,
+    findings: list[PlanFinding] | None = None,
     prompt_fn: Callable[[str], str] = input,
     printer: Callable[[str], None] = print,
 ) -> list[SubTask]:
     """Show the plan and return the approved (possibly edited) sub-task list.
 
     ``header`` is printed before the plan when present — used by cascade waves
-    to explain why these extra tasks appeared.
+    to explain why these extra tasks appeared. ``findings`` are the deterministic
+    validation observations (corrections applied, edges added, suggestions),
+    rendered under the plan so the reviewer sees what validation did.
 
     Returns the original list on approval, or a re-parsed list on edit. Raises
     ``PlanReviewAborted`` if the user aborts.
@@ -60,7 +86,7 @@ def display_plan_for_review(
     if header:
         printer(header)
         printer("")
-    printer(render_plan(subtasks))
+    printer(render_plan(subtasks, findings))
     while True:
         answer = prompt_fn("Approve plan? [a]pprove / [e]dit / a[b]ort: ")
         choice = answer.strip().lower()

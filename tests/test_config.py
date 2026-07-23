@@ -302,3 +302,33 @@ class TestModelCaveat:
     def test_ordinary_models_have_none(self) -> None:
         for model in ("claude-sonnet-5", "gpt-5.6-sol", "gemini-3.5-flash", None, ""):
             assert model_caveat(model) is None
+
+
+class TestPlannerQualityConfig:
+    def test_defaults(self) -> None:
+        cfg = PlannerConfig()
+        assert cfg.validate is True
+        assert cfg.strategy == "oneshot"
+        assert cfg.self_critique is False
+
+    def test_parsed_from_yaml(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "planner:\n"
+            "  validate: false\n"
+            "  strategy: outline\n"
+            "  self_critique: true\n"
+            "agents:\n  - type: anthropic_api\n"
+        )
+        cfg = load_config(path)
+        assert cfg.planner.validate is False
+        assert cfg.planner.strategy == "outline"
+        assert cfg.planner.self_critique is True
+
+    def test_invalid_strategy_raises(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "planner:\n  strategy: bogus\nagents:\n  - type: anthropic_api\n"
+        )
+        with pytest.raises(ConfigError, match="strategy"):
+            load_config(path)

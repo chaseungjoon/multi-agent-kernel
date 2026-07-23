@@ -204,6 +204,74 @@ class TestInstallPlan:
             session.plan("do stuff", review=False)
 
 
+class TestPlanValidation:
+    """Wave 10: install_plan grounds and augments plans against the code graph."""
+
+    def _project(self, tmp_path: Path) -> NodeStore:
+        (tmp_path / "util.py").write_text("def parse_config(s):\n    return s\n")
+        (tmp_path / "app.py").write_text(
+            "from util import parse_config\n\n\n"
+            "def load():\n    return parse_config('x')\n"
+        )
+        return _store(tmp_path)
+
+    def _session_validate(
+        self, tmp_path: Path, store: NodeStore, *, validate: bool
+    ) -> Session:
+        from dataclasses import replace as _replace
+        base = _config(tmp_path)
+        config = _replace(base, planner=_replace(base.planner, validate=validate))
+        return Session(
+            session_id="s1", config=config, node_store=store,
+            lock_table=LockTable(), registry=FakeRegistry(),  # type: ignore[arg-type]
+            agent_runner=StagingRunner(store),  # type: ignore[arg-type]
+        )
+
+    def test_missing_edge_added_at_install(self, tmp_path: Path) -> None:
+        store = self._project(tmp_path)
+        session = self._session_validate(tmp_path, store, validate=True)
+        session.initialize()
+        # app.load references util.parse_config, but the plan omits the edge.
+        session.install_plan([
+            _task("edit-parse", ["util.py::function::parse_config"]),
+            _task("edit-load", ["app.py::function::load"]),
+        ])
+        assert session._dag_task("edit-load").depends_on == ["edit-parse"]
+        kinds = {f.kind for f in session.last_plan_findings}
+        assert "missing_dep" in kinds
+
+    def test_hallucinated_target_corrected(self, tmp_path: Path) -> None:
+        store = self._project(tmp_path)
+        session = self._session_validate(tmp_path, store, validate=True)
+        session.initialize()
+        # 'lod' is a typo for the real 'load'.
+        session.install_plan([_task("t", ["app.py::function::lod"])])
+        assert session._dag_task("t").target_nodes == [
+            NodeId("app.py::function::load")
+        ]
+        assert "corrected_node" in {f.kind for f in session.last_plan_findings}
+
+    def test_validate_false_is_identity(self, tmp_path: Path) -> None:
+        store = self._project(tmp_path)
+        session = self._session_validate(tmp_path, store, validate=False)
+        session.initialize()
+        session.install_plan([
+            _task("edit-parse", ["util.py::function::parse_config"]),
+            _task("edit-load", ["app.py::function::load"]),
+        ])
+        # No validation: the missing edge is NOT added and no findings recorded.
+        assert session._dag_task("edit-load").depends_on == []
+        assert session.last_plan_findings == []
+
+    def test_cascade_tasks_validate_without_findings(self, tmp_path: Path) -> None:
+        # Cascade tasks target real inventory ids, so validation is a clean no-op.
+        store = self._project(tmp_path)
+        session = self._session_validate(tmp_path, store, validate=True)
+        session.initialize()
+        session.install_plan([_task("solo", ["util.py::function::parse_config"])])
+        assert session.last_plan_findings == []
+
+
 # --- run: full completion ----------------------------------------------------
 
 
@@ -882,6 +950,92 @@ class TestConcurrentDispatch:
         # Both edits landed on disk.
         rebuilt = (tmp_path / "m.py").read_text()
         compile(rebuilt, "m.py", "exec")
+
+
+class TestPlanMetrics:
+    """Wave 10: realized-parallelism and rework metrics on the SessionResult."""
+
+    def test_two_parallel_tasks_report_max_concurrency(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        session = _session(
+            tmp_path, runner=_SlowStagingRunner(store, 0.15), node_store=store
+        )
+        session.initialize()
+        session.install_plan(
+            [
+                _task("a", ["m.py::function::a"]),
+                _task("b", ["m.py::function::b"]),
+            ]
+        )
+        result = session.run()
+        assert result.ok
+        # Two independent tasks ran at once: the scheduler sampled >= 2 in flight.
+        assert result.metrics["max_concurrency"] >= 2
+
+    def test_conflict_rejection_counted(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        lock_table = LockTable()
+        session = _session(
+            tmp_path,
+            runner=StagingRunner(store),
+            node_store=store,
+            lock_table=lock_table,
+            max_attempts=1,
+        )
+        session.initialize()
+        na = NodeId("m.py::function::a")
+        nb = NodeId("m.py::function::b")
+        session.install_plan([_task("a", [str(na)]), _task("b", [str(nb)])])
+        # Both agents introduce a 'helper' name in one batch: 'b' is rejected.
+        lock_table.try_acquire_all([(na, LockMode.WRITE)], "a")
+        lock_table.try_acquire_all([(nb, LockMode.WRITE)], "b")
+        h1 = "def helper():\n    return 1\n"
+        h2 = "def helper():\n    return 2\n"
+        store.put_node(na, NodeFragment(na, "function", h1, 1))
+        store.put_node(nb, NodeFragment(nb, "function", h2, 1))
+        session._process_batch(
+            [
+                _Completion(
+                    TaskBundle(task_id="a", description="", target_nodes=[na]),
+                    TaskResult(task_id="a", success=True, modified_nodes=[na]),
+                ),
+                _Completion(
+                    TaskBundle(task_id="b", description="", target_nodes=[nb]),
+                    TaskResult(task_id="b", success=True, modified_nodes=[nb]),
+                ),
+            ]
+        )
+        assert session._plan_metrics()["conflict_rejections"] == 1
+
+    def test_plan_metrics_logged_and_readable(self, tmp_path: Path) -> None:
+        from mak.core.logging import EventType, SessionLogger
+
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        logger = SessionLogger(tmp_path / "session.jsonl")
+        session = Session(
+            session_id="s1",
+            config=_config(tmp_path),
+            node_store=store,
+            lock_table=LockTable(),
+            registry=FakeRegistry(),  # type: ignore[arg-type]
+            agent_runner=StagingRunner(store),  # type: ignore[arg-type]
+            logger=logger,
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        session.run()
+
+        metric_entries = [
+            e for e in logger.read_log() if e.event_type is EventType.PLAN_METRICS
+        ]
+        assert len(metric_entries) == 1
+        payload = metric_entries[0].payload
+        assert payload["tasks_completed"] == 1
+        assert "max_concurrency" in payload
+        assert "redispatches" in payload
 
 
 class TestCrossAgentConflictDetection:

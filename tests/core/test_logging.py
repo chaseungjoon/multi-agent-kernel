@@ -37,6 +37,8 @@ def test_all_event_type_values_exist() -> None:
         "agent_spawned",
         "session_started",
         "session_ended",
+        "plan_validated",
+        "plan_metrics",
     }
     assert {e.value for e in EventType} == expected
 

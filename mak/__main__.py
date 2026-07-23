@@ -247,6 +247,8 @@ def build_session(
         build_planner_llm(config.planner.model, api_key=_planner_api_key(config)),
         max_retries=config.planner.max_retries,
         agent_types=healthy,
+        strategy=config.planner.strategy,
+        self_critique=config.planner.self_critique,
     )
     git_helper = (
         GitHelper(work_dir, commit_prefix=config.git.commit_prefix)

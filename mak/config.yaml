@@ -9,8 +9,13 @@ session:
   # test_command: "pytest -q"
 
 planner:
-  model: "claude-sonnet-5"
+  model: "claude-opus-4-8"
   max_retries: 3
+  # validate: true          # cross-check the plan against the code dependency
+  #                         # graph — ground node ids, add missing depends_on edges
+  #                         # (default true; set false to disable augmentation)
+  # strategy: "oneshot"     # "oneshot" or "outline" (outline -> per-step detail)
+  # self_critique: false    # one extra LLM reflection pass over the produced plan
 
 # The first entry is the default agent: a plan's tasks are distributed across the
 # roster round-robin unless a task names its own agent_type. API keys are read
@@ -24,7 +29,7 @@ agents:
     max_instances: 2
     timeout: 300
   - type: "openai_api"
-    model: "gpt-5.6-sol"
+    model: "gpt-5.6-terra"
     api_key_env: "OPENAI_API_KEY"
     max_instances: 2
     timeout: 300

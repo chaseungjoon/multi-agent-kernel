@@ -21,6 +21,8 @@ class EventType(StrEnum):
     AGENT_SPAWNED = "agent_spawned"
     SESSION_STARTED = "session_started"
     SESSION_ENDED = "session_ended"
+    PLAN_VALIDATED = "plan_validated"
+    PLAN_METRICS = "plan_metrics"
 
 
 @dataclass(frozen=True, slots=True)

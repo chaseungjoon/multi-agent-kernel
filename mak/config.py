@@ -94,15 +94,29 @@ class SessionConfig:
 
 @dataclass(frozen=True, slots=True)
 class PlannerConfig:
-    """Planner model configuration.
+    """Planner model + quality configuration.
 
     No sampling knob: MAK's current default models (Claude Sonnet 5 / Opus 4.8 /
     Fable 5, GPT-5.x, Gemini 3.x) reject ``temperature``/``top_p``, and the agent
     adapters already omit them. Steering is via the prompt, not sampling params.
+
+    ``model`` is the planner's model id. It carries no hardcoded default — the empty
+    string means "unset", to be supplied by ``config.yaml`` (the single source of
+    truth for model choices, mirroring ``AgentConfig.model``). Every real run loads a
+    ``config.yaml`` that names it; the CLI only writes it back when the user changes it.
+
+    ``validate`` (default on) runs deterministic plan validation against the code
+    dependency graph after decomposition — grounding node ids and adding missing
+    dependency edges (see ``mak.planner.validation``). ``strategy`` is ``oneshot``
+    (single decomposition call) or ``outline`` (outline → per-step detail).
+    ``self_critique`` adds one LLM reflection pass over a produced plan.
     """
 
-    model: str = "claude-sonnet-5"
+    model: str = ""
     max_retries: int = 3
+    validate: bool = True
+    strategy: str = "oneshot"
+    self_critique: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,10 +176,21 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
     )
 
 
+_PLANNER_STRATEGIES = ("oneshot", "outline")
+
+
 def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
+    strategy = str(raw.get("strategy", "oneshot"))
+    if strategy not in _PLANNER_STRATEGIES:
+        raise ConfigError(
+            f"planner 'strategy' must be one of {_PLANNER_STRATEGIES}, got {strategy!r}"
+        )
     return PlannerConfig(
-        model=str(raw.get("model", "claude-sonnet-5")),
+        model=str(raw.get("model", "")),
         max_retries=_as_int(raw, "max_retries", 3),
+        validate=_as_bool(raw, "validate", True),
+        strategy=strategy,
+        self_critique=_as_bool(raw, "self_critique", False),
     )
 
 

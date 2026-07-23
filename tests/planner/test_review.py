@@ -9,6 +9,7 @@ import pytest
 from mak.core.exceptions import PlanReviewAborted
 from mak.core.types import NodeId, SubTask
 from mak.planner.review import display_plan_for_review, render_plan
+from mak.planner.validation import PlanFinding
 
 
 def _plan() -> list[SubTask]:
@@ -62,6 +63,26 @@ class TestRenderPlan:
     def test_no_edges_placeholder(self) -> None:
         independent = [SubTask(task_id="x", description="d")]
         assert "independent" in render_plan(independent)
+
+    def test_findings_none_or_empty_identical_to_today(self) -> None:
+        base = render_plan(_plan())
+        assert render_plan(_plan(), None) == base
+        assert render_plan(_plan(), []) == base
+        assert "Plan validation:" not in base
+
+    def test_findings_rendered_with_marks(self) -> None:
+        findings = [
+            PlanFinding("corrected_node", "a", "corrected 'x' -> 'y'", ("y",)),
+            PlanFinding("missing_dep", "b", "added: 'a' -> 'b' (rewrites node)"),
+            PlanFinding("unknown_node", "a", "target 'z' is not in the inventory",
+                        ("z1", "z2")),
+        ]
+        text = render_plan(_plan(), findings)
+        assert "Plan validation:" in text
+        assert "✎ [a] corrected" in text  # applied change
+        assert "✎ [b] added:" in text  # added edge
+        assert "⚠ [a] target 'z'" in text  # advisory suggestion
+        assert "candidates: z1, z2" in text
 
 
 class TestApprove:

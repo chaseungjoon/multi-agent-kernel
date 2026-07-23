@@ -70,8 +70,10 @@ from mak.git_integration.git import GitHelper
 from mak.lock_manager.deadlock_detector import DeadlockDetector
 from mak.node_store.reconstruction import assemble_fragments, reconstruct_file
 from mak.node_store.store import NodeStore
+from mak.planner.depgraph import dep_graph_from_store
 from mak.planner.planner import Planner
 from mak.planner.review import display_plan_for_review
+from mak.planner.validation import PlanFinding, validate_plan
 from mak.scheduler.dag import DAG
 from mak.scheduler.scheduler import Scheduler
 
@@ -180,6 +182,9 @@ class SessionResult:
     blocked: tuple[str, ...] = ()
     skipped: tuple[str, ...] = ()
     failure_reasons: dict[str, str] = field(default_factory=dict)
+    # Plan-quality metrics for this run (realized parallelism, conflict/redispatch
+    # rate). Empty for a session that never ran. See ``Session._finalize``.
+    metrics: dict[str, float] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -310,6 +315,15 @@ class Session:
         # Per-wave commit log: node_id → (source_before, source_after).
         # Populated during run(); read by detect_cascade_tasks() after run().
         self._wave_committed: dict[NodeId, tuple[str | None, str]] = {}
+        # Deterministic plan-validation findings from the most recent install_plan;
+        # surfaced to the review UI and available to callers after planning.
+        self.last_plan_findings: list[PlanFinding] = []
+        # Plan-quality counters, reset per wave in install_plan and reported by
+        # _finalize: conflict rejections, partial re-dispatches, and a per-tick
+        # sample of in-flight task count (realized parallelism).
+        self._conflict_rejections = 0
+        self._redispatches = 0
+        self._concurrency_samples: list[int] = []
 
     # -- logging helper ----------------------------------------------------
 
@@ -401,13 +415,41 @@ class Session:
             raise SessionError(f"cannot plan from state {self.state}")
         if self._planner is None:
             raise SessionError("no planner configured; use install_plan() instead")
-        subtasks = self._planner.decompose(user_task, self._node_store.list_nodes())
+        decomposed = self._planner.decompose(
+            user_task, self._node_store.list_nodes()
+        )
+        # Ground and augment the plan before review so the reviewer sees the
+        # corrected plan and exactly what validation changed. install_plan()
+        # re-validates (an idempotent no-op on the already-corrected plan).
+        validated, findings = self._validate_subtasks(decomposed)
+        reviewed = validated
         if review:
-            subtasks = display_plan_for_review(
-                subtasks, prompt_fn=prompt_fn, printer=printer
+            reviewed = display_plan_for_review(
+                validated, findings=findings, prompt_fn=prompt_fn, printer=printer
             )
-        self.install_plan(subtasks)
-        return subtasks
+        self.install_plan(reviewed)
+        if reviewed is validated:
+            # Not edited: keep the richer first-pass findings (install_plan's
+            # re-validation of an already-corrected plan reports fewer).
+            self.last_plan_findings = findings
+        return reviewed
+
+    def _validate_subtasks(
+        self, subtasks: list[SubTask]
+    ) -> tuple[list[SubTask], list[PlanFinding]]:
+        """Run deterministic plan validation, unless disabled in config."""
+        if not self._config.planner.validate:
+            return subtasks, []
+        graph = dep_graph_from_store(self._node_store)
+        result = validate_plan(subtasks, graph, self._node_store.list_nodes())
+        return result.plan, result.findings
+
+    def _log_plan_findings(self, findings: list[PlanFinding]) -> None:
+        """Log one PLAN_VALIDATED event with a per-kind finding count."""
+        counts: dict[str, int] = {}
+        for finding in findings:
+            counts[finding.kind] = counts.get(finding.kind, 0) + 1
+        self._log(EventType.PLAN_VALIDATED, counts=counts, total=len(findings))
 
     def install_plan(self, subtasks: list[SubTask]) -> None:
         """Build the DAG + scheduler from a ready plan (bypasses the planner).
@@ -428,6 +470,17 @@ class Session:
         self._failed = []
         self._failure_reasons = {}
         self._wave_committed = {}
+        self._conflict_rejections = 0
+        self._redispatches = 0
+        self._concurrency_samples = []
+        # Validate/augment against the code graph (grounds ids, adds missing edges)
+        # here — so the CLI's plan() path, the TUI's direct install, cascade waves,
+        # and user-edited plans all get validation. Idempotent when plan() already
+        # validated the same list.
+        subtasks, findings = self._validate_subtasks(subtasks)
+        self.last_plan_findings = findings
+        if findings:
+            self._log_plan_findings(findings)
         subtasks = self._apply_default_agent(subtasks)
         dag = DAG(subtasks)
         self._scheduler = Scheduler(
@@ -526,6 +579,8 @@ class Session:
         for _iteration in range(max_iterations):
             scheduler.tick()
             self._submit_partials()
+            # Sample realized parallelism: how many tasks are in flight this tick.
+            self._concurrency_samples.append(len(scheduler.dispatched))
 
             now = time.monotonic()
             if now - last_deadlock_scan >= self._deadlock_interval:
@@ -570,6 +625,8 @@ class Session:
                 blocked=blocked,
                 stalled=True,
             )
+        metrics = self._plan_metrics()
+        self._log(EventType.PLAN_METRICS, **metrics)
         return SessionResult(
             state=self.state,
             completed=tuple(self._completed),
@@ -581,7 +638,21 @@ class Session:
                 for t in self._failed
                 if t in self._failure_reasons
             },
+            metrics=metrics,
         )
+
+    def _plan_metrics(self) -> dict[str, float]:
+        """Realized-parallelism and rework metrics for the wave just run."""
+        samples = self._concurrency_samples
+        mean = round(sum(samples) / len(samples), 2) if samples else 0.0
+        return {
+            "max_concurrency": float(max(samples, default=0)),
+            "mean_concurrency": mean,
+            "conflict_rejections": float(self._conflict_rejections),
+            "redispatches": float(self._redispatches),
+            "tasks_completed": float(len(self._completed)),
+            "tasks_failed": float(len(self._failed)),
+        }
 
     def _failed_descendants(self, tasks: dict[str, SubTask]) -> set[str]:
         """Tasks that (transitively) depend on a failed task.
@@ -808,6 +879,7 @@ class Session:
 
     def _reject(self, task_id: str, staged: list[NodeId], reasons: list[str]) -> None:
         """Log a rejection and discard the staged (pending) fragments."""
+        self._conflict_rejections += 1
         self._log(EventType.CONFLICT_DETECTED, task_id=task_id, reasons=reasons)
         if reasons:
             self._failure_reasons[task_id] = "; ".join(reasons)
@@ -942,6 +1014,7 @@ class Session:
         else:
             # Remaining nodes are still locked from the original acquisition; queue
             # a narrowed re-dispatch covering only what is left.
+            self._redispatches += 1
             self._partial_queue.append(progress.task_id)
 
     def _submit_partials(self) -> None:

@@ -250,3 +250,136 @@ class TestDecompose:
         llm = StubLLM([_VALID_PLAN])
         Planner(llm).decompose("t", [])
         assert "(empty)" in llm.prompts[0]
+
+
+_OUTLINE = json.dumps(
+    [
+        {"step_id": "core", "description": "build util", "files": ["util.py"],
+         "depends_on": []},
+        {"step_id": "app", "description": "build app", "files": ["app.py"],
+         "depends_on": ["core"]},
+    ]
+)
+_DETAIL_CORE = json.dumps(
+    [
+        {"task_id": "parse", "description": "write parse",
+         "target_nodes": ["util.py::function::parse"], "depends_on": [],
+         "agent_type": "anthropic_api"},
+    ]
+)
+_DETAIL_APP = json.dumps(
+    [
+        {"task_id": "load", "description": "write load",
+         "target_nodes": ["app.py::function::load"], "depends_on": [],
+         "agent_type": "anthropic_api"},
+        {"task_id": "run", "description": "write run",
+         "target_nodes": ["app.py::function::run"], "depends_on": ["load"],
+         "agent_type": "anthropic_api"},
+    ]
+)
+_OUTLINE_INVENTORY = [
+    NodeId("util.py::function::parse"),
+    NodeId("app.py::function::load"),
+    NodeId("app.py::function::run"),
+]
+
+
+class TestOutlineStrategy:
+    def test_merges_namespaced_tasks_with_cross_and_intra_step_deps(self) -> None:
+        llm = StubLLM([_OUTLINE, _DETAIL_CORE, _DETAIL_APP])
+        planner = Planner(llm, strategy="outline")
+        tasks = planner.decompose("build it", _OUTLINE_INVENTORY)
+
+        by_id = {t.task_id: t for t in tasks}
+        assert set(by_id) == {"s0.parse", "s1.load", "s1.run"}
+        # Cross-step edge: every 'app' task depends on the upstream 'core' task.
+        assert by_id["s1.load"].depends_on == ["s0.parse"]
+        # Intra-step dep remapped to the namespaced id, plus the cross-step edge.
+        assert by_id["s1.run"].depends_on == ["s1.load", "s0.parse"]
+        assert by_id["s0.parse"].depends_on == []
+        assert len(llm.prompts) == 3
+
+    def test_detail_prompt_restricted_to_step_files(self) -> None:
+        llm = StubLLM([_OUTLINE, _DETAIL_CORE, _DETAIL_APP])
+        Planner(llm, strategy="outline").decompose("build it", _OUTLINE_INVENTORY)
+        # The first detail prompt (for the 'core' step) sees only util.py symbols.
+        core_prompt = llm.prompts[1]
+        assert "util.py::function::parse" in core_prompt
+        assert "app.py::function::load" not in core_prompt
+
+    def test_malformed_outline_retries(self) -> None:
+        llm = StubLLM(["not json", _OUTLINE, _DETAIL_CORE, _DETAIL_APP])
+        tasks = Planner(llm, strategy="outline", max_retries=3).decompose(
+            "build it", _OUTLINE_INVENTORY
+        )
+        assert set(t.task_id for t in tasks) == {"s0.parse", "s1.load", "s1.run"}
+        assert "rejected" in llm.prompts[1]
+
+    def test_outline_cycle_rejected(self) -> None:
+        cyclic = json.dumps(
+            [
+                {"step_id": "a", "description": "x", "files": ["a.py"],
+                 "depends_on": ["b"]},
+                {"step_id": "b", "description": "y", "files": ["b.py"],
+                 "depends_on": ["a"]},
+            ]
+        )
+        llm = StubLLM([cyclic, cyclic, cyclic])
+        with pytest.raises(PlannerFailedError, match="cycle"):
+            Planner(llm, strategy="outline", max_retries=3).decompose("t", [])
+
+    def test_oneshot_default_makes_one_call(self) -> None:
+        llm = StubLLM([_VALID_PLAN])
+        tasks = Planner(llm).decompose("t", [NodeId("m.py::function::a")])
+        assert [t.task_id for t in tasks] == ["a", "b"]
+        assert len(llm.prompts) == 1
+        assert "OUTLINE mode" not in llm.prompts[0]
+
+
+class TestSelfCritique:
+    def test_verdict_ok_keeps_plan(self) -> None:
+        llm = StubLLM([_VALID_PLAN, '{"verdict": "ok"}'])
+        tasks = Planner(llm, self_critique=True).decompose("t", [])
+        assert [t.task_id for t in tasks] == ["a", "b"]
+        assert len(llm.prompts) == 2  # decompose + one critique call
+
+    def test_corrected_array_adopted(self) -> None:
+        corrected = json.dumps(
+            [
+                {"task_id": "a", "description": "do A",
+                 "target_nodes": ["m.py::function::a"], "depends_on": [],
+                 "agent_type": "anthropic_api"},
+                {"task_id": "b", "description": "do B",
+                 "target_nodes": ["m.py::function::b"], "depends_on": ["a"],
+                 "agent_type": "anthropic_api"},
+                {"task_id": "c", "description": "fix caller",
+                 "target_nodes": ["m.py::function::c"], "depends_on": ["a"],
+                 "agent_type": "anthropic_api"},
+            ]
+        )
+        llm = StubLLM([_VALID_PLAN, corrected])
+        tasks = Planner(llm, self_critique=True).decompose("t", [])
+        assert [t.task_id for t in tasks] == ["a", "b", "c"]
+
+    def test_garbage_critique_keeps_original(self) -> None:
+        llm = StubLLM([_VALID_PLAN, "this is not json at all"])
+        tasks = Planner(llm, self_critique=True).decompose("t", [])
+        assert [t.task_id for t in tasks] == ["a", "b"]
+
+    def test_invalid_corrected_plan_keeps_original(self) -> None:
+        # A parseable JSON array that violates plan invariants is rejected -> keep.
+        bad = json.dumps(
+            [
+                {"task_id": "a", "description": "x",
+                 "target_nodes": ["m.py::function::a"], "depends_on": ["ghost"],
+                 "agent_type": "anthropic_api"},
+            ]
+        )
+        llm = StubLLM([_VALID_PLAN, bad])
+        tasks = Planner(llm, self_critique=True).decompose("t", [])
+        assert [t.task_id for t in tasks] == ["a", "b"]
+
+    def test_no_critique_call_when_disabled(self) -> None:
+        llm = StubLLM([_VALID_PLAN])
+        Planner(llm).decompose("t", [])
+        assert len(llm.prompts) == 1

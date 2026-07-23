@@ -14,10 +14,14 @@ so the planner is testable with canned responses and is not bound to one SDK.
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from typing import Protocol, TypeVar
 
 from mak.core.exceptions import PlannerFailedError
 from mak.core.types import NodeId, SubTask
+
+_T = TypeVar("_T")
 
 _PLAN_INSTRUCTIONS = """\
 You are the MAK planner. Decompose the user's task into the smallest set of \
@@ -60,12 +64,52 @@ codebase. Search the inventory for any node whose name suggests it calls a symbo
 you are changing, and include it as a target."""
 
 
+_OUTLINE_INSTRUCTIONS = """\
+You are the MAK planner working in OUTLINE mode. Sketch the task at the FILE level \
+first — a short ordered list of steps, each naming the files it touches. Detail comes \
+in a later pass, so keep each step coarse.
+
+Respond with ONLY a JSON array (no prose, no code fences). Each element is an object \
+with these keys:
+  - "step_id": unique short string id for the step
+  - "description": what this step accomplishes (a later pass expands it into tasks)
+  - "files": array of file paths this step touches (from the inventory below, or new \
+".py" paths for new files)
+  - "depends_on": array of step_ids that must complete before this one
+
+Keep steps independent where you can; only add a "depends_on" edge when a step truly \
+needs another step's files to exist or be updated first. Do NOT list non-Python \
+files."""
+
+_CRITIQUE_INSTRUCTIONS = """\
+You are reviewing a MAK plan you just produced. Look for three defects: missed \
+dependency edges (a task edits a node another task's node calls, with no depends_on \
+between them), hallucinated node ids (a target that does not match the real code), \
+and needless serialization (a depends_on edge with no real code reason).
+
+If the plan is already good, respond with EXACTLY this JSON object and nothing else:
+  {"verdict": "ok"}
+Otherwise respond with ONLY the corrected full plan as a JSON array in the SAME schema \
+as before (task_id, description, target_nodes, context_nodes, depends_on, agent_type). \
+Do not add prose or code fences."""
+
+
 class PlannerLLM(Protocol):
     """Minimal LLM interface the planner needs: a prompt-in, text-out call."""
 
     def complete(self, prompt: str) -> str:
         """Return the model's text completion for ``prompt``."""
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class _OutlineStep:
+    """One file-level step from the outline pass (pre-detail)."""
+
+    step_id: str
+    description: str
+    files: tuple[str, ...]
+    depends_on: tuple[str, ...]
 
 
 def _strip_code_fences(text: str) -> str:
@@ -222,6 +266,136 @@ def parse_plan(raw: str) -> list[SubTask]:
     return subtasks
 
 
+def _file_inventory(node_inventory: list[NodeId]) -> dict[str, list[str]]:
+    """Group an inventory into ``{file_path: [symbol short names]}`` for the outline."""
+    files: dict[str, list[str]] = {}
+    for nid in node_inventory:
+        path = target_file(nid)
+        names = files.setdefault(path, [])
+        parts = str(nid).split("::")
+        if len(parts) == 3 and parts[2] not in names:
+            names.append(parts[2])
+    return files
+
+
+def _inventory_for_files(
+    node_inventory: list[NodeId], files: tuple[str, ...]
+) -> list[NodeId]:
+    """Return the inventory ids whose file is in ``files`` (a new file yields none)."""
+    fileset = set(files)
+    return [nid for nid in node_inventory if target_file(nid) in fileset]
+
+
+def _parse_outline(raw: str) -> list[_OutlineStep]:
+    """Parse and validate an outline-pass response into ``_OutlineStep`` objects."""
+    text = _strip_code_fences(raw)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"outline was not valid JSON: {exc}") from exc
+    if isinstance(data, dict) and "steps" in data:
+        data = data["steps"]
+    _require(isinstance(data, list), "outline must be a JSON array of steps")
+
+    steps: list[_OutlineStep] = []
+    for index, item in enumerate(data):
+        where = f"outline step {index}"
+        if not isinstance(item, dict):
+            raise ValueError(f"{where} must be a JSON object")
+        steps.append(
+            _OutlineStep(
+                step_id=_require_str(item.get("step_id"), where, "step_id"),
+                description=_require_str(item.get("description"), where, "description"),
+                files=tuple(_require_str_list(item.get("files", []), where, "files")),
+                depends_on=tuple(
+                    _require_str_list(item.get("depends_on", []), where, "depends_on")
+                ),
+            )
+        )
+
+    ids = [s.step_id for s in steps]
+    _require(len(ids) == len(set(ids)), "duplicate step_id in outline")
+    known = set(ids)
+    for step in steps:
+        for dep in step.depends_on:
+            _require(
+                dep in known,
+                f"outline step '{step.step_id}' depends on unknown step '{dep}'",
+            )
+    _require(_outline_is_acyclic(steps), "outline has a dependency cycle")
+    return steps
+
+
+def _outline_is_acyclic(steps: list[_OutlineStep]) -> bool:
+    """Return whether the outline's ``depends_on`` edges form a DAG (Kahn)."""
+    indegree = {s.step_id: len(set(s.depends_on)) for s in steps}
+    dependents: dict[str, list[str]] = {s.step_id: [] for s in steps}
+    for step in steps:
+        for dep in set(step.depends_on):
+            dependents[dep].append(step.step_id)
+    ready = [sid for sid, deg in indegree.items() if deg == 0]
+    seen = 0
+    while ready:
+        node = ready.pop()
+        seen += 1
+        for child in dependents[node]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+    return seen == len(steps)
+
+
+def _namespace_tasks(tasks: list[SubTask], index: int) -> list[SubTask]:
+    """Prefix a step's task ids with ``s<index>.`` and remap intra-step deps."""
+    prefix = f"s{index}."
+    local = {t.task_id for t in tasks}
+    return [
+        replace(
+            task,
+            task_id=prefix + task.task_id,
+            depends_on=[
+                prefix + dep if dep in local else dep for dep in task.depends_on
+            ],
+        )
+        for task in tasks
+    ]
+
+
+def _assemble_outline(
+    steps: list[_OutlineStep], step_tasks: dict[str, list[SubTask]]
+) -> list[SubTask]:
+    """Concatenate step tasks, adding an edge from each upstream step's tasks."""
+    ids_by_step = {
+        sid: [t.task_id for t in tasks] for sid, tasks in step_tasks.items()
+    }
+    merged: list[SubTask] = []
+    for step in steps:
+        upstream: list[str] = []
+        for dep_step in step.depends_on:
+            upstream.extend(ids_by_step.get(dep_step, []))
+        for task in step_tasks[step.step_id]:
+            extra = [u for u in upstream if u not in task.depends_on]
+            merged.append(replace(task, depends_on=list(task.depends_on) + extra))
+    return merged
+
+
+def _plan_to_json(tasks: list[SubTask]) -> str:
+    """Serialize ``SubTask`` objects to the plan-array JSON ``parse_plan`` accepts."""
+    return json.dumps(
+        [
+            {
+                "task_id": t.task_id,
+                "description": t.description,
+                "target_nodes": [str(n) for n in t.target_nodes],
+                "context_nodes": [str(n) for n in t.context_nodes],
+                "depends_on": list(t.depends_on),
+                "agent_type": t.agent_type,
+            }
+            for t in tasks
+        ]
+    )
+
+
 class Planner:
     """Turns a natural-language task into a validated list of ``SubTask``."""
 
@@ -231,6 +405,8 @@ class Planner:
         *,
         max_retries: int = 3,
         agent_types: list[str] | None = None,
+        strategy: str = "oneshot",
+        self_critique: bool = False,
     ) -> None:
         if max_retries < 1:
             raise ValueError("max_retries must be at least 1")
@@ -240,6 +416,8 @@ class Planner:
         # real one in each task's "agent_type" instead of guessing (an unconfigured
         # type would otherwise have to be remapped by the session).
         self._agent_types = list(agent_types or [])
+        self._strategy = strategy
+        self._self_critique = self_critique
 
     def _build_prompt(self, user_task: str, node_inventory: list[NodeId]) -> str:
         inventory = "\n".join(f"  - {nid}" for nid in node_inventory) or "  (empty)"
@@ -262,20 +440,94 @@ class Planner:
     def decompose(
         self, user_task: str, node_inventory: list[NodeId]
     ) -> list[SubTask]:
-        """Decompose ``user_task`` into sub-tasks, retrying on invalid LLM output."""
-        prompt = self._build_prompt(user_task, node_inventory)
+        """Decompose ``user_task`` into sub-tasks, retrying on invalid LLM output.
+
+        With ``strategy="outline"`` this runs a two-pass plan (file-level outline,
+        then per-step detail); the default ``"oneshot"`` is a single decomposition
+        call. Either way the merged result is validated by ``parse_plan``, and when
+        ``self_critique`` is set one reflection pass may replace it.
+        """
+        if self._strategy == "outline":
+            plan = self._decompose_outline(user_task, node_inventory)
+        else:
+            prompt = self._build_prompt(user_task, node_inventory)
+            plan = self._complete_with_retries(prompt, parse_plan)
+        if self._self_critique:
+            plan = self._critique_plan(plan)
+        return plan
+
+    def _critique_plan(self, plan: list[SubTask]) -> list[SubTask]:
+        """Run one reflection pass; adopt a corrected plan or keep the original.
+
+        A broken critique must never break a good plan: only a ``verdict: ok`` reply
+        or a plan that re-parses cleanly is honored — anything else keeps ``plan``.
+        No retry budget is consumed.
+        """
+        prompt = f"{_CRITIQUE_INSTRUCTIONS}\n\nPLAN:\n{_plan_to_json(plan)}\n"
+        raw = self._llm.complete(prompt)
+        try:
+            data = json.loads(_strip_code_fences(raw))
+        except json.JSONDecodeError:
+            return plan
+        if isinstance(data, dict) and data.get("verdict") == "ok":
+            return plan
+        try:
+            return parse_plan(raw)
+        except ValueError:
+            return plan
+
+    def _complete_with_retries(
+        self, prompt: str, parse: Callable[[str], _T]
+    ) -> _T:
+        """Call the LLM until ``parse`` accepts a response, feeding back errors."""
         last_error: Exception | None = None
         for _attempt in range(self._max_retries):
             current = prompt if last_error is None else (
                 f"{prompt}\nYour previous response was rejected: {last_error}\n"
-                "Return ONLY the corrected JSON array."
+                "Return ONLY the corrected JSON."
             )
             raw = self._llm.complete(current)
             try:
-                return parse_plan(raw)
+                return parse(raw)
             except ValueError as exc:
                 last_error = exc
         raise PlannerFailedError(
             f"planner failed to produce a valid plan after {self._max_retries} "
             f"attempts: {last_error}"
+        )
+
+    def _decompose_outline(
+        self, user_task: str, node_inventory: list[NodeId]
+    ) -> list[SubTask]:
+        """Two-pass plan: a file-level outline, then per-step symbol detail."""
+        outline_prompt = self._build_outline_prompt(user_task, node_inventory)
+        steps = self._complete_with_retries(outline_prompt, _parse_outline)
+
+        step_tasks: dict[str, list[SubTask]] = {}
+        for index, step in enumerate(steps):
+            restricted = _inventory_for_files(node_inventory, step.files)
+            detail_prompt = self._build_prompt(step.description, restricted)
+            tasks = self._complete_with_retries(detail_prompt, parse_plan)
+            step_tasks[step.step_id] = _namespace_tasks(tasks, index)
+
+        merged = _assemble_outline(steps, step_tasks)
+        # Re-run the full-plan invariants (duplicate ids, whole-file owners) over the
+        # assembled result the same way an LLM plan would be checked.
+        return parse_plan(_plan_to_json(merged))
+
+    def _build_outline_prompt(
+        self, user_task: str, node_inventory: list[NodeId]
+    ) -> str:
+        files = _file_inventory(node_inventory)
+        if files:
+            listed = "\n".join(
+                f"  - {path}: {', '.join(names) or '(no symbols)'}"
+                for path, names in files.items()
+            )
+        else:
+            listed = "  (empty)"
+        return (
+            f"{_OUTLINE_INSTRUCTIONS}\n\n"
+            f"USER TASK:\n{user_task}\n\n"
+            f"FILE INVENTORY (files you may touch, with their symbols):\n{listed}\n"
         )
