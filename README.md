@@ -119,16 +119,20 @@ mak
 
 **Features**
 
-* Type `/` to browse all commands with one-line descriptions; Tab completes. `/help` lists commands and shortcuts.
-* Live session status (models, planner, agents, workdir, approval, tokens) in a toolbar under the prompt — `/status` prints the full detail.
-* Set api keys of providers with `/apikey` command.
-* Set working directory with `/work-dir <path>`
-* Set models with `/models <provider-1>:<model> <provider-2>:<model> ... `
-* Set planner model with `/planner <provider>:<model>` 
-* Set number of agents with `/max-agents <int>`
-* Point to a custom config with `/config /path/to/config.yaml` — bare `/config` returns to auto-discovery (see [Configuration & API Keys](#configuration--api-keys))
-* Omit user review of planner with `/no-review true` (default false, not recommended to turn on)
-* `/clear` clears the screen, `/exit` (or `/quit`, Ctrl+C) quits, Ctrl+J inserts a newline for multi-line tasks.
+> Type `/` to browse all commands with one-line descriptions. (Tab autocomplete)
+>
+> `/help` lists commands and shortcuts.
+
+* `/status` - Live session status (models, planner, agents, workdir, approval, tokens)
+* `/apikey` - Set api keys of providers
+* `/work-dir <path>` - Set working directory
+* `/models <provider-1>:<model> <provider-2>:<model> ...` - Set agent models
+* `/planner <provider>:<model>` - Set planner model
+* `/max-agents <int>` - Set number of agents
+* `/config` - Returns to auto-discovery (see [Configuration & API Keys](#configuration--api-keys))
+* `/config /path/to/config.yaml` - Point to a custom config
+* `/no-review true` - Omit user review of planner (default false, not recommended to turn on)
+* `/clear` - clears the screen, `/exit` (or `/quit`, Ctrl+C) quits, Ctrl+J inserts a newline for multi-line tasks.
 
 ---
 
