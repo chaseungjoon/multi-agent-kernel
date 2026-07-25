@@ -9,7 +9,7 @@ session:
   # test_command: "pytest -q"
 
 planner:
-  model: "claude-opus-4-8"
+  model: "claude-opus-5"
   max_retries: 3
   # validate: true          # cross-check the plan against the code dependency
   #                         # graph — ground node ids, add missing depends_on edges
@@ -42,6 +42,13 @@ agents:
   #   cmd: "claude"
   #   max_instances: 2
   #   timeout: 300
+
+# Model catalog refresh. This controls which models MAK *offers* — never which
+# model it uses (that is `planner.model` / `agents[].model` above, and a refresh
+# never writes to this file). Refreshes run in the background on the 1st and
+# 15th; `/refresh-models` in the CLI forces one immediately.
+# models:
+#   auto_refresh: true    # set false to never contact provider model-list APIs
 
 git:
   auto_commit: true

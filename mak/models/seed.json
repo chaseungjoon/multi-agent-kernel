@@ -1,0 +1,15 @@
+[
+  {"provider": "anthropic", "model_id": "claude-fable-5", "display_name": "Claude Fable 5", "context_window": 1000000, "max_output": 128000},
+  {"provider": "anthropic", "model_id": "claude-opus-5", "display_name": "Claude Opus 5", "context_window": 1000000, "max_output": 128000},
+  {"provider": "anthropic", "model_id": "claude-opus-4-8", "display_name": "Claude Opus 4.8", "context_window": 1000000, "max_output": 128000},
+  {"provider": "anthropic", "model_id": "claude-sonnet-5", "display_name": "Claude Sonnet 5", "context_window": 1000000, "max_output": 128000},
+  {"provider": "anthropic", "model_id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6", "context_window": 1000000, "max_output": 128000},
+  {"provider": "anthropic", "model_id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5", "context_window": 200000, "max_output": 64000},
+  {"provider": "openai", "model_id": "gpt-5.6-sol", "display_name": "GPT-5.6 Sol"},
+  {"provider": "openai", "model_id": "gpt-5.6-terra", "display_name": "GPT-5.6 Terra"},
+  {"provider": "openai", "model_id": "gpt-5.5", "display_name": "GPT-5.5"},
+  {"provider": "openai", "model_id": "gpt-5.6-luna", "display_name": "GPT-5.6 Luna"},
+  {"provider": "gemini", "model_id": "gemini-3.1-pro-preview", "display_name": "Gemini 3.1 Pro (Preview)"},
+  {"provider": "gemini", "model_id": "gemini-3.5-flash", "display_name": "Gemini 3.5 Flash"},
+  {"provider": "gemini", "model_id": "gemini-3.1-flash-lite", "display_name": "Gemini 3.1 Flash-Lite"}
+]

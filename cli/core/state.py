@@ -11,7 +11,7 @@ class CliState:
     selected_models: list[str] = field(default_factory=list)
     max_agents: int = 3
     work_dir: str = "."
-    planner_model: str = "claude-sonnet-5"
+    planner_model: str = "claude-opus-5"
     # Empty string = auto-discover (./mak.yaml → ~/.config/mak/config.yaml →
     # the packaged default); a non-empty value is an explicit file from /config.
     config_path: str = ""

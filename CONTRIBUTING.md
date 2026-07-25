@@ -41,6 +41,7 @@ roadmap, and design rationale.
   - [Configuration](#11-configuration)
   - [Command-line interface](#12-command-line-interface)
   - [Interactive CLI app](#122-interactive-cli-app-cli)
+  - [Model catalog](#13-model-catalog)
 - [Part III — Developing](#part-iii--developing)
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
@@ -204,7 +205,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **633 tests pass**,
+The **kernel is functionally complete and well-tested**: **828 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -225,6 +226,7 @@ The module-by-module state:
 | `mak/conflict_detector/` | Complete |
 | `mak/planner/` (planner, review, LLM backends) | Complete |
 | `mak/git_integration/` | Complete |
+| `mak/models/` (self-refreshing model catalog, Wave 14) | Complete |
 | `mak/session.py` | Complete (concurrent) |
 | `mak/bootstrap.py` (composition root) | Complete |
 | `mak/__main__.py` (CLI entry point) | Complete |
@@ -1183,7 +1185,7 @@ session:
   test_command: "pytest -q"     # run in the work dir at teardown; gates auto_push
 
 planner:
-  model: "claude-sonnet-5"
+  model: "claude-opus-5"
   max_retries: 3
   validate: true          # cross-check the plan against the code dependency graph —
                           # ground node ids, add missing depends_on edges (Wave 10)
@@ -1208,6 +1210,10 @@ git:
   auto_push: false
   commit_prefix: "[MAK]"
 
+models:
+  auto_refresh: true      # background-refresh the provider model catalog (§13);
+                          # never touches planner.model or agents[].model
+
 node_store:
   include_patterns: ["**/*.py"]
   exclude_patterns: ["**/node_modules/**", "**/.venv/**", "**/__pycache__/**"]
@@ -1228,6 +1234,10 @@ Rules and behaviors:
   raises `ConfigError`; the two booleans go through `_as_bool`. All three default to
   the safe, cheapest behavior (validate on, oneshot, no critique) so an existing
   `config.yaml` without them is unaffected.
+- `models.auto_refresh` (Wave 14, §13) gates the background provider-catalog refresh;
+  parsed by `_parse_models` via `_as_bool`, defaults `true`. This is the only config
+  knob the model catalog subsystem reads — it never touches `planner.model` or any
+  `agents[].model`.
 - **API keys are never stored in config** — `api_key_env` names the environment
   variable to read at composition time. Put real keys in `~/.config/mak/.env`
   (written by the TUI's `/apikey` setup) or, in a source checkout, the legacy
@@ -1334,7 +1344,7 @@ Examples:
 ```bash
 # Three providers, explicit models, default concurrency from config:
 python -m mak --task "..." --work-dir ./proj \
-  --models anthropic:claude-opus-4-8 openai:gpt-5.6-sol gemini:gemini-3.5-flash
+  --models anthropic:claude-opus-5 openai:gpt-5.6-sol gemini:gemini-3.5-flash
 
 # One provider, five concurrent workers:
 python -m mak --task "..." --work-dir ./proj --models anthropic --max-agents 5
@@ -1433,6 +1443,7 @@ dumps.
 |---|---|
 | `/models [provider:model …]` | Select agent models (same `provider:model` spec as `--models`) |
 | `/planner [model]` | Switch the planner model; shows a warning for models below `claude-sonnet-4-6` capability |
+| `/refresh-models` | Re-fetch the model catalog from every provider now, ignoring the refresh schedule (§13) |
 | `/max-agents N` | Set the concurrent-agents limit |
 | `/work-dir <path>` | Set MAK's working directory |
 | `/apikey` | Add or update API keys interactively |
@@ -1489,6 +1500,75 @@ into `os.environ` before each MAK session so the adapters find them via their
 - `prompt_toolkit` — REPL input, history, slash menu, auto-suggest, bottom toolbar
 - `rich` — all terminal rendering (welcome box, plan list, progress bars, spinners)
 
+## 13. Model catalog
+
+`mak/models/` (Wave 14) answers *"which models does each provider currently
+offer"*. It **never** answers *"which model does MAK use"* — that stays exactly
+where §11 puts it: `planner.model` / `agents[].model` in `config.yaml`, the CLI's
+sole write path. A catalog refresh **never writes to `config.yaml`**; this is
+enforced by an acceptance test that byte-compares the file across a refresh.
+
+**Facts vs. judgment — the load-bearing split.** A `ModelEntry` carries *facts*
+(`display_name`, `context_window`, `max_output`) fetched from the provider, and
+*judgment* (`recommended`, `planner_ok`, `planner_recommended`) that MAK **never
+infers**. Judgment comes from exactly one place: the hand-maintained, exact-model-id
+table `mak/models/curation.py::CURATED`. There are no heuristics, no capability
+thresholds, no id-pattern scoring — a model absent from `CURATED` gets
+`Judgment()` (neutral: usable, unstarred, unwarned), and stays that way until a
+human edits the table. A regression test (`test_only_curated_ids_carry_stars`)
+pins this: nothing may make a model self-recommend by looking premium.
+
+Separately, `curation.py::DENY` filters out endpoints that are not text-chat
+models at all — `dall-e-*`, embeddings, TTS, image/music generation — plus a
+dated-snapshot rule that collapses `claude-haiku-4-5-20251001` onto its undated
+alias `claude-haiku-4-5` (a fact about provider naming, canonicalized against the
+packaged seed's known aliases, not an opinion about quality). This eligibility
+filtering is automatic; judgment is not, and the two must not be conflated.
+
+**Persistence and schedule.** `manifest.py` caches each provider's fetched models
+in `~/.config/mak/models.json` (atomic write: temp file + `os.replace`), never in
+the package (a wheel install's package directory is read-only). `is_refresh_due`
+implements **catch-up** scheduling on the 1st and 15th of each month: skip the
+15th, start MAK on the 19th, and it refreshes on the 19th — it does not wait for
+the next 1st. A 6-hour cooldown after a failed attempt (`is_in_cooldown`) stops a
+permanently-offline machine from paying a fetch timeout on every single start.
+
+**Failure isolation.** `refresh.py` replaces a provider's cached entries **only**
+on that provider's own successful fetch. No key, a timeout, a malformed response,
+or an unhandled SDK exception all mean "keep what we had" for that provider alone
+— one provider failing never empties the catalog or blocks the others
+(`mak/models/refresh.py::refresh`). A model a provider stops offering is not
+deleted; it is marked `retired=True` so it stays visible (and still selectable)
+rather than silently disappearing out from under a user who has it configured.
+`ModelRegistry.recommended_planner` skips retired entries when auto-selecting, so
+a retired favorite degrades gracefully instead of being handed back as the pick.
+
+**Runtime registry.** `registry.py::ModelRegistry` composes, on every load: the
+packaged `seed.json` (the offline floor — a user with no keys and no network
+still gets a usable list) → the manifest's cached facts → `judgment_for()`
+re-applied fresh every time, so editing `CURATED` takes effect immediately without
+a refetch. The catalog snapshot is one immutable tuple; a background refresh
+thread builds a new tuple and assigns it in one statement, so reads never need a
+lock and never see a partially-built list.
+
+**Triggering a refresh.** `maybe_auto_refresh` runs on a daemon thread from
+`cli/app.py::_init_state`, gated by `models.auto_refresh` (§11) and the
+`MAK_NO_MODEL_REFRESH` environment variable; it never prints, because writing to
+the console from a background thread corrupts a live `prompt_toolkit` session —
+results simply show up in `/models`, `/planner`, and the `/status` catalog line
+next time they're queried. `/refresh-models` (`cli/commands.py`) is the
+synchronous, schedule-ignoring counterpart: it prints a per-provider added/removed
+diff and is how a model released between scheduled ticks becomes usable
+immediately, without waiting for the next 1st or 15th.
+
+**`cli/core/models.py`** is now a thin adapter, not the source of truth: it
+re-exports `mak.models.ModelEntry` as `ModelInfo` (one dataclass, not two — its
+`api_key_env`/`adapter_type` are derived `@property`s so existing call sites in
+`cli/commands.py` and `cli/completer.py` are unchanged) and calls a module-level
+`ModelRegistry()` singleton. There is deliberately **no** module-level
+`ALL_MODELS` list anymore — a list captured at import time cannot reflect a
+refresh; call `all_models()` instead.
+
 ---
 
 # Part III — Developing
@@ -1533,7 +1613,7 @@ cli/                       # interactive CLI app (prompt_toolkit + rich)
 ├── ui.py                  # all Rich rendering (welcome box, status, plan list, diff)
 └── core/
     ├── api_keys.py        # load/save API keys from mak/.env
-    ├── models.py          # provider registry (display names, recommended models)
+    ├── models.py          # thin adapter over mak/models/ (ModelInfo = ModelEntry)
     └── state.py           # CliState dataclass (models, agents, workdir, approval flag)
 
 mak/
@@ -1597,6 +1677,15 @@ mak/
 │       ├── codex.py
 │       └── copilot.py
 │
+├── models/                # self-refreshing model catalog (Wave 14, §13)
+│   ├── catalog.py         # ModelEntry, provider maps, packaged seed.json loader
+│   ├── curation.py        # hand-maintained judgment table + eligibility filters
+│   ├── manifest.py        # atomic per-user cache, schema version, 1st/15th schedule
+│   ├── providers.py       # anthropic/openai/gemini list-models fetchers
+│   ├── refresh.py         # per-provider add/remove diffing, failure isolation
+│   ├── registry.py        # ModelRegistry: seed+manifest+curation snapshot, auto-refresh
+│   └── seed.json          # packaged offline-floor catalog
+│
 ├── test_runner.py         # build the teardown TestRunner from session.test_command
 └── git_integration/
     └── git.py             # audit-log commits, log parsing, push
@@ -1609,8 +1698,9 @@ pyproject.toml             # deps, ruff + mypy + pytest config
 
 Tests mirror the source tree (`tests/core/`, `tests/node_store/`,
 `tests/lock_manager/`, `tests/scheduler/`, `tests/conflict_detector/`,
-`tests/agent_runner/`, `tests/planner/`, `tests/git_integration/`,
-`tests/test_config.py`, `tests/test_bootstrap.py`, `tests/test_session.py`).
+`tests/agent_runner/`, `tests/planner/`, `tests/models/`, `tests/git_integration/`,
+`tests/test_config.py`, `tests/test_bootstrap.py`, `tests/test_session.py`). No test
+in `tests/models/` touches the network — every provider fetch is a fake `ModelSource`.
 
 ## The quality gates
 
@@ -1851,8 +1941,13 @@ numeric order — it didn't depend on Waves 7–9) added deterministic plan vali
 static dependency graph over the node store (`depgraph.py`) grounds hallucinated node
 ids and augments/flags a plan's `depends_on` edges against real code structure
 (`validation.py`) before every `install_plan`, plus config-gated outline→detail
-planning, a self-critique pass, and plan-quality metrics. What remains is the
-open-problems list above.
+planning, a self-critique pass, and plan-quality metrics. **Wave 14** replaced the
+hand-written model list (`cli/core/models.py::ALL_MODELS`) with a self-refreshing
+catalog (`mak/models/`, §13): provider facts are fetched and cached with strict
+per-provider failure isolation, while judgment (`recommended`/`planner_ok`/
+`planner_recommended`) stays a hand-maintained exact-id table that MAK never
+infers from — new models arrive usable but unstarred until a human curates them.
+What remains is the open-problems list above.
 
 ---
 

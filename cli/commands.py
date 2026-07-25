@@ -12,10 +12,11 @@ from rich.console import Console
 
 from cli.completer import COMMANDS
 from cli.core.models import (
-    ALL_MODELS,
     PROVIDER_DISPLAY,
     PROVIDER_ORDER,
+    all_models,
     models_for_provider,
+    registry,
 )
 from cli.core.state import CliState
 from cli.ui import ACCENT, print_error, print_ok, print_status, print_warn
@@ -49,6 +50,8 @@ def handle_command(text: str, state: CliState, console: Console) -> str | None:
         _cmd_no_review(args, state, console)
     elif cmd == "/planner":
         _cmd_planner(args, state, console)
+    elif cmd == "/refresh-models":
+        _cmd_refresh_models(state, console)
     elif cmd == "/status":
         print_status(console, state)
     elif cmd == "/help":
@@ -128,7 +131,12 @@ def _list_models(state: CliState, console: Console) -> None:
             + ("" if has_key else " [dim]— no API key[/dim]")
         )
         for m in models_for_provider(provider):
-            rec    = " [dim]★ recommended[/dim]" if m.recommended else ""
+            if m.retired:
+                rec = " [yellow]⚠ no longer offered[/yellow]"
+            elif m.recommended:
+                rec = " [dim]★ recommended[/dim]"
+            else:
+                rec = ""
             spec   = f"{provider}:{m.model_id}"
             selected = spec in state.selected_models
             active = "[green]●[/green]" if selected else "[dim]○[/dim]"
@@ -201,7 +209,7 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
     if ":" in model_id:
         model_id = model_id.split(":", 1)[1]
 
-    model_info = next((m for m in ALL_MODELS if m.model_id == model_id), None)
+    model_info = next((m for m in all_models() if m.model_id == model_id), None)
     if model_info is None:
         print_error(
             console,
@@ -244,15 +252,82 @@ def _list_planner_models(state: CliState, console: Console) -> None:
         for m in models_for_provider(provider):
             is_planner = m.model_id == state.planner_model
             active = "[green]●[/green]" if is_planner else "[dim]○[/dim]"
-            tag = (
-                " [dim]★ recommended[/dim]" if m.planner_ok
-                else "  [yellow]⚠ not recommended[/yellow]"
-            )
+            if m.retired:
+                tag = "  [yellow]⚠ no longer offered[/yellow]"
+            elif m.planner_ok:
+                tag = " [dim]★ recommended[/dim]"
+            else:
+                tag = "  [yellow]⚠ not recommended[/yellow]"
             if has_key:
                 console.print(f"    {active} {m.model_id}{tag}")
             else:
                 console.print(f"    [dim]○ {m.model_id}[/dim]")
     console.print()
+
+
+def _cmd_refresh_models(state: CliState, console: Console) -> None:
+    """Re-fetch every provider's model list now, ignoring the refresh schedule.
+
+    This is the escape hatch for a model that ships between scheduled refreshes:
+    the catalog updates in-session, so the new model is immediately selectable.
+    """
+    console.print("\n  [dim]Fetching model lists…[/dim]")
+    try:
+        report = registry().refresh_now(state.api_keys)
+    except Exception as exc:  # noqa: BLE001 - a refresh must never kill the prompt
+        print_error(console, f"Refresh failed: {exc}")
+        return
+
+    for result in report.results:
+        label = PROVIDER_DISPLAY.get(result.provider, result.provider)
+        if not result.ok:
+            note = (
+                "no API key" if result.error == "no API key"
+                else f"{result.error} [dim]— keeping cached list[/dim]"
+            )
+            console.print(f"    [dim]○[/dim] [bold]{label}[/bold]  [dim]{note}[/dim]")
+            continue
+        delta = ""
+        if result.changed:
+            delta = f"  [dim](+{len(result.added)} −{len(result.removed)})[/dim]"
+        console.print(
+            f"    [green]●[/green] [bold]{label}[/bold]  "
+            f"[dim]{result.total} models[/dim]{delta}"
+        )
+        for model_id in result.added:
+            console.print(f"        [green]+ {model_id}[/green]")
+        for model_id in result.removed:
+            console.print(f"        [red]- {model_id}[/red]")
+
+    console.print()
+    if not report.changed:
+        print_ok(console, "Model list is up to date.")
+    else:
+        print_ok(console, "Model list refreshed.")
+
+    # A model the user is actively using may have just been retired. Say so —
+    # but change nothing: MAK never re-picks a model on the user's behalf.
+    _warn_retired_selections(state, console)
+
+
+def _warn_retired_selections(state: CliState, console: Console) -> None:
+    retired = {m.model_id for m in all_models() if m.retired}
+    in_use = [
+        spec for spec in state.selected_models
+        if spec.partition(":")[2] in retired
+    ]
+    if state.planner_model in retired:
+        print_warn(
+            console,
+            f"Planner {state.planner_model} is no longer offered by its provider — "
+            "still selected; use [bold]/planner[/bold] to change it.",
+        )
+    for spec in in_use:
+        print_warn(
+            console,
+            f"Agent model {spec} is no longer offered by its provider — "
+            "still selected; use [bold]/models[/bold] to change it.",
+        )
 
 
 def _cmd_no_review(args: list[str], state: CliState, console: Console) -> None:

@@ -8,6 +8,7 @@ from mak.config import (
     AgentConfig,
     GitConfig,
     MakConfig,
+    ModelsConfig,
     NodeStoreConfig,
     PlannerConfig,
     SessionConfig,
@@ -332,3 +333,39 @@ class TestPlannerQualityConfig:
         )
         with pytest.raises(ConfigError, match="strategy"):
             load_config(path)
+
+
+class TestModelsConfig:
+    def test_default_is_auto_refresh_on(self) -> None:
+        assert ModelsConfig().auto_refresh is True
+        assert MakConfig().models == ModelsConfig()
+
+    def test_parsed_from_yaml(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "models:\n  auto_refresh: false\n"
+            "agents:\n  - type: \"test_agent\"\n"
+        )
+        assert load_config(path).models.auto_refresh is False
+
+    def test_accepts_string_booleans(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "models:\n  auto_refresh: \"off\"\n"
+            "agents:\n  - type: \"test_agent\"\n"
+        )
+        assert load_config(path).models.auto_refresh is False
+
+    def test_rejects_non_boolean(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "models:\n  auto_refresh: 17\n"
+            "agents:\n  - type: \"test_agent\"\n"
+        )
+        with pytest.raises(ConfigError, match="auto_refresh"):
+            load_config(path)
+
+    def test_missing_section_uses_default(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(_MINIMAL_YAML)
+        assert load_config(path).models.auto_refresh is True

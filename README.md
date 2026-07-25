@@ -128,6 +128,7 @@ mak
 * `/work-dir <path>` - Set working directory
 * `/models <provider-1>:<model> <provider-2>:<model> ...` - Set agent models
 * `/planner <provider>:<model>` - Set planner model
+* `/refresh-models` - Re-fetch the model list from each provider right now
 * `/max-agents <int>` - Set number of agents
 * `/config` - Returns to auto-discovery (see [Configuration & API Keys](#configuration--api-keys))
 * `/config /path/to/config.yaml` - Point to a custom config
@@ -146,9 +147,9 @@ agents you actually run.
 > ***⚠️ Just to be safe, create a separate branch for MAK to work on***
 
 ```bash
-# Example with claude opus 4.8, gpt-5.6 sol and gemini 3.5 flash
+# Example with claude opus 5, gpt-5.6 sol and gemini 3.5 flash
 mak run --task "your task" --work-dir /path/to/project \
-  --models anthropic:claude-opus-4-8 openai:gpt-5.6-sol gemini:gemini-3.5-flash
+  --models anthropic:claude-opus-5 openai:gpt-5.6-sol gemini:gemini-3.5-flash
 
 # Example with claude sonnet 5 X 5 (provider default model)
 mak run --task "your task" --work-dir /path/to/project \
@@ -175,24 +176,27 @@ mak run --task "your task" --work-dir /path/to/project \
 --models gemini
 
 # Set model
---models anthropic:claude-opus-4-8
+--models anthropic:claude-opus-5
 --models openai:gpt-5.6-terra
 --models gemini:gemini-3.1-pro-preview
 
 # Use multiple providers (tasks are distributed round-robin across them)
 --models anthropic openai gemini
---models anthropic:claude-opus-4-8 openai:gpt-5.6-sol gemini:gemini-3.5-flash
+--models anthropic:claude-opus-5 openai:gpt-5.6-sol gemini:gemini-3.5-flash
 
 # Use single provider with multiple agents
 --models anthropic --max-agents 5 
---models anthropic:claude-opus-4-8 --max-agents 3
+--models anthropic:claude-opus-5 --max-agents 3
 
 # Choose a custom config file (default: auto-discovered, see below)
 --config /path/to/config.yaml
 
 ```
 
-**[Default models list for each provider](mak/config.yaml)**
+**[Default models list for each provider](mak/config.yaml)** — kept current
+automatically: MAK re-fetches each provider's model list in the background twice a
+month (1st and 15th), so new models show up in `/models` and `/planner` without an
+update. Run `/refresh-models` to fetch immediately instead of waiting.
 
 > **Note on `claude-fable-5`:** MAK supports Anthropic's most capable model, but it
 > comes with caveats — it requires an org with **30-day data retention** (zero-data-retention

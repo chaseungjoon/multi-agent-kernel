@@ -52,6 +52,16 @@ def print_banner(console: Console, state: CliState) -> None:
 
 # ── Session status (printed by /status) ────────────────────────────────────────
 
+def _catalog_status() -> str:
+    """Summarise the model catalog: how many models, last refreshed when."""
+    from cli.core.models import all_models, registry
+
+    count = len(all_models())
+    stamp = registry().last_refresh
+    when = stamp.strftime("%Y-%m-%d") if stamp else "never refreshed"
+    return f"{count} models · {when}"
+
+
 def print_status(console: Console, state: CliState) -> None:
     rows = [
         ("models", state.models_display()),
@@ -60,6 +70,7 @@ def print_status(console: Console, state: CliState) -> None:
         ("workdir", state.work_dir_display()),
         ("config", state.config_display()),
         ("approval", "off — plans run immediately" if state.no_review else "on"),
+        ("catalog", _catalog_status()),
     ]
     console.print()
     for label, value in rows:

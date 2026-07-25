@@ -96,9 +96,10 @@ class SessionConfig:
 class PlannerConfig:
     """Planner model + quality configuration.
 
-    No sampling knob: MAK's current default models (Claude Sonnet 5 / Opus 4.8 /
-    Fable 5, GPT-5.x, Gemini 3.x) reject ``temperature``/``top_p``, and the agent
-    adapters already omit them. Steering is via the prompt, not sampling params.
+    No sampling knob: MAK's current default models (Claude Sonnet 5 / Opus 5 /
+    Opus 4.8 / Fable 5, GPT-5.x, Gemini 3.x) reject ``temperature``/``top_p``,
+    and the agent adapters already omit them. Steering is via the prompt, not
+    sampling params.
 
     ``model`` is the planner's model id. It carries no hardcoded default — the empty
     string means "unset", to be supplied by ``config.yaml`` (the single source of
@@ -117,6 +118,22 @@ class PlannerConfig:
     validate: bool = True
     strategy: str = "oneshot"
     self_critique: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ModelsConfig:
+    """Provider model-catalog refresh policy.
+
+    This governs the *catalog* — which models MAK offers to choose from — and
+    never the *choice*: ``config.yaml`` remains the sole source of truth for the
+    planner and agent models, and a catalog refresh never writes to it.
+
+    ``auto_refresh`` re-fetches each provider's model list on the 1st and 15th
+    (in the background, on startup). The ``MAK_NO_MODEL_REFRESH`` environment
+    variable disables it independently.
+    """
+
+    auto_refresh: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +166,7 @@ class MakConfig:
     )
     git: GitConfig = field(default_factory=GitConfig)
     node_store: NodeStoreConfig = field(default_factory=NodeStoreConfig)
+    models: ModelsConfig = field(default_factory=ModelsConfig)
 
 
 def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
@@ -192,6 +210,10 @@ def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
         strategy=strategy,
         self_critique=_as_bool(raw, "self_critique", False),
     )
+
+
+def _parse_models(raw: dict[str, Any]) -> ModelsConfig:
+    return ModelsConfig(auto_refresh=_as_bool(raw, "auto_refresh", True))
 
 
 def _parse_git(raw: dict[str, Any]) -> GitConfig:
@@ -305,4 +327,5 @@ def load_config(path: Path | str) -> MakConfig:
         agents=agents,
         git=_parse_git(data.get("git", {})),
         node_store=_parse_node_store(data.get("node_store", {})),
+        models=_parse_models(data.get("models", {})),
     )

@@ -13,12 +13,13 @@ from prompt_toolkit.completion import (
 )
 from prompt_toolkit.document import Document
 
-from cli.core.models import ALL_MODELS, PROVIDER_DISPLAY, PROVIDER_ORDER
+from cli.core.models import PROVIDER_DISPLAY, PROVIDER_ORDER, all_models
 from cli.core.state import CliState
 
 COMMANDS: list[tuple[str, str]] = [
     ("/models",     "Select agent models"),
     ("/planner",    "Switch the planner model"),
+    ("/refresh-models", "Re-fetch the model list from each provider"),
     ("/max-agents", "Set how many agents run in parallel"),
     ("/work-dir",   "Set the working directory MAK edits"),
     ("/apikey",     "Add or update provider API keys"),
@@ -134,7 +135,7 @@ class MakCompleter(Completer):
         results: list[Completion] = []
         for provider in PROVIDER_ORDER:
             has_key = bool(self._state.api_keys.get(_KEY_ENV[provider], "").strip())
-            for m in ALL_MODELS:
+            for m in all_models():
                 if m.provider != provider:
                     continue
                 spec = f"{provider}:{m.model_id}"
@@ -159,7 +160,7 @@ class MakCompleter(Completer):
         results: list[Completion] = []
         for provider in PROVIDER_ORDER:
             has_key = bool(self._state.api_keys.get(_KEY_ENV[provider], "").strip())
-            for m in ALL_MODELS:
+            for m in all_models():
                 if m.provider != provider:
                     continue
                 if not m.model_id.startswith(partial):

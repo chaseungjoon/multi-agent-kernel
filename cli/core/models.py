@@ -1,77 +1,65 @@
-"""Model registry: all hosted models grouped by provider.
+"""Model registry access for the CLI — a thin adapter over ``mak.models``.
 
-Last refreshed 2026-07 against each provider's public model list. ``recommended``
-marks the per-provider default MAK auto-selects (best quality/cost fit for
-agentic coding). ``planner_ok`` marks models with roughly claude-sonnet-4-6
-capability or better — the bar for reliable task decomposition; models below it
-get a "not recommended" warning when chosen as the planner.
+The catalog itself lives in the kernel (``mak/models/``): it is seeded from a
+packaged list, refreshed from each provider's list-models API on the 1st and
+15th (or on demand via ``/refresh-models``), and cached in
+``~/.config/mak/models.json``.
+
+``ModelInfo`` is an alias of ``mak.models.ModelEntry`` — one dataclass, not two —
+so ``.api_key_env`` / ``.adapter_type`` keep working for existing call sites.
+
+There is deliberately **no module-level ``ALL_MODELS`` list**: a list captured at
+import time cannot reflect a refresh. Call ``all_models()`` instead.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from mak.models import (
+    KEY_ENV_TO_PROVIDER,
+    PROVIDER_DISPLAY,
+    PROVIDER_ORDER,
+    ModelEntry,
+    ModelRegistry,
+)
 
+# Backward-compatible alias: the CLI has always called this shape "ModelInfo".
+ModelInfo = ModelEntry
 
-@dataclass(frozen=True)
-class ModelInfo:
-    provider: str
-    model_id: str
-    display_name: str
-    api_key_env: str
-    adapter_type: str
-    recommended: bool = False
-    # False = below sonnet-4-6 capability; show a warning when used as planner
-    planner_ok: bool = True
-
-
-ALL_MODELS: list[ModelInfo] = [
-    # Anthropic — https://platform.claude.com/docs/en/about-claude/models/overview
-    ModelInfo("anthropic", "claude-fable-5",    "Claude Fable 5",
-              "ANTHROPIC_API_KEY", "anthropic_api",                   planner_ok=True),
-    ModelInfo("anthropic", "claude-opus-4-8",   "Claude Opus 4.8",
-              "ANTHROPIC_API_KEY", "anthropic_api",                   planner_ok=True),
-    ModelInfo("anthropic", "claude-sonnet-5",   "Claude Sonnet 5",
-              "ANTHROPIC_API_KEY", "anthropic_api", recommended=True, planner_ok=True),
-    ModelInfo("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6",
-              "ANTHROPIC_API_KEY", "anthropic_api",                   planner_ok=True),
-    ModelInfo("anthropic", "claude-haiku-4-5",  "Claude Haiku 4.5",
-              "ANTHROPIC_API_KEY", "anthropic_api",                   planner_ok=False),
-    # OpenAI — https://developers.openai.com/api/docs/models
-    ModelInfo("openai", "gpt-5.6-sol",   "GPT-5.6 Sol",
-              "OPENAI_API_KEY", "openai_api", recommended=True, planner_ok=True),
-    ModelInfo("openai", "gpt-5.6-terra", "GPT-5.6 Terra",
-              "OPENAI_API_KEY", "openai_api",                   planner_ok=True),
-    ModelInfo("openai", "gpt-5.5",       "GPT-5.5",
-              "OPENAI_API_KEY", "openai_api",                   planner_ok=True),
-    ModelInfo("openai", "gpt-5.6-luna",  "GPT-5.6 Luna",
-              "OPENAI_API_KEY", "openai_api",                   planner_ok=False),
-    # Google Gemini — https://ai.google.dev/gemini-api/docs/models
-    ModelInfo("gemini", "gemini-3.1-pro-preview", "Gemini 3.1 Pro (Preview)",
-              "GEMINI_API_KEY", "gemini_api",                   planner_ok=True),
-    ModelInfo("gemini", "gemini-3.5-flash",       "Gemini 3.5 Flash",
-              "GEMINI_API_KEY", "gemini_api", recommended=True, planner_ok=True),
-    ModelInfo("gemini", "gemini-3.1-flash-lite",  "Gemini 3.1 Flash-Lite",
-              "GEMINI_API_KEY", "gemini_api",                   planner_ok=False),
+__all__ = [
+    "KEY_ENV_TO_PROVIDER",
+    "PROVIDER_DISPLAY",
+    "PROVIDER_ORDER",
+    "ModelInfo",
+    "all_models",
+    "models_for_provider",
+    "providers_with_keys",
+    "recommended_planner_for_provider",
+    "registry",
 ]
 
-PROVIDER_DISPLAY = {"anthropic": "Anthropic", "openai": "OpenAI", "gemini": "Google Gemini"}
-PROVIDER_ORDER   = ("anthropic", "openai", "gemini")
-KEY_ENV_TO_PROVIDER = {
-    "ANTHROPIC_API_KEY": "anthropic",
-    "OPENAI_API_KEY":    "openai",
-    "GEMINI_API_KEY":    "gemini",
-}
+_REGISTRY = ModelRegistry()
+
+
+def registry() -> ModelRegistry:
+    """Return the process-wide model registry."""
+    return _REGISTRY
+
+
+def all_models() -> tuple[ModelInfo, ...]:
+    """Return the current model catalog snapshot."""
+    return _REGISTRY.all_models()
 
 
 def models_for_provider(provider: str) -> list[ModelInfo]:
-    return [m for m in ALL_MODELS if m.provider == provider]
+    """Return the catalog entries for one provider."""
+    return list(_REGISTRY.for_provider(provider))
 
 
 def providers_with_keys(api_keys: dict[str, str]) -> list[str]:
+    """Return providers that have a non-empty API key configured."""
     return [KEY_ENV_TO_PROVIDER[k] for k, v in api_keys.items()
             if v.strip() and k in KEY_ENV_TO_PROVIDER]
 
 
 def recommended_planner_for_provider(provider: str) -> str:
-    candidates = models_for_provider(provider)
-    rec = next((m for m in candidates if m.recommended), None)
-    return (rec or candidates[0]).model_id if candidates else "claude-sonnet-5"
+    """Return the planner model MAK auto-selects for ``provider``."""
+    return _REGISTRY.recommended_planner(provider) or "claude-opus-5"

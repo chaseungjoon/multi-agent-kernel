@@ -18,7 +18,11 @@ from rich.rule import Rule
 from cli.commands import handle_command
 from cli.completer import MakCompleter
 from cli.core.api_keys import any_key_set, load_keys
-from cli.core.models import providers_with_keys, recommended_planner_for_provider
+from cli.core.models import (
+    providers_with_keys,
+    recommended_planner_for_provider,
+    registry,
+)
 from cli.core.state import CliState
 from cli.runner import (
     build_session,
@@ -63,6 +67,19 @@ def _key_bindings() -> KeyBindings:
         event.current_buffer.insert_text("\n")
 
     return kb
+
+
+def _auto_refresh_enabled() -> bool:
+    """Read ``models.auto_refresh`` from the discovered config (default on).
+
+    Any config problem falls back to enabled — the registry still applies its own
+    due/cooldown/opt-out checks, so this never forces an unwanted fetch.
+    """
+    try:
+        from mak.config import discover_config_path, load_config
+        return bool(load_config(discover_config_path()).models.auto_refresh)
+    except Exception:  # noqa: BLE001 - config trouble must not block startup
+        return True
 
 
 class MakCli:
@@ -268,6 +285,10 @@ class MakCli:
 
     def _init_state(self) -> CliState:
         keys  = load_keys()
+        # Kick off a scheduled model-catalog refresh (1st/15th) in the
+        # background. Returns immediately when not due, offline, keyless, or
+        # opted out; it never prints — results show up in /models and /status.
+        registry().maybe_auto_refresh(keys, enabled=_auto_refresh_enabled())
         state = CliState(api_keys=keys)
         avail = providers_with_keys(keys)
         if avail:

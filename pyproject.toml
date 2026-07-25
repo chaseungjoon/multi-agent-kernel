@@ -37,7 +37,7 @@ include = ["mak*", "cli*"]
 [tool.setuptools.package-data]
 # The built-in default config must ship in the wheel: config discovery falls
 # back to it when no ./mak.yaml or ~/.config/mak/config.yaml exists.
-mak = ["config.yaml", ".env.example"]
+mak = ["config.yaml", ".env.example", "models/seed.json"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -84,6 +84,9 @@ known-first-party = ["mak"]
 "mak/agent_runner/adapters/openai_api_adapter.py" = ["ANN401"]
 "mak/agent_runner/adapters/gemini_api_adapter.py" = ["ANN401"]
 "mak/planner/llm.py" = ["ANN401"]
+# The model-list fetchers wrap the same three untyped SDKs to read each
+# provider's catalog; the response objects are dynamic at that boundary.
+"mak/models/providers.py" = ["ANN401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
