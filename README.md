@@ -1,3 +1,9 @@
+# ⚠️ Temporarily broken (2026-07-27~)
+ 
+A **critical design flaw** currently affects the pipeline. Until [Issue #8](https://github.com/chaseungjoon/multi-agent-kernel/issues/8) is resolved, this program is considered unstable and is **not recommended for use**.
+
+</br>
+
 <div align="center">
 
 # Multi Agent Kernel (MAK)
