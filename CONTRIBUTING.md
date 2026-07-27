@@ -652,6 +652,15 @@ parseability), formats with `ruff format` (auto-discovering the venv's `ruff`
 binary, falling back to raw source and *logging* on failure — never silently
 swallowing), and writes to disk.
 
+`ruff` is therefore a **runtime dependency**, not a dev-only tool: every file MAK
+reassembles passes through `ruff format`. It was dev-only until a user installing
+via `uv tool install` hit `FileNotFoundError` on every reconstruction —
+`_find_ruff()` looks beside `sys.executable` then falls back to `PATH`, and an
+isolated tool environment satisfies neither, so every reconstructed file was
+written unformatted with only a log line to say so. The formatting fallback still
+exists (a missing or broken `ruff` must never fail a run), but it is now a genuine
+edge case rather than the default for an entire install method.
+
 ### 3.5 The round-trip invariant (load-bearing)
 
 The contract that makes shared-memory editing trustworthy:
@@ -1624,7 +1633,8 @@ cd multi-agent-kernel
 python -m venv .venv
 source .venv/bin/activate           # Windows: .venv\Scripts\activate
 
-pip install -e ".[dev]"             # installs mypy, pytest, ruff, types-PyYAML
+pip install -e ".[dev]"             # adds mypy, pytest, types-PyYAML
+                                    # (ruff comes with the base install — §3.4)
 
 pre-commit install                  # optional: run the gates on every commit
 ```
