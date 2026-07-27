@@ -29,15 +29,35 @@ class _AnthropicResp:
         self.content = [_Block(text)]
 
 
+class _FakeStream:
+    """Stands in for the SDK's MessageStreamManager context manager."""
+
+    def __init__(self, response: Any) -> None:
+        self._response = response
+        self.closed = False
+
+    def __enter__(self) -> _FakeStream:
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.closed = True
+
+    def get_final_message(self) -> Any:
+        return self._response
+
+
 class FakeAnthropicClient:
     def __init__(self, text: str) -> None:
         self.messages = self
         self._text = text
         self.calls: list[dict[str, Any]] = []
+        self.streams: list[_FakeStream] = []
 
-    def create(self, **kwargs: Any) -> _AnthropicResp:
+    def stream(self, **kwargs: Any) -> _FakeStream:
         self.calls.append(kwargs)
-        return _AnthropicResp(self._text)
+        stream = _FakeStream(_AnthropicResp(self._text))
+        self.streams.append(stream)
+        return stream
 
 
 class _Choice:
@@ -120,8 +140,8 @@ class StoppedAnthropicClient:
         self.messages = self
         self._stop_reason = stop_reason
 
-    def create(self, **kwargs: Any) -> _StopResp:
-        return _StopResp("[{partial", self._stop_reason)
+    def stream(self, **kwargs: Any) -> _FakeStream:
+        return _FakeStream(_StopResp("[{partial", self._stop_reason))
 
 
 class _FinishChoice:
@@ -285,3 +305,28 @@ class TestTruncationDetection:
             model="gemini-3.5-flash", client=CandidateGeminiClient("PLAN", "STOP")
         )
         assert llm.complete("hi") == "PLAN"
+
+
+class TestAnthropicStreams:
+    """The output budget exceeds the SDK's non-streaming ceiling.
+
+    A non-streaming request at a plan-sized ``max_tokens`` is rejected outright
+    with "Streaming is required for operations that may take longer than 10
+    minutes", so the planner backend must stream.
+    """
+
+    def test_uses_stream_not_create(self) -> None:
+        client = FakeAnthropicClient("[]")
+        assert not hasattr(client, "create")
+        AnthropicPlannerLLM(model="claude-opus-5", client=client).complete("hi")
+        assert len(client.calls) == 1
+
+    def test_stream_context_is_closed(self) -> None:
+        client = FakeAnthropicClient("[]")
+        AnthropicPlannerLLM(model="claude-opus-5", client=client).complete("hi")
+        assert client.streams[0].closed is True
+
+    def test_resolved_budget_stays_streamable(self) -> None:
+        """Any budget we resolve must be one the SDK will accept over a stream."""
+        for model in ("claude-opus-5", "claude-haiku-4-5", "unknown-model"):
+            assert resolve_max_tokens(model) <= 128000

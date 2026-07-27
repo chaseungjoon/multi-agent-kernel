@@ -205,7 +205,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **881 tests pass**,
+The **kernel is functionally complete and well-tested**: **884 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -995,7 +995,13 @@ so it is unit-testable without Docker.
   (Anthropic `stop_reason == "max_tokens"`, OpenAI `finish_reason == "length"`,
   Gemini `MAX_TOKENS`) as `TruncatedResponseError` before parsing is even attempted.
   An Anthropic `refusal` stop reason raises `PlannerFailedError` directly, since
-  re-sending the same prompt earns the same refusal.
+  re-sending the same prompt earns the same refusal. The Anthropic backend
+  **streams** (`messages.stream(...)` + `get_final_message()`): a plan-sized
+  budget is past the point where the SDK will run a request non-streaming at all
+  (*"Streaming is required for operations that may take longer than 10 minutes"*),
+  because an idle non-streaming connection can be dropped before a long
+  generation finishes. `get_final_message()` returns the same assembled message a
+  non-streaming call would, so `stop_reason` handling is unchanged.
 - **`depgraph.py`** (Wave 10) — a static dependency-graph extractor, purpose-built to
   *validate* a plan rather than detect a live conflict (that job stays in
   `mak/conflict_detector/*`, which is untouched). `build_dep_graph(sources)` parses
@@ -1985,7 +1991,9 @@ retry was cut at the same point and the run failed with
 model's own documented output limit (§8), each backend reports a provider-signalled
 cut as `TruncatedResponseError`, `response.py` distinguishes truncated from malformed
 rather than lumping both into "bad JSON", and a truncated attempt is retried with a
-request for a *smaller* plan instead of an identical one. What remains is the
+request for a *smaller* plan instead of an identical one. Raising the budget in turn
+pushed the Anthropic planner call past the SDK's non-streaming ceiling, so that
+backend now streams and assembles the final message. What remains is the
 open-problems list above.
 
 ---

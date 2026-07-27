@@ -101,15 +101,23 @@ class AnthropicPlannerLLM:
     def complete(self, prompt: str) -> str:
         """Return the model's text completion for ``prompt``.
 
+        Streams the request. A plan-sized output budget is large enough that the
+        SDK refuses to run it without streaming ("Streaming is required for
+        operations that may take longer than 10 minutes"), because an idle
+        non-streaming connection can be dropped before a long generation ends.
+        ``get_final_message`` still yields the whole assembled message, so the
+        caller sees the same shape a non-streaming call would return.
+
         Raises ``TruncatedResponseError`` when the reply hit the output cap, so
         the planner retries with a compaction instruction instead of re-issuing
         an identical request that would be cut at the identical point.
         """
-        response = self._get_client().messages.create(
+        with self._get_client().messages.stream(
             model=self.model,
             max_tokens=self.max_tokens,
             messages=[{"role": "user", "content": prompt}],
-        )
+        ) as stream:
+            response = stream.get_final_message()
         stop_reason = getattr(response, "stop_reason", None)
         if stop_reason == "max_tokens":
             raise TruncatedResponseError(
