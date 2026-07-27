@@ -7,16 +7,62 @@ distinct from the agent adapters, which force a structured ``TaskResult``.
 ``build_planner_llm(model)`` picks the backend from the model id prefix. As with the
 adapters, SDKs are imported lazily and clients are injectable, so constructing a
 planner LLM needs no SDK installed and makes no network call until ``complete`` runs.
+
+**Output budget.** A plan for a real repository runs to thousands of tokens, and a
+budget too small to hold it truncates the JSON mid-string — a failure that then
+repeats on every retry, because the same request produces the same over-long plan
+and the same cut. The budget is therefore taken from the model's own documented
+output limit (via the model catalog) rather than from one fixed number, and every
+backend reports a provider-signalled cut as ``TruncatedResponseError`` so the
+planner can ask for a smaller plan instead of blindly retrying.
 """
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 from mak.core.exceptions import PlannerFailedError
 from mak.planner.planner import PlannerLLM
+from mak.planner.response import ResponseError, TruncatedResponseError
 
-_DEFAULT_MAX_TOKENS = 4096
+# Used when the catalog knows nothing about the model. Twice the agent adapters'
+# budget: a plan spans the whole repo, while an agent result covers a few nodes.
+_DEFAULT_MAX_TOKENS = 16384
+# Floor and ceiling around whatever the catalog reports. The ceiling keeps the
+# request comfortably inside the non-streaming window the SDKs allow; a plan that
+# genuinely needs more than this is one the planner should be asked to compact.
+_MIN_MAX_TOKENS = 4096
+_MAX_MAX_TOKENS = 32000
+
+
+@lru_cache(maxsize=1)
+def _documented_output_limits() -> dict[str, int]:
+    """Return ``{model_id: max_output}`` from the model catalog."""
+    try:
+        from mak.models.registry import ModelRegistry
+
+        return {
+            entry.model_id: entry.max_output
+            for entry in ModelRegistry().all_models()
+            if entry.max_output
+        }
+    except Exception:  # noqa: BLE001 - the budget below is a safe fallback
+        # The catalog is an optimisation, not a dependency: a missing manifest or
+        # an unreadable cache must not stop the planner from running.
+        return {}
+
+
+def resolve_max_tokens(model: str) -> int:
+    """Return the output-token budget to request for ``model``.
+
+    Uses the model's documented output limit when the catalog knows it, clamped
+    to a sane range; falls back to ``_DEFAULT_MAX_TOKENS`` for an unknown model.
+    """
+    documented = _documented_output_limits().get(model)
+    if documented is None:
+        return _DEFAULT_MAX_TOKENS
+    return max(_MIN_MAX_TOKENS, min(documented, _MAX_MAX_TOKENS))
 
 
 class AnthropicPlannerLLM:
@@ -28,10 +74,12 @@ class AnthropicPlannerLLM:
         model: str,
         client: Any | None = None,
         api_key: str | None = None,
-        max_tokens: int = _DEFAULT_MAX_TOKENS,
+        max_tokens: int | None = None,
     ) -> None:
         self.model = model
-        self.max_tokens = max_tokens
+        self.max_tokens = (
+            max_tokens if max_tokens is not None else resolve_max_tokens(model)
+        )
         self._api_key = api_key
         self._client = client
 
@@ -51,12 +99,30 @@ class AnthropicPlannerLLM:
         return self._client
 
     def complete(self, prompt: str) -> str:
-        """Return the model's text completion for ``prompt``."""
+        """Return the model's text completion for ``prompt``.
+
+        Raises ``TruncatedResponseError`` when the reply hit the output cap, so
+        the planner retries with a compaction instruction instead of re-issuing
+        an identical request that would be cut at the identical point.
+        """
         response = self._get_client().messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
+        stop_reason = getattr(response, "stop_reason", None)
+        if stop_reason == "max_tokens":
+            raise TruncatedResponseError(
+                f"anthropic stopped at the {self.max_tokens}-token output limit "
+                "before the plan was complete"
+            )
+        if stop_reason == "refusal":
+            # Not retryable: the model declined, and re-sending the same prompt
+            # gets the same refusal while burning the budget.
+            raise PlannerFailedError(
+                f"the planner model '{self.model}' declined to produce a plan "
+                "(refusal stop reason); rephrase the task or use another model"
+            )
         parts = [
             block.text
             for block in getattr(response, "content", []) or []
@@ -103,7 +169,13 @@ class OpenAiPlannerLLM:
         choices = getattr(response, "choices", None) or []
         if not choices:
             return ""
-        return choices[0].message.content or ""
+        choice = choices[0]
+        if getattr(choice, "finish_reason", None) == "length":
+            raise TruncatedResponseError(
+                "openai stopped at the model's output-token limit before the "
+                "plan was complete"
+            )
+        return choice.message.content or ""
 
 
 class GeminiPlannerLLM:
@@ -141,7 +213,31 @@ class GeminiPlannerLLM:
             model=self.model,
             contents=prompt,
         )
-        return getattr(response, "text", None) or ""
+        reason = _gemini_finish_reason(response)
+        if "MAX_TOKENS" in reason:
+            raise TruncatedResponseError(
+                "gemini stopped at the model's output-token limit before the "
+                "plan was complete"
+            )
+        text = getattr(response, "text", None) or ""
+        if not text and reason:
+            # An empty candidate carries its reason only here (safety, recitation);
+            # surfacing it beats reporting a bare "empty response".
+            raise ResponseError(f"gemini returned no text (finish reason: {reason})")
+        return text
+
+
+def _gemini_finish_reason(response: Any) -> str:
+    """Return the first candidate's finish reason as a string ("" when absent).
+
+    The SDK hands back an enum whose ``str`` is ``FinishReason.MAX_TOKENS``, but
+    older versions and the REST shape use a plain string, so compare on the text.
+    """
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        return ""
+    reason = getattr(candidates[0], "finish_reason", None)
+    return "" if reason is None else str(reason)
 
 
 def build_planner_llm(model: str, *, api_key: str | None = None) -> PlannerLLM:

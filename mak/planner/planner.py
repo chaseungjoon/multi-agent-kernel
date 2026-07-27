@@ -14,12 +14,14 @@ so the planner is testable with canned responses and is not bound to one SDK.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol, TypeVar
 
 from mak.core.exceptions import PlannerFailedError
 from mak.core.types import NodeId, SubTask
+from mak.planner.response import ResponseError, TruncatedResponseError, loads_json
 
 _T = TypeVar("_T")
 
@@ -112,17 +114,47 @@ class _OutlineStep:
     depends_on: tuple[str, ...]
 
 
-def _strip_code_fences(text: str) -> str:
-    """Remove a surrounding ```json ... ``` (or ``` ... ```) fence if present."""
-    stripped = text.strip()
-    if not stripped.startswith("```"):
-        return stripped
-    lines = stripped.splitlines()
-    # Drop the opening fence (``` or ```json) and a trailing fence if present.
-    lines = lines[1:]
-    if lines and lines[-1].strip() == "```":
-        lines = lines[:-1]
-    return "\n".join(lines).strip()
+_TRUNCATION_NOTE = """\
+Your previous response was cut off by the output-token limit before the JSON \
+closed, so it could not be read. Produce a SMALLER plan that fits in one \
+response: keep every "description" to one short sentence, merge sub-tasks that \
+touch the same file, and emit compact JSON (no pretty-printing, no blank lines, \
+no trailing prose). Return ONLY the corrected JSON."""
+
+# Enough of a pause to clear a per-minute rate limit without stalling a run that
+# is failing for a reason waiting will not fix.
+_BACKOFF_BASE_SECONDS = 1.0
+_BACKOFF_MAX_SECONDS = 8.0
+
+
+def _backoff_seconds(attempt: int) -> float:
+    """Return the delay before retry ``attempt`` (1-based), capped."""
+    return float(min(_BACKOFF_BASE_SECONDS * 2 ** (attempt - 1), _BACKOFF_MAX_SECONDS))
+
+
+def _retry_note(error: Exception) -> str:
+    """Return the feedback appended to the prompt after a failed attempt.
+
+    A truncated response is the one failure that repeats verbatim on a naive
+    retry — the same request yields the same over-long plan and the same cut — so
+    it gets a note that asks for a smaller plan instead of a corrected one.
+    """
+    if isinstance(error, TruncatedResponseError):
+        return _TRUNCATION_NOTE
+    return (
+        f"Your previous response was rejected: {error}\n"
+        "Return ONLY the corrected JSON."
+    )
+
+
+def _failure_hint(error: Exception | None) -> str:
+    """Return actionable advice to append when the retry budget runs out."""
+    if isinstance(error, TruncatedResponseError):
+        return (
+            ". The plan did not fit in the planner model's output budget — narrow "
+            "the task, or pick a planner model with a larger output limit."
+        )
+    return ""
 
 
 def _require(condition: bool, message: str) -> None:
@@ -185,18 +217,16 @@ def parse_plan(raw: str) -> list[SubTask]:
     """Parse and validate an LLM (or user) plan string into ``SubTask`` objects.
 
     Accepts a bare JSON array or an object with a ``"subtasks"`` array, optionally
-    wrapped in a code fence. Raises ``ValueError`` on any malformed or
-    schema-invalid input (so callers can retry or surface a precise reason).
+    wrapped in a code fence or framed by prose. Raises ``ValueError`` on any
+    malformed or schema-invalid input (so callers can retry or surface a precise
+    reason), and ``TruncatedResponseError`` when the response was cut short.
     """
-    text = _strip_code_fences(raw)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"response was not valid JSON: {exc}") from exc
+    data = loads_json(raw)
 
     if isinstance(data, dict) and "subtasks" in data:
         data = data["subtasks"]
-    _require(isinstance(data, list), "plan must be a JSON array of sub-tasks")
+    if not isinstance(data, list):
+        raise ValueError("plan must be a JSON array of sub-tasks")
 
     subtasks = [_coerce_subtask(item, i) for i, item in enumerate(data)]
 
@@ -288,14 +318,11 @@ def _inventory_for_files(
 
 def _parse_outline(raw: str) -> list[_OutlineStep]:
     """Parse and validate an outline-pass response into ``_OutlineStep`` objects."""
-    text = _strip_code_fences(raw)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"outline was not valid JSON: {exc}") from exc
+    data = loads_json(raw)
     if isinstance(data, dict) and "steps" in data:
         data = data["steps"]
-    _require(isinstance(data, list), "outline must be a JSON array of steps")
+    if not isinstance(data, list):
+        raise ValueError("outline must be a JSON array of steps")
 
     steps: list[_OutlineStep] = []
     for index, item in enumerate(data):
@@ -464,10 +491,13 @@ class Planner:
         No retry budget is consumed.
         """
         prompt = f"{_CRITIQUE_INSTRUCTIONS}\n\nPLAN:\n{_plan_to_json(plan)}\n"
-        raw = self._llm.complete(prompt)
+        # The critique is an optional improvement pass, so *any* failure in it —
+        # a dead API, a truncated reply, an unparseable plan — must leave the
+        # already-valid plan standing rather than take the run down.
         try:
-            data = json.loads(_strip_code_fences(raw))
-        except json.JSONDecodeError:
+            raw = self._llm.complete(prompt)
+            data = loads_json(raw)
+        except Exception:  # noqa: BLE001 - see comment above
             return plan
         if isinstance(data, dict) and data.get("verdict") == "ok":
             return plan
@@ -479,22 +509,50 @@ class Planner:
     def _complete_with_retries(
         self, prompt: str, parse: Callable[[str], _T]
     ) -> _T:
-        """Call the LLM until ``parse`` accepts a response, feeding back errors."""
+        """Call the LLM until ``parse`` accepts a response, feeding back errors.
+
+        Both halves of an attempt are retried: a transient provider failure (a
+        rate limit, a dropped connection) is as recoverable as a malformed reply,
+        and previously it aborted the run outright with the retry budget untouched.
+        Only a failed *call* backs off — a rejected plan is re-asked immediately,
+        since waiting does nothing to make the model answer better.
+        """
         last_error: Exception | None = None
-        for _attempt in range(self._max_retries):
-            current = prompt if last_error is None else (
-                f"{prompt}\nYour previous response was rejected: {last_error}\n"
-                "Return ONLY the corrected JSON."
+        call_failed = False
+        for attempt in range(self._max_retries):
+            if call_failed:
+                self._sleep(_backoff_seconds(attempt))
+            current = (
+                prompt if last_error is None else f"{prompt}\n{_retry_note(last_error)}"
             )
-            raw = self._llm.complete(current)
+            try:
+                raw = self._llm.complete(current)
+            except PlannerFailedError:
+                # A setup failure (missing SDK, unknown backend) is not transient;
+                # retrying it just delays the same message.
+                raise
+            except ResponseError as exc:
+                # A provider-signalled bad response (a cut, a blocked candidate)
+                # is a response problem, not a transport one — no backoff.
+                last_error, call_failed = exc, False
+                continue
+            except Exception as exc:  # noqa: BLE001 - provider SDKs raise freely
+                last_error, call_failed = exc, True
+                continue
+            call_failed = False
             try:
                 return parse(raw)
             except ValueError as exc:
                 last_error = exc
         raise PlannerFailedError(
             f"planner failed to produce a valid plan after {self._max_retries} "
-            f"attempts: {last_error}"
+            f"attempts: {last_error}{_failure_hint(last_error)}"
         )
+
+    @staticmethod
+    def _sleep(seconds: float) -> None:
+        """Pause between attempts (a seam so tests do not wait)."""
+        time.sleep(seconds)
 
     def _decompose_outline(
         self, user_task: str, node_inventory: list[NodeId]

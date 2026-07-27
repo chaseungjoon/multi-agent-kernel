@@ -9,6 +9,7 @@ import pytest
 from mak.core.exceptions import PlannerFailedError
 from mak.core.types import NodeId
 from mak.planner.planner import Planner, parse_plan
+from mak.planner.response import TruncatedResponseError
 
 
 class StubLLM:
@@ -383,3 +384,119 @@ class TestSelfCritique:
         llm = StubLLM([_VALID_PLAN])
         Planner(llm).decompose("t", [])
         assert len(llm.prompts) == 1
+
+
+class RaisingLLM:
+    """An LLM stub that raises on the first ``failures`` calls, then answers."""
+
+    def __init__(self, error: Exception, failures: int, then: str) -> None:
+        self._error = error
+        self._failures = failures
+        self._then = then
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        if len(self.prompts) <= self._failures:
+            raise self._error
+        return self._then
+
+
+class TestTruncatedResponseRetry:
+    """Truncation needs its own feedback.
+
+    A cut-off response repeats verbatim on a naive retry, so the retry must ask
+    for a *smaller* plan rather than a corrected one.
+    """
+
+    def test_truncated_plan_retries_with_a_compaction_note(self) -> None:
+        truncated = _VALID_PLAN[:60]
+        llm = StubLLM([truncated, _VALID_PLAN])
+        tasks = Planner(llm, max_retries=3).decompose("t", [])
+        assert [t.task_id for t in tasks] == ["a", "b"]
+        assert "cut off by the output-token limit" in llm.prompts[1]
+        assert "SMALLER plan" in llm.prompts[1]
+
+    def test_malformed_still_gets_the_generic_note(self) -> None:
+        llm = StubLLM(["{not json", _VALID_PLAN])
+        Planner(llm, max_retries=3).decompose("t", [])
+        assert "rejected" in llm.prompts[1]
+        assert "SMALLER plan" not in llm.prompts[1]
+
+    def test_exhausted_truncation_explains_the_budget(self) -> None:
+        truncated = _VALID_PLAN[:60]
+        llm = StubLLM([truncated, truncated, truncated])
+        with pytest.raises(PlannerFailedError, match="output budget"):
+            Planner(llm, max_retries=3).decompose("t", [])
+
+    def test_provider_signalled_truncation_is_retried(self) -> None:
+        """The Anthropic/OpenAI/Gemini backends raise before parsing happens."""
+        llm = RaisingLLM(TruncatedResponseError("hit the cap"), 1, _VALID_PLAN)
+        tasks = Planner(llm, max_retries=3).decompose("t", [])
+        assert len(tasks) == 2
+        assert "SMALLER plan" in llm.prompts[1]
+
+
+class TestTransientCallFailures:
+    def test_transient_error_is_retried(self) -> None:
+        llm = RaisingLLM(RuntimeError("connection reset"), 2, _VALID_PLAN)
+        planner = Planner(llm, max_retries=3)
+        planner._sleep = lambda _seconds: None  # type: ignore[method-assign]
+        assert len(planner.decompose("t", [])) == 2
+        assert len(llm.prompts) == 3
+
+    def test_exhausted_transient_errors_report_the_cause(self) -> None:
+        llm = RaisingLLM(RuntimeError("rate limited"), 5, _VALID_PLAN)
+        planner = Planner(llm, max_retries=3)
+        planner._sleep = lambda _seconds: None  # type: ignore[method-assign]
+        with pytest.raises(PlannerFailedError, match="rate limited"):
+            planner.decompose("t", [])
+
+    def test_setup_failure_is_not_retried(self) -> None:
+        """A missing SDK will not fix itself; fail fast with its own message."""
+        llm = RaisingLLM(PlannerFailedError("anthropic SDK not installed"), 5, "")
+        with pytest.raises(PlannerFailedError, match="SDK not installed"):
+            Planner(llm, max_retries=3).decompose("t", [])
+        assert len(llm.prompts) == 1
+
+    def test_transient_failures_back_off(self) -> None:
+        llm = RaisingLLM(RuntimeError("boom"), 2, _VALID_PLAN)
+        planner = Planner(llm, max_retries=3)
+        slept: list[float] = []
+        planner._sleep = slept.append  # type: ignore[method-assign]
+        planner.decompose("t", [])
+        assert slept == [1.0, 2.0]
+
+    def test_rejected_plans_do_not_back_off(self) -> None:
+        """Waiting cannot make a model answer better — only a call failure waits."""
+        llm = StubLLM(["bad", "bad", _VALID_PLAN])
+        planner = Planner(llm, max_retries=3)
+        slept: list[float] = []
+        planner._sleep = slept.append  # type: ignore[method-assign]
+        planner.decompose("t", [])
+        assert slept == []
+
+
+class TestResponseFraming:
+    def test_prose_around_the_plan_is_tolerated(self) -> None:
+        llm = StubLLM([f"Here is the plan:\n{_VALID_PLAN}\nHope that helps!"])
+        assert len(Planner(llm).decompose("t", [])) == 2
+
+    def test_empty_response_is_retried_not_fatal(self) -> None:
+        llm = StubLLM(["", _VALID_PLAN])
+        assert len(Planner(llm, max_retries=3).decompose("t", [])) == 2
+
+
+class TestCritiqueIsNeverFatal:
+    def test_critique_call_failure_keeps_the_plan(self) -> None:
+        llm = RaisingLLM(RuntimeError("api down"), 5, "")
+        planner = Planner(StubLLM([_VALID_PLAN]), self_critique=True)
+        tasks = planner.decompose("t", [])
+        assert [t.task_id for t in tasks] == ["a", "b"]
+        planner._llm = llm  # critique on an already-built plan
+        assert [t.task_id for t in planner._critique_plan(tasks)] == ["a", "b"]
+
+    def test_truncated_critique_keeps_the_plan(self) -> None:
+        llm = StubLLM([_VALID_PLAN, _VALID_PLAN[:60]])
+        tasks = Planner(llm, self_critique=True).decompose("t", [])
+        assert [t.task_id for t in tasks] == ["a", "b"]

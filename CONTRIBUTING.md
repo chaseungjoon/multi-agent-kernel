@@ -205,7 +205,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **828 tests pass**,
+The **kernel is functionally complete and well-tested**: **881 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -224,7 +224,7 @@ The module-by-module state:
 | `mak/agent_runner/` (runner, registry, protocol, API adapters) | Complete |
 | `mak/scheduler/` | Complete |
 | `mak/conflict_detector/` | Complete |
-| `mak/planner/` (planner, review, LLM backends) | Complete |
+| `mak/planner/` (planner, review, LLM backends, response parsing) | Complete |
 | `mak/git_integration/` | Complete |
 | `mak/models/` (self-refreshing model catalog, Wave 14) | Complete |
 | `mak/session.py` | Complete (concurrent) |
@@ -951,7 +951,26 @@ so it is unit-testable without Docker.
       file's fragments (§2), so a sibling fragment task would lose its work. Pick one —
       a single whole-file task, or only symbol tasks.
   On a malformed response it retries up to `max_retries`, feeding the rejection
-  reason back, then raises `PlannerFailedError`.
+  reason back, then raises `PlannerFailedError`. The retry loop covers the LLM
+  *call* as well as the parse: a transient provider failure (rate limit, dropped
+  connection) is retried with exponential backoff (1s, 2s, 4s, capped at 8s)
+  instead of aborting the run with the budget untouched, while a `PlannerFailedError`
+  from the backend (missing SDK, refusal) is re-raised immediately because retrying
+  cannot fix it. A rejected *plan* is re-asked with no delay — waiting does not make
+  a model answer better. Truncation gets its own feedback (see `response.py` below):
+  the retry asks for a **smaller** plan rather than a corrected one.
+- **`response.py`** — turns raw response text into JSON and, critically, tells
+  **malformed** apart from **truncated**. `loads_json` strips a code fence found
+  anywhere in the reply (not just at position 0), skips framing prose on both sides,
+  and parses with `raw_decode` so trailing commentary does not fail a good response.
+  When parsing fails, `repair_truncated` decides which kind of failure it was by
+  closing the delimiters the payload left open — after discarding a trailing
+  incomplete element — and checking whether the result parses; if it does, the
+  response was cut short and `TruncatedResponseError` is raised carrying
+  `complete_elements` (how many whole items the model emitted before the cut).
+  The repaired text is **never** returned as a plan: it is a partial plan, and
+  running one would edit half the codebase and report success. It exists to classify
+  and to report, not to salvage.
 - **`review.py`** — `display_plan_for_review` renders the subtask list and dependency
   edges and loops **approve / edit (paste corrected JSON) / abort**
   (`PlanReviewAborted`). I/O is injected (`prompt_fn` / `printer`) for testability;
@@ -967,6 +986,16 @@ so it is unit-testable without Docker.
   client (distinct from the agent adapters, which force a structured `TaskResult`).
   `build_planner_llm(model)` picks the backend from the model-id prefix, so the CLI
   can construct a working planner from `config.planner.model` alone.
+  `resolve_max_tokens(model)` sizes the output budget from the model's own
+  documented `max_output` in the model catalog (§13), clamped to 4,096–32,000, and
+  falls back to 16,384 for a model the catalog does not know. A fixed 4,096-token
+  budget used to cut real plans off mid-string, and because the same request
+  produces the same over-long plan, the cut repeated on every retry and failed the
+  run — so each backend also reports a provider-signalled cut
+  (Anthropic `stop_reason == "max_tokens"`, OpenAI `finish_reason == "length"`,
+  Gemini `MAX_TOKENS`) as `TruncatedResponseError` before parsing is even attempted.
+  An Anthropic `refusal` stop reason raises `PlannerFailedError` directly, since
+  re-sending the same prompt earns the same refusal.
 - **`depgraph.py`** (Wave 10) — a static dependency-graph extractor, purpose-built to
   *validate* a plan rather than detect a live conflict (that job stays in
   `mak/conflict_detector/*`, which is untouched). `build_dep_graph(sources)` parses
@@ -1653,6 +1682,7 @@ mak/
 │   ├── planner.py         # LLM decomposition, SubTask schema, retry logic,
 │   │                      #   config-gated outline strategy + self-critique
 │   ├── llm.py             # PlannerLLM completion backends (build_planner_llm)
+│   ├── response.py        # tolerant JSON extraction; truncated vs malformed
 │   ├── review.py          # human-in-the-loop DAG review + finding rendering
 │   ├── depgraph.py        # static call/import dependency graph (Wave 10)
 │   └── validation.py      # deterministic plan grounding/augmentation (Wave 10)
@@ -1947,7 +1977,16 @@ catalog (`mak/models/`, §13): provider facts are fetched and cached with strict
 per-provider failure isolation, while judgment (`recommended`/`planner_ok`/
 `planner_recommended`) stays a hand-maintained exact-id table that MAK never
 infers from — new models arrive usable but unstarred until a human curates them.
-What remains is the open-problems list above.
+A follow-on **planner-robustness hotfix** fixed a failure that looked random and was
+not: the planner asked for at most 4,096 output tokens, so a plan for a real repo was
+cut off mid-string, and since the same request yields the same over-long plan, every
+retry was cut at the same point and the run failed with
+`response was not valid JSON: Unterminated string`. The budget now comes from the
+model's own documented output limit (§8), each backend reports a provider-signalled
+cut as `TruncatedResponseError`, `response.py` distinguishes truncated from malformed
+rather than lumping both into "bad JSON", and a truncated attempt is retried with a
+request for a *smaller* plan instead of an identical one. What remains is the
+open-problems list above.
 
 ---
 
