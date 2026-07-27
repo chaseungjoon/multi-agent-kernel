@@ -69,13 +69,13 @@ before it reaches the scheduler, not after a collision.
 
 ## Install
 
-Prerequisites: **Python ≥ 3.11**, **[uv](https://docs.astral.sh/uv/) (or [pipx](https://github.com/pypa/pipx))**, **git**
+> Prerequisites: **Python ≥ 3.11**, **[uv](https://docs.astral.sh/uv/) (or [pipx](https://github.com/pypa/pipx))**, **git**
 
 ```bash
-# with uv (recommended)
+# Recommended 
 uv tool install git+https://github.com/chaseungjoon/multi-agent-kernel
 
-# or with pipx
+# Or with pipx
 pipx install git+https://github.com/chaseungjoon/multi-agent-kernel
 ```
 
