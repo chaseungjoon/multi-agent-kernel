@@ -1,3 +1,5 @@
+# ⚠️ Currently multi agent kernel has a critical bug and is not recommended for use
+
 <div align="center">
 
 # Multi Agent Kernel (MAK)
