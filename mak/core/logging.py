@@ -19,6 +19,14 @@ class EventType(StrEnum):
     LOCK_RELEASED = "lock_released"
     CONFLICT_DETECTED = "conflict_detected"
     AGENT_SPAWNED = "agent_spawned"
+    # What an agent actually returned, per attempt: success, the node ids, the
+    # length of each returned source, and any error. Without it a run that drops
+    # an agent's work cannot be diagnosed after the fact — the log recorded only
+    # that the task made no progress, never what came back over the wire.
+    AGENT_RESULT = "agent_result"
+    # A returned source MAK refused to stage, with the id and the task's grant.
+    # Silent data loss in the agent -> store transport is never acceptable.
+    SOURCE_DROPPED = "source_dropped"
     SESSION_STARTED = "session_started"
     SESSION_ENDED = "session_ended"
     PLAN_VALIDATED = "plan_validated"

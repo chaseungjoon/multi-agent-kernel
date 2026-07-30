@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 import textwrap
 import threading
 from pathlib import Path
@@ -236,6 +237,57 @@ class NodeStore:
                 return [whole_file_nid]
             prefix = f"{file_path}::"
             return [nid for nid in nodes if str(nid).startswith(prefix)]
+
+    def list_all_nodes(self) -> list[NodeId]:
+        """Every committed node id in source order, superseded fragments included.
+
+        ``list_nodes`` hides a file's ``path::…`` fragments once a whole-file node
+        exists, which is right for planning and reconstruction but wrong for
+        maintenance: a prune must be able to see — and evict — every id the store
+        actually holds.
+        """
+        with self._lock:
+            return sorted(self._nodes, key=self._order)
+
+    def remove_node(self, node_id: NodeId) -> bool:
+        """Delete a node outright: committed and pending state, metadata, files.
+
+        Returns whether anything was removed. This is a *maintenance* operation
+        (the Wave 11 prune of nodes that should never have been ingested), not
+        part of the edit path — an ordinary rejected edit is rolled back or
+        reverted, never removed. On-disk versions are deleted only when the
+        fragment directory really lies inside the store root.
+        """
+        with self._lock:
+            existed = (
+                node_id in self._nodes
+                or node_id in self._pending
+                or node_id in self._metadata
+            )
+            if not existed:
+                return False
+            self._delete_fragment_dir(node_id)
+            self._nodes.pop(node_id, None)
+            self._pending.pop(node_id, None)
+            self._metadata.pop(node_id, None)
+            self._save_metadata()
+            return True
+
+    def _delete_fragment_dir(self, node_id: NodeId) -> None:
+        """Remove a node's on-disk version directory, if it is under the root."""
+        root = self._root.resolve()
+        frag_dir = self._fragment_dir(node_id)
+        try:
+            resolved = frag_dir.resolve()
+            if not resolved.is_dir() or resolved == root:
+                return
+            if not resolved.is_relative_to(root):
+                return
+            shutil.rmtree(resolved)
+        except OSError as exc:
+            raise NodeStoreError(
+                f"cannot remove stored versions of '{node_id}': {exc}"
+            ) from exc
 
     def parse_file_into_nodes(
         self, file_path: str, source: str | None = None

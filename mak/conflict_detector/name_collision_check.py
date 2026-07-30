@@ -8,12 +8,19 @@ reports any qualified name claimed by more than one agent.
 The unit of comparison is the *agent*: a single agent legitimately defining a
 symbol once is fine; the same qualified name defined by two different agents is the
 collision.
+
+Symbols are attributed to their owning class where the node id says so (Wave 11
+audit): a ``method`` / ``class_body`` fragment is stored dedented, so its members
+parse as module-level names. Without that attribution, two different classes in
+one file each defining ``get`` would be reported as colliding.
 """
 
 from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+
+from mak.conflict_detector.node_ids import class_scope_of, file_scope_of
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,14 +57,18 @@ def check_name_collisions(symbol_edits: dict[str, str]) -> list[str]:
     same symbol name defined in two *different* files (e.g. the ``_register_all``
     of two separate registry tables, edited by one task) is legitimate and must
     not be flagged. Keys without a file component all share one scope, preserving
-    the plain agent-id usage. Returns human-readable collision reasons.
+    the plain agent-id usage. Symbols coming from a class-scoped fragment are
+    qualified with that class. Returns human-readable collision reasons.
     """
     # (file_scope, qualified_name) -> set of edit keys defining it
     owners: dict[tuple[str, str], set[str]] = {}
     for edit_key, source in symbol_edits.items():
-        file_scope = edit_key.split("::", 1)[0] if "::" in edit_key else ""
+        file_scope = file_scope_of(edit_key)
+        owner_class = class_scope_of(edit_key)
+        prefix = f"{owner_class}." if owner_class else ""
         for symbol in extract_defined_symbols(source):
-            owners.setdefault((file_scope, symbol.qualified_name), set()).add(edit_key)
+            name = f"{prefix}{symbol.qualified_name}"
+            owners.setdefault((file_scope, name), set()).add(edit_key)
 
     reasons: list[str] = []
     for (_scope, name), editors in sorted(owners.items()):

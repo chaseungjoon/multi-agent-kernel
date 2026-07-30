@@ -109,6 +109,52 @@ class TestDetect:
     def test_empty_round_is_ok(self) -> None:
         assert ConflictDetector().detect(EditRound()).ok
 
+class TestFragmentFraming:
+    """Wave 11: dedented class fragments are re-framed before being checked."""
+
+    def test_method_fragment_self_is_not_a_parameter(self) -> None:
+        # Stored dedented, `def get(self, name)` reads as a module-level function
+        # with two required parameters; the call `r.get(name)` then looks short.
+        method = "def get(self, name):\n    return name\n"
+        caller = "def use(reg):\n    return Registers.get(reg, 'a')\n"
+        report = ConflictDetector().detect(
+            EditRound(
+                definitions={"m.py::method::Registers.get": method},
+                callers={"m.py::function::use": caller},
+            )
+        )
+        assert report.ok, report.reasons
+
+    def test_self_call_inside_a_class_body_fragment_is_checked(self) -> None:
+        # Framing also *restores* recall: with the class known, `self.render(1)`
+        # resolves to the sibling method it really targets.
+        report = ConflictDetector().detect(
+            EditRound(
+                definitions={
+                    "m.py::method::View.render": (
+                        "def render(self, width, height):\n    return width\n"
+                    )
+                },
+                callers={
+                    "m.py::method::View.draw": (
+                        "def draw(self):\n    return self.render(1)\n"
+                    )
+                },
+            )
+        )
+        (conflict,) = report.by_check("signature")
+        assert "render" in conflict.message
+
+    def test_unframeable_fragment_falls_back_to_raw_source(self) -> None:
+        # A class-scoped id whose source cannot sit in a class body must not be
+        # turned into a syntax conflict by the framing itself.
+        report = ConflictDetector().detect(
+            EditRound(definitions={"m.py::class_body::C": "x = 1\n"})
+        )
+        assert report.ok, report.reasons
+
+
+class TestMergedDefinitions:
     def test_caller_against_merged_definitions(self) -> None:
         # A caller can reference a function defined in a different node; the
         # detector merges all definition sources before checking.

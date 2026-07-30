@@ -16,6 +16,7 @@ from typing import Any
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
 from mak.agent_runner.protocol import (
+    NODE_ID_CONTRACT,
     PROTOCOL_VERSION,
     decode_task_result,
     encode_task_bundle,
@@ -34,8 +35,8 @@ _SYSTEM_PROMPT = (
     "task_id), 'success' (boolean), 'modified_fragments' (array of objects, each "
     "with 'node_id' and the FULL rewritten 'new_source' of that node — complete "
     "source, never a diff, only for nodes you may modify), and 'error' (string "
-    "reason when success is false, otherwise null). Respond with only that JSON "
-    "object."
+    "reason when success is false, otherwise null). "
+    f"{NODE_ID_CONTRACT} Respond with only that JSON object."
 )
 
 

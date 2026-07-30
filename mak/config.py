@@ -12,10 +12,24 @@ import yaml
 from mak.core.exceptions import ConfigError
 
 _DEFAULT_INCLUDE: list[str] = ["**/*.py"]
+# Directories that are never project source. ``.mak`` heads the list: the node
+# store persists fragments as ``.py`` files under ``.mak/node_store/``, and
+# ``Path.glob("**/*.py")`` descends into dotted directories, so without it every
+# run re-ingests the previous run's output as if it were source (Wave 11). The
+# session also skips the mak dir unconditionally — a user config that overrides
+# ``exclude_patterns`` must not be able to switch that protection off.
 _DEFAULT_EXCLUDE: list[str] = [
+    "**/.mak/**",
     "**/node_modules/**",
     "**/.venv/**",
     "**/__pycache__/**",
+    "**/.git/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/.tox/**",
+    "**/.mypy_cache/**",
+    "**/.pytest_cache/**",
+    "**/site-packages/**",
 ]
 
 _TRUE_STRINGS = {"true", "1", "yes", "on"}

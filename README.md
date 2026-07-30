@@ -1,15 +1,9 @@
-# ⚠️ Temporarily broken (2026-07-27~)
- 
-A **critical design flaw** currently affects the pipeline. Until [Issue #8](https://github.com/chaseungjoon/multi-agent-kernel/issues/8) is resolved, this program is considered unstable and is **not recommended for use**.
-
-</br>
-
 <div align="center">
 
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.5.2 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.5.3 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -228,6 +222,16 @@ its configuration, first match wins:
 3. The built-in default shipped with the package ([view it](mak/config.yaml))
 
 To customize, copy the built-in default to either location and edit it.
+
+**What MAK reads.** `node_store.include_patterns` / `exclude_patterns` decide which
+files are ingested. Setting `exclude_patterns` **replaces** the defaults, so start
+from the shipped list rather than writing a shorter one — it excludes generated and
+vendored directories (`.git`, `build`, `dist`, `.tox`, `.mypy_cache`,
+`.pytest_cache`, `site-packages`, `node_modules`, `.venv`, `__pycache__`) as well as
+MAK's own `.mak/` store. MAK skips its own `.mak/` directory regardless of what you
+configure, and prunes any node left behind by an older version that did ingest it —
+if you have a `.mak/` from before v0.5.3, the next run cleans it up (deleting the
+directory yourself is the blunt alternative).
 
 
 ## Benchmark

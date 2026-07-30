@@ -10,10 +10,12 @@ only; full correctness is the test suite's responsibility.
 
 from __future__ import annotations
 
+import textwrap
 from dataclasses import dataclass, field
 
 from mak.conflict_detector.import_check import check_import_conflicts
 from mak.conflict_detector.name_collision_check import check_name_collisions
+from mak.conflict_detector.node_ids import class_scope_of
 from mak.conflict_detector.signature_check import check_signature_compatibility
 
 
@@ -37,6 +39,28 @@ def _syntax_reason(label: str, exc: SyntaxError) -> str:
         f"{label} is not valid Python — the agent may have returned prose or "
         f"markdown instead of code ({exc.msg})"
     )
+
+
+def _frame_fragment(node_id: str, source: str) -> str:
+    """Restore the class context a dedented fragment lost in the node store.
+
+    A ``file.py::method::C.get`` fragment is stored dedented, so on its own it
+    reads as a module-level ``def get(self, name)`` — a top-level function with a
+    real ``self`` parameter, keyed under the bare name ``get``. Wrapping it back
+    in ``class C:`` is what lets the signature check see a method (receiver
+    stripped, keyed ``C.get``) and lets ``self.helper(...)`` inside it resolve to
+    the right class. Non-class fragments, plain agent ids, and anything whose
+    framed form does not parse are returned unchanged.
+    """
+    class_name = class_scope_of(node_id)
+    if class_name is None:
+        return source
+    framed = f"class {class_name}:\n{textwrap.indent(source, '    ')}"
+    try:
+        compile(framed, "<mak-framed>", "exec")
+    except SyntaxError:
+        return source
+    return framed
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,12 +149,17 @@ class ConflictDetector:
         conflicts: list[Conflict] = []
         # Every defining source is an authority; check every caller against all of
         # them. This catches a caller that targets a function defined in any node.
-        merged_definitions = "\n\n".join(edits.definitions.values())
+        # Both sides are re-framed first so a dedented method fragment is read as
+        # the method it is, not as a module-level function carrying ``self``.
+        merged_definitions = "\n\n".join(
+            _frame_fragment(node_id, source)
+            for node_id, source in edits.definitions.items()
+        )
         if not merged_definitions.strip():
             return conflicts
         for caller_id, caller_source in edits.callers.items():
             for reason in check_signature_compatibility(
-                merged_definitions, caller_source
+                merged_definitions, _frame_fragment(caller_id, caller_source)
             ):
                 conflicts.append(Conflict("signature", f"{caller_id}: {reason}"))
         return conflicts

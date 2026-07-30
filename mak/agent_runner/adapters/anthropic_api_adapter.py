@@ -19,6 +19,7 @@ from typing import Any
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
 from mak.agent_runner.protocol import (
+    NODE_ID_CONTRACT,
     PROTOCOL_VERSION,
     decode_task_result,
     encode_task_bundle,
@@ -60,7 +61,10 @@ _RESULT_TOOL: dict[str, Any] = {
                     "properties": {
                         "node_id": {
                             "type": "string",
-                            "description": "A node id you were authorized to modify.",
+                            "description": (
+                                "A node id copied verbatim from the bundle's "
+                                "target_nodes. Never a narrower or invented id."
+                            ),
                         },
                         "new_source": {
                             "type": "string",
@@ -87,7 +91,8 @@ _SYSTEM_PROMPT = (
     f"report the outcome by calling the '{_RESULT_TOOL_NAME}' tool. Echo back the "
     "same task_id. For every node you changed, put its id and its FULL rewritten "
     "source in 'modified_fragments' — return complete node source, never a diff, "
-    "and only for nodes you were authorized to modify. Do not reply with prose."
+    "and only for nodes you were authorized to modify. "
+    f"{NODE_ID_CONTRACT} Do not reply with prose."
 )
 
 

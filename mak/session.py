@@ -52,6 +52,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, cast
 
+from mak.agent_runner.protocol import map_returned_sources
 from mak.agent_runner.registry import AdapterRegistry
 from mak.config import MakConfig
 from mak.conflict_detector.detector import ConflictDetector, EditRound
@@ -371,20 +372,8 @@ class Session:
         # in the persisted lock table; drop them so they don't surface later as
         # spurious "lease expired" warnings. Crash recovery uses recover() instead.
         self._lock_table.clear()
-        ns_cfg = self._config.node_store
-        for pattern in ns_cfg.include_patterns:
-            for path in sorted(self._work_dir.glob(pattern)):
-                if not path.is_file():
-                    continue
-                rel = str(path.relative_to(self._work_dir))
-                if _is_excluded(rel, ns_cfg.exclude_patterns):
-                    continue
-                try:
-                    self._node_store.parse_file_into_nodes(
-                        rel, path.read_text(encoding="utf-8")
-                    )
-                except SyntaxError:
-                    continue
+        pruned = self.prune_excluded_nodes()
+        self._ingest_work_dir()
         if self._git is not None and self._config.git.auto_commit:
             # Keep MAK's audit commits inside the project: if the work-dir is nested
             # in an outer repo (e.g. a home directory) or in none at all, give it its
@@ -397,8 +386,103 @@ class Session:
                 )
         self.state = SessionState.INITIALIZED
         inventory = self._node_store.list_nodes()
-        self._log(EventType.SESSION_STARTED, node_count=len(inventory))
+        self._log(
+            EventType.SESSION_STARTED,
+            node_count=len(inventory),
+            pruned_nodes=pruned,
+        )
         return inventory
+
+    def _ingest_work_dir(self) -> None:
+        """Parse every included, non-excluded Python file under the work dir."""
+        ns_cfg = self._config.node_store
+        for pattern in ns_cfg.include_patterns:
+            for path in sorted(self._work_dir.glob(pattern)):
+                if not path.is_file():
+                    continue
+                rel = str(path.relative_to(self._work_dir))
+                if self._is_store_path(path) or _is_excluded(
+                    rel, ns_cfg.exclude_patterns
+                ):
+                    continue
+                try:
+                    self._node_store.parse_file_into_nodes(
+                        rel, path.read_text(encoding="utf-8")
+                    )
+                except SyntaxError:
+                    continue
+
+    def _mak_roots(self) -> tuple[Path, ...]:
+        """Absolute locations MAK's own persistence directory can resolve to.
+
+        ``mak_dir`` is usually relative (``.mak``). The runtime resolves it
+        against the process's working directory, but a store written by an
+        earlier run launched *from inside* the project sits under the work dir,
+        so both readings are treated as MAK's own.
+        """
+        mak_dir = self._mak_dir
+        if mak_dir.is_absolute():
+            candidates = [mak_dir]
+        else:
+            candidates = [Path.cwd() / mak_dir, self._work_dir / mak_dir]
+        roots: list[Path] = []
+        for candidate in candidates:
+            try:
+                roots.append(candidate.resolve())
+            except OSError:
+                continue
+        return tuple(roots)
+
+    def _is_store_path(self, path: Path) -> bool:
+        """Whether ``path`` lives inside MAK's own persistence directory.
+
+        Deliberately independent of ``exclude_patterns``: the node store writes
+        fragments as ``.py`` files, so ingesting it feeds MAK its own previous
+        output back as "source" — a defect that compounds by hundreds of nodes
+        per run. A user config that overrides the pattern list must not be able
+        to switch this off, because the store is never project source under any
+        configuration.
+        """
+        roots = self._mak_roots()
+        if not roots:
+            return False
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return False
+        return any(resolved.is_relative_to(root) for root in roots)
+
+    def prune_excluded_nodes(self) -> int:
+        """Drop stored nodes whose file is no longer ingestable; return the count.
+
+        Migration path for stores poisoned before the exclusions above existed:
+        a fix-forward run would otherwise keep carrying every fragment MAK had
+        ingested from its own ``.mak/`` directory (89% of the store in the run
+        that motivated Wave 11). Deleting ``.mak/`` by hand is the blunt
+        alternative; this is the one that preserves real work.
+        """
+        patterns = self._config.node_store.exclude_patterns
+        doomed = [
+            node_id
+            for node_id in self._node_store.list_all_nodes()
+            if self._is_excluded_node(str(node_id), patterns)
+        ]
+        for node_id in doomed:
+            self._node_store.remove_node(node_id)
+        if doomed:
+            print(
+                f"mak: pruned {len(doomed)} node(s) that are no longer ingestable "
+                "(MAK's own .mak/ store, or an excluded path).",
+                file=sys.stderr,
+            )
+        return len(doomed)
+
+    def _is_excluded_node(self, node_id: str, patterns: tuple[str, ...]) -> bool:
+        """Whether a node's file component is excluded from ingestion."""
+        file_path = node_id.split("::", 1)[0]
+        return self._is_store_path(self._work_dir / file_path) or _is_excluded(
+            file_path, patterns
+        )
 
     # -- phase 2: plan -----------------------------------------------------
 
@@ -727,8 +811,13 @@ class Session:
         progress = self._progress[task_id]
         progress.attempts += 1
         in_scope = set(progress.target_nodes)
+        reported = dict.fromkeys([*result.modified_nodes, *result.new_sources])
+        self._log_agent_result(progress, result, reported)
+        accepted: list[NodeId] = []
         if result.success:
-            self._stage_returned_sources(in_scope, result.new_sources)
+            accepted = self._stage_returned_sources(
+                task_id, progress.target_nodes, result.new_sources
+            )
         elif result.error:
             # The agent call itself failed (API error, or a truncated/malformed
             # structured response). Keep the reason so the run can report it.
@@ -736,12 +825,12 @@ class Session:
         # A node is committable only if a pending fragment actually exists for it —
         # either staged here from the agent's returned source, or put directly by a
         # test/local runner. An id the agent *claims* it changed but provided no
-        # source for is silently dropped (the task stays incomplete and retries),
-        # so a misbehaving agent can never crash the commit phase.
-        reported = dict.fromkeys([*result.modified_nodes, *result.new_sources])
+        # source for cannot be committed (the task stays incomplete and retries);
+        # ``_describe_empty_result`` below names that case rather than leaving the
+        # operator with a symptom.
         staged = [
             n
-            for n in reported
+            for n in dict.fromkeys([*reported, *accepted])
             if n in in_scope and self._node_store.get_staged(n) is not None
         ]
 
@@ -783,11 +872,82 @@ class Session:
                     progress.completed_nodes.add(node_id)
                     self._release_lock(task_id, node_id)
 
+        # Nothing was stageable and the task is still open: say *why*, now, while
+        # the returned ids are still in hand. Left to _handle_incomplete this
+        # becomes a catch-all string that names no suspect.
+        if result.success and not staged and not progress.is_complete:
+            self._failure_reasons[task_id] = self._describe_empty_result(
+                progress, result
+            )
+
         if progress.is_complete:
             self._finish_task(task_id)
         else:
             self._handle_incomplete(progress)
         return committed_sources
+
+    def _log_agent_result(
+        self,
+        progress: SubTaskProgress,
+        result: TaskResult,
+        reported: dict[NodeId, None],
+    ) -> None:
+        """Record what the agent actually returned for this attempt.
+
+        Enough to reconstruct a dropped-result failure from the log alone: the
+        grant, the ids that came back, and how much source came with each.
+        """
+        self._log(
+            EventType.AGENT_RESULT,
+            task_id=progress.task_id,
+            attempt=progress.attempts,
+            success=result.success,
+            granted=[str(n) for n in progress.target_nodes],
+            returned_nodes=[str(n) for n in reported],
+            source_lengths={
+                str(node_id): len(source)
+                for node_id, source in result.new_sources.items()
+            },
+            error=result.error,
+        )
+
+    def _describe_empty_result(
+        self, progress: SubTaskProgress, result: TaskResult
+    ) -> str:
+        """Explain why a *successful* agent result left nothing to commit.
+
+        The single catch-all this replaces ("agent reported success but staged no
+        usable source") described a symptom shared by four distinct causes, so a
+        failed run could not be diagnosed without re-running it.
+        """
+        granted = ", ".join(str(n) for n in progress.target_nodes)
+        reported = dict.fromkeys([*result.modified_nodes, *result.new_sources])
+        returned = [str(n) for n in reported]
+        if returned and result.new_sources:
+            return (
+                f"agent returned {len(returned)} node id(s), none within its grant "
+                f"(granted: {granted}; returned: {', '.join(returned)})"
+            )
+        if returned:
+            return (
+                f"agent listed {len(returned)} modified node(s) but returned no "
+                f"source for any of them (returned: {', '.join(returned)})"
+            )
+        missing = [n for n in progress.remaining if not self._target_exists(n)]
+        if missing:
+            return (
+                "agent returned success with no sources and the target does not "
+                f"exist (missing: {', '.join(str(n) for n in missing)})"
+            )
+        invalid = [
+            n for n in progress.remaining if not self._file_is_syntactically_valid(n)
+        ]
+        if invalid:
+            return (
+                "agent returned success with no changes, but the target file is "
+                f"still not valid Python ({', '.join(str(n) for n in invalid)})"
+            )
+        return f"agent returned success with no sources (granted: {granted})"
 
     def _target_exists(self, node_id: NodeId) -> bool:
         """Whether a target already exists committed (so a no-op leaves it intact).
@@ -1103,22 +1263,36 @@ class Session:
         return replace(bundle, context=context)
 
     def _stage_returned_sources(
-        self, in_scope: set[NodeId], new_sources: dict[NodeId, str]
-    ) -> None:
-        """Stage each rewritten source the agent returned over the wire.
+        self, task_id: str, grant: list[NodeId], new_sources: dict[NodeId, str]
+    ) -> list[NodeId]:
+        """Stage each rewritten source the agent returned; return the ids staged.
 
         This is the agent→store transport: an API/CLI agent reports the full new
         source of each node it changed, and the session ``put_node``s it (as a new
-        pending version) so the normal validate→commit path applies it. Sources for
-        nodes outside the task's grant are ignored — an agent may not edit beyond
-        the nodes it was authorized to modify.
+        pending version) so the normal validate→commit path applies it.
+
+        An agent may not edit beyond the nodes it was authorized to modify, so a
+        source outside the grant is refused — but *loudly*: every refusal is
+        logged with the id, the grant, and the reason. This transport used to drop
+        such ids with a bare ``continue``, which turned a granularity mismatch
+        into three identical "staged no usable source" retries and a failed task
+        whose real cause was unrecoverable from the log.
         """
-        for node_id, source in new_sources.items():
-            if node_id not in in_scope:
-                continue
+        accepted, dropped = map_returned_sources(grant, new_sources)
+        for node_id, source in accepted.items():
             self._node_store.put_node(
                 node_id, NodeFragment(node_id, self._node_kind(node_id), source, 1)
             )
+        for node_id, reason in dropped:
+            self._log(
+                EventType.SOURCE_DROPPED,
+                task_id=task_id,
+                node_id=str(node_id),
+                granted=[str(n) for n in grant],
+                source_length=len(new_sources[node_id]),
+                reason=reason,
+            )
+        return list(accepted)
 
     def _node_kind(self, node_id: NodeId) -> str:
         """Return a node's stored kind, inferring a sensible kind for a new node.

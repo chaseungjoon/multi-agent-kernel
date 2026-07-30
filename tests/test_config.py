@@ -369,3 +369,33 @@ class TestModelsConfig:
         path = tmp_path / "config.yaml"
         path.write_text(_MINIMAL_YAML)
         assert load_config(path).models.auto_refresh is True
+
+
+class TestDefaultExcludes:
+    """Wave 11.2a/c: the built-in defaults and the shipped sample must agree."""
+
+    def test_mak_dir_is_excluded_by_default(self) -> None:
+        assert "**/.mak/**" in NodeStoreConfig().exclude_patterns
+
+    def test_generated_directories_are_excluded_by_default(self) -> None:
+        patterns = set(NodeStoreConfig().exclude_patterns)
+        assert {
+            "**/.git/**",
+            "**/build/**",
+            "**/dist/**",
+            "**/.tox/**",
+            "**/.mypy_cache/**",
+            "**/.pytest_cache/**",
+            "**/site-packages/**",
+            "**/node_modules/**",
+            "**/.venv/**",
+            "**/__pycache__/**",
+        } <= patterns
+
+    def test_packaged_config_matches_the_builtin_defaults(self) -> None:
+        # A user copying the shipped config must not silently lose the .mak
+        # exclusion the built-in default provides.
+        shipped = load_config(packaged_config_path())
+        assert set(shipped.node_store.exclude_patterns) == set(
+            NodeStoreConfig().exclude_patterns
+        )

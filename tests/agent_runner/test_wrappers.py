@@ -111,6 +111,23 @@ class TestRunTask:
         result = run_task(_SPEC, self._bundle(), None)
         assert result.success is False
         assert result.new_sources == {}
+        # Wave 11: refused, but named — the error says what was ignored, so the
+        # failure is not indistinguishable from "the CLI returned nothing".
+        assert "other.py::function::x" in (result.error or "")
+
+    def test_symbol_ids_fold_into_a_whole_file_grant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The bridge applies the same node-granularity contract as the session.
+        monkeypatch.setattr(bridge.shutil, "which", lambda _b: "/bin/claude")
+        out = json.dumps({"new.py::function::main": "def main():\n    return 1\n"})
+        monkeypatch.setattr(bridge.subprocess, "run", _fake_run(stdout=out))
+        bundle = TaskBundle(
+            task_id="t2", description="create", target_nodes=[NodeId("new.py")]
+        )
+        result = run_task(_SPEC, bundle, None)
+        assert result.success is True
+        assert "def main" in result.new_sources[NodeId("new.py")]
 
     def test_missing_cli_fails_cleanly(
         self, monkeypatch: pytest.MonkeyPatch

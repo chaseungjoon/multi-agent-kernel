@@ -12,6 +12,7 @@ from mak.agent_runner.protocol import (
     decode_task_result,
     encode_task_bundle,
     encode_task_result,
+    map_returned_sources,
 )
 from mak.core.types import (
     LockEntry,
@@ -190,3 +191,57 @@ class TestTaskResultProtocol:
         result = decode_task_result(json.dumps(data))
         assert result.modified_nodes == [NodeId("m.py::function::a")]
         assert result.new_sources == {}
+
+
+class TestMapReturnedSources:
+    """Wave 11.3d: the node-granularity contract, shared by every agent path."""
+
+    def test_granted_ids_pass_through(self) -> None:
+        grant = [NodeId("m.py::function::a")]
+        accepted, dropped = map_returned_sources(
+            grant, {NodeId("m.py::function::a"): "def a(): ...\n"}
+        )
+        assert accepted == {NodeId("m.py::function::a"): "def a(): ...\n"}
+        assert dropped == []
+
+    def test_symbol_ids_fold_into_a_whole_file_grant(self) -> None:
+        accepted, dropped = map_returned_sources(
+            [NodeId("editor/motions.py")],
+            {
+                NodeId("editor/motions.py::function::word"): "def word():\n    ...\n",
+                NodeId("editor/motions.py::function::line"): "def line():\n    ...\n",
+            },
+        )
+        assert dropped == []
+        folded = accepted[NodeId("editor/motions.py")]
+        assert folded.index("def word") < folded.index("def line")
+
+    def test_explicit_whole_file_source_wins_over_fragments(self) -> None:
+        whole = "def only():\n    return 1\n"
+        accepted, _dropped = map_returned_sources(
+            [NodeId("editor/motions.py")],
+            {
+                NodeId("editor/motions.py"): whole,
+                NodeId("editor/motions.py::function::word"): "def word(): ...\n",
+            },
+        )
+        assert accepted == {NodeId("editor/motions.py"): whole}
+
+    def test_foreign_ids_are_reported_not_silently_dropped(self) -> None:
+        accepted, dropped = map_returned_sources(
+            [NodeId("m.py::function::a")],
+            {NodeId("other.py::function::x"): "def x(): ...\n"},
+        )
+        assert accepted == {}
+        ((node_id, reason),) = dropped
+        assert node_id == NodeId("other.py::function::x")
+        assert "outside the task" in reason
+
+    def test_a_fragment_grant_does_not_absorb_a_whole_file_rewrite(self) -> None:
+        # The reverse mismatch is a real over-reach: other nodes in that file
+        # belong to other tasks and are not write-locked here.
+        accepted, dropped = map_returned_sources(
+            [NodeId("m.py::function::a")], {NodeId("m.py"): "def a(): ...\n"}
+        )
+        assert accepted == {}
+        assert [n for n, _r in dropped] == [NodeId("m.py")]

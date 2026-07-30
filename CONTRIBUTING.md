@@ -205,7 +205,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **884 tests pass**,
+The **kernel is functionally complete and well-tested**: **954 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -233,6 +233,7 @@ The module-by-module state:
 | CLI subprocess adapters (`claude_code`, `codex`, `copilot`) | Complete |
 | `mak/agent_runner/sandbox.py` (Docker isolation) | Complete |
 | **Concurrent execution** | **Complete (Wave 5)** — see below |
+| **Pipeline integrity** | **Complete (Wave 11)** — no false conflicts, no store self-pollution, no silent drops |
 | `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
@@ -242,7 +243,9 @@ The module-by-module state:
 > An agent never roams the repo or edits disk directly; it returns the new source of
 > each node it was granted (`TaskResult.new_sources`), and the *kernel* stages,
 > validates, conflict-checks, commits, reconstructs, and writes. Anything an agent
-> returns outside its lock grant is ignored. The agent receives its write-target
+> returns outside its lock grant is refused — and *said out loud*: refusals are
+> logged with the id and the grant, and a symbol id returned under a whole-file
+> grant is folded into it rather than discarded (§7.4). The agent receives its write-target
 > sources plus an automatically-enriched context window: same-file sibling nodes and
 > cross-file callers of the target symbols are included read-only, so the agent
 > always arrives with the full dependency picture even when the planner did not
@@ -476,6 +479,9 @@ skip to the subsystem you're touching.
 - **`logging.py`** — `SessionLogger`: an append-only JSON-Lines event log. `EventType`
   is a `StrEnum`; `LogEntry` round-trips via `to_json()` / `from_json()`. Writes are
   serialized under a lock and flushed, so events never interleave or truncate.
+  Two of the event types exist purely so a failed run can be diagnosed *without
+  re-running it*: `AGENT_RESULT` (what an agent actually returned, per attempt) and
+  `SOURCE_DROPPED` (anything MAK refused to stage, with the id and the grant).
 
 ## 2. Node Store
 
@@ -563,6 +569,14 @@ Runtime state lives under `.mak/` (gitignored):
 `list_nodes`, `get_committed_fragments`, `get_preview_fragments`,
 `parse_file_into_nodes`.
 
+Two of them are **maintenance only**, added in Wave 11 for the startup prune and
+used by nothing on the edit path: `list_all_nodes()` returns every committed id
+including fragments a whole-file node superseded (which `list_nodes` deliberately
+hides), and `remove_node(node_id)` deletes a node outright — committed and pending
+state, metadata, and its on-disk version directory (only when that directory really
+resolves inside the store root). A rejected *edit* is still rolled back or reverted;
+it is never removed.
+
 `get_preview_fragments(file_path, staged_overrides)` is used by
 `_preview_is_valid` / `_assemble_preview` to build the prospective file *before*
 committing — it substitutes staged versions for their committed counterparts and
@@ -629,6 +643,13 @@ still never sees the whole codebase; it sees a semantically-bounded window.
 ### 3.3 Collection (agent output → node store)
 
 When an agent returns a `TaskResult`:
+0. **Map the returned ids onto the grant** — `protocol.map_returned_sources`, the
+   enforcement half of the node-granularity contract (see
+   [7.4](#74-the-wire-protocol)). Every returned id is accounted for: granted ids
+   pass through, a symbol id inside a **whole-file** grant is folded into that
+   grant, and anything else is refused *and logged* (`SOURCE_DROPPED`, with the id,
+   the grant, and the reason). Whatever the agent returned is recorded first as an
+   `AGENT_RESULT` event.
 1. `compile()` each modified fragment — reject on failure. `compile()` is used (not
    `ast.parse()`) because it enforces all Python compile-time rules, including the
    requirement that `from __future__` imports appear at the very beginning of a
@@ -762,8 +783,73 @@ enforces Python's compile-time rules — including `from __future__` placement �
   imports (same bound name → different targets) and **duplicate** imports.
 - **`name_collision_check.py`** — flag a qualified symbol (including `Class.method`)
   introduced by more than one agent in the same file/round.
+- **`node_ids.py`** — the one place edit keys are parsed. Both file-local checks
+  scope themselves with `file_scope_of`, and both the detector and the collision
+  check attribute dedented class fragments with `class_scope_of`.
 - **`detector.py`** — `ConflictDetector.detect(EditRound)` runs the parse gate then
   all three checks, returning a `ConflictReport` (`ok`, `reasons`, `by_check`).
+
+### 5.1 Precision over recall (Wave 11)
+
+A false conflict is far more expensive than a missed one: it fails the task, its
+retries, and every task that depends on it — while a missed one is what the test
+suite is for. A real run lost three tasks and nine dependents to a check that
+rejected entirely ordinary Python, so the rules below now bound what the detector
+is willing to claim.
+
+**Decorators are read** (`Receiver`). `@staticmethod` has no implicit receiver, so
+the first parameter is a *real* one and must not be stripped — stripping it made
+every correct call to a static helper "pass one argument too many". `@classmethod`
+does bind `cls`. A decorator that is neither recognised nor known
+signature-preserving (`@lru_cache()`, `@app.route(...)`, `@x.setter`) can reshape
+the callable arbitrarily, so the definition is **dropped from the table** rather
+than checked against a guessed shape. Note that merely *not* stripping is not the
+safe default on its own: it converts the false "too many arguments" into a false
+"missing required argument 'self'".
+
+**Attribute calls resolve by receiver, never by bare name.** `obj.get(k)` matches a
+local `get` only when the receiver is `self`, `cls`, or the owning class name:
+
+| call | resolves to | why |
+| --- | --- | --- |
+| `foo(...)` | module-level `foo` | methods are not keyed by bare name |
+| `self.foo(...)` | `<enclosing class>.foo` | the only receiver whose type is certain |
+| `cls.foo(...)` / `Owner.foo(...)` | `Owner.foo`, **if** it is a `classmethod`/`staticmethod` | an unbound `Owner.m(obj, x)` passes the receiver explicitly and is indistinguishable from a bound call |
+| `self._data.get(...)`, `svc.run(...)` | nothing | the receiver's type is unknown |
+
+The deliberate, documented cost is that a call on an untyped receiver is no longer
+checked at all. The benefit is that `self._data.get(name, "")` — a *dict* `.get` —
+stops resolving to the file's own `Registers.get`. Any class defining `get`, `set`,
+`update`, `items`, `write`, `read`, `append`, `close`, or `pop` used to false-conflict
+against ordinary stdlib calls in the same file.
+
+**Methods are keyed `Class.method` only.** The old flat bare-name table let two
+classes in one file silently shadow each other ("later definition wins").
+
+**Fragments are re-framed before they are checked** (`detector._frame_fragment`).
+The store keeps fragments dedented, so a `file.py::method::C.get` fragment reads as
+a module-level `def get(self, name)` — a function with a real `self` parameter.
+`method` and `class_body` fragments are therefore wrapped back in a synthetic
+`class C:` (falling back to the raw source if that does not parse), which both
+prevents that mis-reading and *restores* recall: `self.helper(...)` inside a method
+fragment can resolve again.
+
+**The sibling checks carry the same class of assumption**, and were audited with
+these fixes:
+
+- one edit binding a name to two targets is the conditional-import idiom
+  (`try: import ujson as json` / `except ImportError: import json`), not a
+  disagreement — only cross-edit disagreement is a conflict, and header edits are
+  compared per file;
+- symbols from a dedented `class_body`/`method` fragment are attributed to their
+  owning class, so two classes in one file both defining `get` do not collide;
+- a whole-file node id (`pkg/a.py`, no `::`) is its own scope, so two freshly
+  created files each defining `main` are not a collision.
+
+`tests/conflict_detector/test_false_positive_corpus.py` is the standing guard: a
+corpus of correct code that must yield **zero** conflicts (including the exact
+20-line source that produced the three logged false conflicts), plus a corpus of
+genuine breakage that must still be reported. Add to both when you touch a check.
 
 > The cross-agent value of these checks is now live (Wave 5): `Session._process_batch`
 > validates concurrently-completing tasks together, building each task's `EditRound`
@@ -896,7 +982,29 @@ staged out of band, e.g. by a local test runner), a `modified_fragments` array o
 `{node_id, new_source}` (what the API adapters elicit from the model), or an explicit
 `new_sources` map. The session stages each returned source via `put_node` before the
 commit phase (§10), so a real agent's edit reaches the store through the normal
-transactional path; sources for nodes outside the task's grant are ignored.
+transactional path.
+
+**The node-granularity contract.** MAK grants write locks per node id, so an id it
+did not grant is an id it cannot safely apply. Both halves of that rule live in
+`protocol.py`:
+
+- `NODE_ID_CONTRACT` is the sentence every adapter's system prompt (and the CLI
+  bridge's prompt, and the `node_id` field description in the Anthropic/Gemini tool
+  schemas) states to the model: copy ids verbatim from `target_nodes`, never invent
+  narrower or broader ones, and return a bare-path target as one complete file.
+- `map_returned_sources(grant, new_sources)` enforces it, and is shared by the
+  session and the CLI bridge so one rule governs every path that receives agent
+  output. A returned id either **is** granted, or names a symbol inside a file
+  granted as a whole-file node — in which case it is **folded into that grant**
+  (several fragments concatenate in the order returned; an explicit whole-file
+  source wins) — or it is refused, with the reason handed back to the caller to
+  log. The reverse mismatch is *not* forgiven: a whole-file rewrite returned under a
+  fragment grant would touch nodes belonging to other tasks.
+
+Folding exists because dropping was worse. A greenfield task granted
+`editor/motions.py` whose agent answered with `editor/motions.py::function::move_word`
+had every fragment discarded silently, retried three times, and failed — taking its
+dependents with it.
 
 ### 7.5 The runner
 
@@ -1111,7 +1219,18 @@ failure — nothing is swallowed.
 `mak/session.py` wires everything together behind an explicit `SessionState`
 machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILED | ABORTED}`.
 
-- **initialize** — ingest the working dir's Python files into the node store.
+- **initialize** — prune, then ingest the working dir's Python files into the node
+  store. **MAK's own `mak_dir` is skipped unconditionally**, independent of
+  `exclude_patterns` (`_is_store_path`): the store persists fragments as `.py` files
+  and `Path.glob("**/*.py")` descends into dotted directories, so before Wave 11
+  every run re-ingested the previous run's output as project source — an exact,
+  compounding `+325` nodes per run in the case that motivated the fix, leaving 89% of
+  the inventory as garbage. `**/.mak/**` is also in the default excludes and the
+  shipped `config.yaml`, but the unconditional skip is what survives a user
+  overriding that list. `prune_excluded_nodes()` runs first and evicts stored nodes
+  whose file is no longer ingestable — the migration for a store poisoned before the
+  fix (deleting `.mak/` by hand is the blunt alternative). The count is reported on
+  `SESSION_STARTED` as `pruned_nodes` and printed to stderr.
 - **plan** — planner (+ optional self-critique) → deterministic validation → optional
   HitL review → `install_plan` (builds the DAG + persisted `Scheduler`).
   `install_plan` **always** re-validates the incoming plan — this is the one wire-in
@@ -1138,9 +1257,19 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   task's grant) via `put_node`; batch concurrently-completing results; gate staged
   fragments through the conflict detector; **transactionally** commit and reconstruct;
   write a git audit commit on success. A node the agent claims it changed but
-  provides no source for is dropped, so a misbehaving agent fails its task cleanly
-  rather than crashing the commit. During each commit, `_wave_committed` records
-  `(old_source, new_source)` for every node committed this wave.
+  provides no source for cannot be committed, so a misbehaving agent fails its task
+  cleanly rather than crashing the commit. During each commit, `_wave_committed`
+  records `(old_source, new_source)` for every node committed this wave.
+
+  **Every attempt is diagnosable from the log alone.** `AGENT_RESULT` records what
+  came back (task, attempt, success, granted ids, returned ids, per-id source
+  length, error); `SOURCE_DROPPED` records anything MAK refused to stage, with the
+  id and the grant. And when a *successful* result leaves nothing to commit,
+  `_describe_empty_result` names the actual cause instead of the old catch-all
+  ("agent reported success but staged no usable source"), which described a symptom
+  shared by four different causes: ids outside the grant (listing both sides), ids
+  listed with no source, success with no sources and a target that does not exist,
+  or success with no changes on a file that is still not valid Python.
 - **cascade detection** (`detect_cascade_tasks()`) — called after every `run()` wave.
   Compares old vs new AST signatures for every node committed in `_wave_committed`.
   When a function's signature changed, it scans all other stored nodes for callers
@@ -1260,7 +1389,18 @@ models:
 
 node_store:
   include_patterns: ["**/*.py"]
-  exclude_patterns: ["**/node_modules/**", "**/.venv/**", "**/__pycache__/**"]
+  exclude_patterns:               # keep "**/.mak/**" — see below
+    - "**/.mak/**"
+    - "**/node_modules/**"
+    - "**/.venv/**"
+    - "**/__pycache__/**"
+    - "**/.git/**"
+    - "**/build/**"
+    - "**/dist/**"
+    - "**/.tox/**"
+    - "**/.mypy_cache/**"
+    - "**/.pytest_cache/**"
+    - "**/site-packages/**"
 ```
 
 Rules and behaviors:
@@ -1298,6 +1438,14 @@ Rules and behaviors:
   Every surface where a model is chosen prints it: the TUI's `/models`,
   `/planner`, and setup wizard, and `mak run` (`warn_model_caveats` in
   `mak/__main__.py`, once per distinct caveat on stderr).
+- **`node_store.exclude_patterns` is a convenience, not the safety net.** Setting it
+  *replaces* the defaults, so a config that omits `**/.mak/**` no longer excludes
+  MAK's own store by pattern — which is exactly why `Session.initialize` skips the
+  configured `mak_dir` unconditionally as well (§10). Everything else on the list
+  (`.git`, `build`, `dist`, `.tox`, `.mypy_cache`, `.pytest_cache`, `site-packages`,
+  `node_modules`, `.venv`, `__pycache__`) is an ordinary convenience default: paths
+  that are generated, vendored, or not project source. Note that a path removed from
+  ingestion is also *pruned* from the store on the next `initialize`.
 - Type coercion is strict and wrapped in `ConfigError` (e.g. `"false"` parses to
   `False`, not Python's truthy `bool("false")`).
 

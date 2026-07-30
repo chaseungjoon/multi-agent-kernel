@@ -28,7 +28,12 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from mak.agent_runner.protocol import decode_task_bundle, encode_task_result
+from mak.agent_runner.protocol import (
+    NODE_ID_CONTRACT,
+    decode_task_bundle,
+    encode_task_result,
+    map_returned_sources,
+)
 from mak.core.types import NodeId, TaskBundle, TaskResult
 
 _DEFAULT_TIMEOUT_S = 240.0
@@ -69,6 +74,7 @@ Respond with ONLY a JSON object (no prose, no code fences) mapping each node id 
 above to the COMPLETE rewritten Python source of that node (never a diff). Use \
 exactly these keys:
 {ids}
+{contract}
 If you cannot complete the task, respond with the JSON object {{"error": "<why>"}}.
 """
 
@@ -91,6 +97,7 @@ def build_prompt(bundle: TaskBundle) -> str:
         targets="\n".join(targets) or "(none)",
         context=context,
         ids=ids or "(none)",
+        contract=NODE_ID_CONTRACT,
     )
 
 
@@ -189,20 +196,27 @@ def run_task(spec: CliSpec, bundle: TaskBundle, cli_override: str | None) -> Tas
             task_id=bundle.task_id, success=False, error=str(obj["error"])
         )
 
-    # Keep only authorized target nodes; the store ignores out-of-scope edits too,
-    # but filtering here keeps the wire result honest.
-    authorized = {str(n) for n in bundle.target_nodes}
-    new_sources: dict[NodeId, str] = {
-        NodeId(k): str(v)
-        for k, v in obj.items()
-        if k in authorized and isinstance(v, str)
+    # Apply the same node-granularity contract the session applies to API agents
+    # (``map_returned_sources``): granted ids pass, symbol ids under a whole-file
+    # grant are folded into it, foreign ids are refused. A refusal is *named* in
+    # the error rather than dropped in silence — an id MAK ignored without saying
+    # so is indistinguishable from an agent that returned nothing at all.
+    returned: dict[NodeId, str] = {
+        NodeId(k): v for k, v in obj.items() if isinstance(v, str)
     }
+    new_sources, dropped = map_returned_sources(bundle.target_nodes, returned)
+    error: str | None = None
+    if not new_sources:
+        error = f"{spec.cli_name} returned no source for any target node"
+        if dropped:
+            ignored = ", ".join(str(node_id) for node_id, _reason in dropped)
+            error += f" (ignored ids outside its grant: {ignored})"
     return TaskResult(
         task_id=bundle.task_id,
         success=bool(new_sources),
         modified_nodes=list(new_sources),
         new_sources=new_sources,
-        error=None if new_sources else "CLI returned no source for any target node",
+        error=error,
     )
 
 

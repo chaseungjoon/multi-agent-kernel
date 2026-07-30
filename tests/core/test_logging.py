@@ -35,6 +35,8 @@ def test_all_event_type_values_exist() -> None:
         "lock_released",
         "conflict_detected",
         "agent_spawned",
+        "agent_result",
+        "source_dropped",
         "session_started",
         "session_ended",
         "plan_validated",

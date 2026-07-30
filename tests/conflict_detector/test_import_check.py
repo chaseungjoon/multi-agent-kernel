@@ -79,6 +79,34 @@ class TestCheckImportConflicts:
         assert reasons and "conflicting import" in reasons[0]
         assert "np" in reasons[0]
 
+    def test_conditional_import_in_one_edit_is_not_a_conflict(self) -> None:
+        # Wave 11 audit: a single edit binding one name to two targets is the
+        # try/except ImportError idiom, not two agents disagreeing.
+        source = (
+            "try:\n"
+            "    import ujson as json\n"
+            "except ImportError:\n"
+            "    import json\n"
+        )
+        assert check_import_conflicts({"m.py::module_header::__header__": source}) == []
+
+    def test_same_binding_in_two_files_is_not_a_conflict(self) -> None:
+        # Header edits are compared per file: 'config' meaning different things
+        # in two modules is normal, and one task may edit both.
+        edits = {
+            "a.py::module_header::__header__": "from a import config",
+            "b.py::module_header::__header__": "from b import config",
+        }
+        assert check_import_conflicts(edits) == []
+
+    def test_same_file_disagreement_is_still_a_conflict(self) -> None:
+        edits = {
+            "a.py::module_header::__header__": "from a import config",
+            "a.py::module_body::__body__": "from b import config",
+        }
+        reasons = check_import_conflicts(edits)
+        assert reasons and "conflicting import" in reasons[0]
+
     def test_conflict_and_duplicate_together(self) -> None:
         edits = {
             "agent_a": "from a import config\nimport os",

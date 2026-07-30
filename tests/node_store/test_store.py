@@ -248,3 +248,41 @@ class TestNodeStore:
         assert "def add" in reconstructed
         # The method must appear at class-body indentation in the reconstruction.
         assert "    def add" in reconstructed
+
+
+class TestMaintenance:
+    """Wave 11.2d: the primitives the startup prune is built on."""
+
+    def test_list_all_nodes_includes_superseded_fragments(
+        self, tmp_path: Path
+    ) -> None:
+        store = NodeStore(tmp_path / "ns")
+        store.parse_file_into_nodes("mod.py", "def greet() -> None:\n    pass\n")
+        whole = NodeId("mod.py")
+        store.put_node(whole, _frag(whole, "def greet() -> None:\n    return\n"))
+        store.commit_node(whole)
+        # list_nodes hides the fragments a whole-file node superseded; a prune
+        # still has to be able to see everything the store holds.
+        assert store.list_nodes() == [whole]
+        assert store.list_all_nodes() == [whole]
+
+    def test_remove_node_drops_state_and_files(self, tmp_path: Path) -> None:
+        store = NodeStore(tmp_path / "ns")
+        (nid,) = store.parse_file_into_nodes("mod.py", "x = 1\n")
+        frag_dir = tmp_path / "ns" / "mod.py" / "module_header" / "__header__"
+        assert frag_dir.is_dir()
+        assert store.remove_node(nid) is True
+        assert store.list_all_nodes() == []
+        assert not frag_dir.exists()
+        with pytest.raises(NodeStoreError, match="node not found"):
+            store.get_node(nid)
+
+    def test_remove_node_survives_a_reload(self, tmp_path: Path) -> None:
+        store = NodeStore(tmp_path / "ns")
+        (nid,) = store.parse_file_into_nodes("mod.py", "x = 1\n")
+        store.remove_node(nid)
+        assert NodeStore(tmp_path / "ns").list_all_nodes() == []
+
+    def test_remove_unknown_node_is_a_no_op(self, tmp_path: Path) -> None:
+        store = NodeStore(tmp_path / "ns")
+        assert store.remove_node(NodeId("nope.py::function::f")) is False

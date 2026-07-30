@@ -58,7 +58,19 @@ git:
 node_store:
   include_patterns:
     - "**/*.py"
+  # Directories that are never project source. Keep "**/.mak/**" first: the node
+  # store writes its fragments as .py files under .mak/node_store/, so ingesting
+  # it would feed MAK its own output back as source on every run. (MAK skips its
+  # own mak_dir unconditionally as well, so overriding this list is safe.)
   exclude_patterns:
+    - "**/.mak/**"
     - "**/node_modules/**"
     - "**/.venv/**"
     - "**/__pycache__/**"
+    - "**/.git/**"
+    - "**/build/**"
+    - "**/dist/**"
+    - "**/.tox/**"
+    - "**/.mypy_cache/**"
+    - "**/.pytest_cache/**"
+    - "**/site-packages/**"

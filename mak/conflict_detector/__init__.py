@@ -18,11 +18,13 @@ from mak.conflict_detector.name_collision_check import (
 )
 from mak.conflict_detector.signature_check import (
     CallSite,
+    Receiver,
     Signature,
     check_call,
     check_signature_compatibility,
     extract_calls,
     extract_signatures,
+    resolve_signature,
 )
 
 __all__ = [
@@ -32,6 +34,7 @@ __all__ = [
     "ConflictReport",
     "EditRound",
     "ImportRecord",
+    "Receiver",
     "Signature",
     "SymbolDef",
     "check_call",
@@ -42,4 +45,5 @@ __all__ = [
     "extract_defined_symbols",
     "extract_imports",
     "extract_signatures",
+    "resolve_signature",
 ]

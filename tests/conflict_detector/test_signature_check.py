@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mak.conflict_detector.signature_check import (
+    Receiver,
     check_call,
     check_signature_compatibility,
     extract_calls,
@@ -34,14 +35,91 @@ class TestExtractSignatures:
     def test_method_drops_self(self) -> None:
         src = "class C:\n    def m(self, x, y): pass\n"
         sigs = extract_signatures(src)
-        # Reachable by bare name and by qualified name; self is stripped.
-        assert sigs["m"].positional == ("x", "y")
+        # Wave 11: reachable ONLY by qualified name; self is stripped. The bare
+        # name is deliberately absent so two classes cannot shadow each other.
         assert sigs["C.m"].positional == ("x", "y")
+        assert "m" not in sigs
 
     def test_positional_only(self) -> None:
         sig = extract_signatures("def f(a, b, /, c): pass")["f"]
         assert sig.positional == ("a", "b", "c")
         assert sig.required_positional == 3
+
+
+class TestDecoratorAwareReceivers:
+    """11.1a: a @staticmethod has no implicit receiver to strip."""
+
+    def test_staticmethod_keeps_every_parameter(self) -> None:
+        src = "class C:\n    @staticmethod\n    def norm(name): pass\n"
+        sig = extract_signatures(src)["C.norm"]
+        assert sig.positional == ("name",)
+        assert sig.receiver is Receiver.NONE
+
+    def test_classmethod_strips_cls(self) -> None:
+        src = "class C:\n    @classmethod\n    def make(cls, name): pass\n"
+        sig = extract_signatures(src)["C.make"]
+        assert sig.positional == ("name",)
+        assert sig.receiver is Receiver.CLASS
+
+    def test_dotted_staticmethod_is_recognised(self) -> None:
+        src = "import builtins\n\n\nclass C:\n"
+        src += "    @builtins.staticmethod\n    def norm(name): pass\n"
+        assert extract_signatures(src)["C.norm"].positional == ("name",)
+
+    def test_transparent_decorator_is_still_a_method(self) -> None:
+        src = "class C:\n    @abstractmethod\n    def run(self, x): pass\n"
+        assert extract_signatures(src)["C.run"].positional == ("x",)
+
+    def test_unknown_decorator_drops_the_definition(self) -> None:
+        # A decorator MAK cannot recognise may reshape the callable arbitrarily.
+        # Guessing either way produces false conflicts, so it is not checked.
+        src = "class C:\n    @property\n    def value(self): pass\n"
+        assert extract_signatures(src) == {}
+
+    def test_decorator_factory_drops_the_definition(self) -> None:
+        src = "@lru_cache(maxsize=8)\ndef fetch(url): pass\n"
+        assert extract_signatures(src) == {}
+
+    def test_unknown_decorator_clears_an_earlier_definition(self) -> None:
+        src = "def f(a): pass\n\n\n@some_wrapper\ndef f(a, b): pass\n"
+        assert "f" not in extract_signatures(src)
+
+
+class TestBareNameShadowing:
+    """11.1c: two classes in one file must not overwrite each other."""
+
+    def test_same_method_name_in_two_classes(self) -> None:
+        src = (
+            "class A:\n    def get(self, x): pass\n\n\n"
+            "class B:\n    def get(self, x, y): pass\n"
+        )
+        sigs = extract_signatures(src)
+        assert sigs["A.get"].positional == ("x",)
+        assert sigs["B.get"].positional == ("x", "y")
+        assert "get" not in sigs
+
+
+class TestCallScopes:
+    def test_call_records_receiver_and_enclosing_class(self) -> None:
+        src = "class C:\n    def go(self):\n        return self.run(1)\n"
+        (call,) = extract_calls(src)
+        assert call.receiver == "self"
+        assert call.enclosing_class == "C"
+
+    def test_bare_call_has_no_receiver(self) -> None:
+        (call,) = extract_calls("f(1)")
+        assert call.receiver is None
+        assert call.enclosing_class is None
+
+    def test_nested_class_wins(self) -> None:
+        src = (
+            "class Outer:\n"
+            "    class Inner:\n"
+            "        def go(self):\n"
+            "            return self.run(1)\n"
+        )
+        (call,) = extract_calls(src)
+        assert call.enclosing_class == "Inner"
 
 
 class TestExtractCalls:
@@ -139,11 +217,25 @@ class TestCheckSignatureCompatibility:
         calling = "def caller():\n    return some_other(1, 2, 3)\n"
         assert check_signature_compatibility(defining, calling) == []
 
-    def test_method_call_against_class_definition(self) -> None:
+    def test_self_call_against_class_definition(self) -> None:
+        # ``self.run(...)`` is the one method receiver whose type is certain.
         defining = "class Svc:\n    def run(self, x, y): pass\n"
-        calling = "def caller(svc):\n    return svc.run(1)\n"
+        calling = (
+            "class Svc:\n"
+            "    def go(self):\n"
+            "        return self.run(1)\n"
+        )
         reasons = check_signature_compatibility(defining, calling)
         assert reasons and "run" in reasons[0]
+
+    def test_untyped_receiver_is_not_resolved(self) -> None:
+        # Wave 11, deliberate recall loss: the type of ``svc`` is unknown, so a
+        # local ``Svc.run`` must not be assumed to be its target. Resolving by
+        # bare method name is what made ``self._data.get(k, "")`` — a dict call —
+        # report a conflict against the file's own ``get``.
+        defining = "class Svc:\n    def run(self, x, y): pass\n"
+        calling = "def caller(svc):\n    return svc.run(1)\n"
+        assert check_signature_compatibility(defining, calling) == []
 
     def test_method_call_does_not_match_top_level_function(self) -> None:
         # A bare ``def upper(s)`` must not be matched against the *method* call
@@ -156,3 +248,58 @@ class TestCheckSignatureCompatibility:
         defining = "class X:\n    def cleanup(self, path): pass\n"
         calling = "def caller():\n    return cleanup()\n"
         assert check_signature_compatibility(defining, calling) == []
+
+    def test_stdlib_call_does_not_resolve_to_a_same_named_method(self) -> None:
+        # 11.1b, the defect that failed `registers_module`: ``self._data.get`` is
+        # a *dict* method; it must not be matched against the file's own ``get``.
+        source = (
+            "class Registers:\n"
+            "    def get(self, name):\n"
+            '        return self._data.get(name, "")\n'
+        )
+        assert check_signature_compatibility(source, source) == []
+
+    def test_self_call_to_staticmethod_keeps_its_parameter(self) -> None:
+        # 11.1a: ``self._normalise(name)`` on a @staticmethod is one argument to
+        # a one-parameter function, not one too many.
+        source = (
+            "class Registers:\n"
+            "    @staticmethod\n"
+            "    def _normalise(name):\n"
+            "        return name.lower()\n"
+            "\n"
+            "    def get(self, name):\n"
+            "        return self._normalise(name)\n"
+        )
+        assert check_signature_compatibility(source, source) == []
+
+    def test_two_classes_do_not_shadow_each_other_at_call_sites(self) -> None:
+        # ``Marks.lookup`` calls ``self.get(name, None)``; ``Registers.get`` takes
+        # one argument and must not be what that call resolves to.
+        source = (
+            "class Registers:\n"
+            "    def get(self, name):\n"
+            "        return name\n"
+            "\n"
+            "\n"
+            "class Marks:\n"
+            "    def get(self, name, default):\n"
+            "        return default\n"
+            "\n"
+            "    def lookup(self, name):\n"
+            "        return self.get(name, None)\n"
+        )
+        assert check_signature_compatibility(source, source) == []
+
+    def test_unbound_call_through_the_class_name_is_not_judged(self) -> None:
+        # ``Base.__init__(self, x)`` passes the receiver explicitly; a bound and
+        # an unbound call are indistinguishable here, so neither is reported.
+        defining = "class Base:\n    def setup(self, x): pass\n"
+        calling = "def caller(obj):\n    return Base.setup(obj, 1)\n"
+        assert check_signature_compatibility(defining, calling) == []
+
+    def test_classmethod_call_through_the_class_name_is_checked(self) -> None:
+        defining = "class Base:\n    @classmethod\n    def make(cls, x): pass\n"
+        calling = "def caller():\n    return Base.make(1, 2)\n"
+        reasons = check_signature_compatibility(defining, calling)
+        assert reasons and "make" in reasons[0]

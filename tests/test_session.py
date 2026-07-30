@@ -10,6 +10,7 @@ import pytest
 
 from mak.config import GitConfig, MakConfig, NodeStoreConfig, SessionConfig
 from mak.core.exceptions import SessionError
+from mak.core.logging import EventType, SessionLogger
 from mak.core.types import (
     LockMode,
     NodeFragment,
@@ -106,16 +107,19 @@ def _session(
     test_runner: object = None,
     max_attempts: int = 3,
     git_helper: object = None,
+    config: MakConfig | None = None,
+    logger: SessionLogger | None = None,
 ) -> Session:
     return Session(
         session_id="s1",
-        config=_config(tmp_path),
+        config=config or _config(tmp_path),
         node_store=node_store,
         lock_table=lock_table or LockTable(),
         registry=FakeRegistry(),  # type: ignore[arg-type]
         agent_runner=runner,
         git_helper=git_helper,  # type: ignore[arg-type]
         test_runner=test_runner,  # type: ignore[arg-type]
+        logger=logger,
         max_attempts=max_attempts,
     )
 
@@ -1452,3 +1456,237 @@ class TestSourceTransport:
         # The out-of-scope edit to 'b' was never staged or written.
         assert "666" not in store.get_node(NodeId("m.py::function::b")).source
         assert "666" not in (tmp_path / "m.py").read_text()
+
+
+# --- Wave 11.2: node-store self-pollution ------------------------------------
+
+
+def _config_with_excludes(tmp_path: Path, patterns: tuple[str, ...]) -> MakConfig:
+    return MakConfig(
+        session=SessionConfig(work_dir=str(tmp_path), mak_dir=str(tmp_path / ".mak")),
+        git=GitConfig(auto_commit=False, auto_push=False),
+        node_store=NodeStoreConfig(exclude_patterns=patterns),
+    )
+
+
+class TestStoreSelfPollution:
+    """The store persists fragments as .py files; ingesting them compounds."""
+
+    @staticmethod
+    def _poison_store_dir(tmp_path: Path) -> Path:
+        """Write a .mak/node_store/ tree like a previous run would leave."""
+        frag = tmp_path / ".mak" / "node_store" / "editor" / "modes.py" / "v1.py"
+        frag.parent.mkdir(parents=True, exist_ok=True)
+        frag.write_text("def leaked():\n    return 1\n")
+        return frag
+
+    def test_store_dir_is_skipped_even_with_excludes_overridden(
+        self, tmp_path: Path
+    ) -> None:
+        # 11.2b/e: proving exclusion *by construction*, not by pattern — the
+        # exclude list here never mentions .mak, as a user override might not.
+        (tmp_path / "real.py").write_text("def real():\n    return 1\n")
+        self._poison_store_dir(tmp_path)
+        store = NodeStore(tmp_path / "store")
+        session = _session(
+            tmp_path,
+            runner=StagingRunner(store),
+            node_store=store,
+            config=_config_with_excludes(tmp_path, ("**/never_matches/**",)),
+        )
+        inventory = session.initialize()
+        assert any("real.py" in str(n) for n in inventory)
+        assert not any(str(n).startswith(".mak") for n in inventory)
+
+    def test_node_count_does_not_drift_across_runs(self, tmp_path: Path) -> None:
+        # The acceptance check: with the store living under the work dir, repeated
+        # runs over an unchanged repo must report a stable node_count.
+        (tmp_path / "real.py").write_text(_TWO_FUNCS)
+        counts = []
+        for _ in range(3):
+            store = NodeStore(tmp_path / ".mak" / "node_store")
+            session = _session(
+                tmp_path, runner=StagingRunner(store), node_store=store
+            )
+            counts.append(len(session.initialize()))
+        assert counts[0] > 0
+        assert counts[0] == counts[1] == counts[2]
+
+    def test_startup_prunes_a_store_poisoned_by_an_earlier_run(
+        self, tmp_path: Path
+    ) -> None:
+        # 11.2d: a fix-forward run must not keep carrying the junk nodes an
+        # earlier MAK already ingested from its own store.
+        store = NodeStore(tmp_path / ".mak" / "node_store")
+        store.parse_file_into_nodes(
+            ".mak/node_store/editor/modes.py/v1.py", "def leaked():\n    return 1\n"
+        )
+        assert store.list_all_nodes()
+        (tmp_path / "real.py").write_text("def real():\n    return 1\n")
+        logger = SessionLogger(tmp_path / "session.log")
+        session = _session(
+            tmp_path, runner=StagingRunner(store), node_store=store, logger=logger
+        )
+        inventory = session.initialize()
+        assert any("real.py" in str(n) for n in inventory)
+        assert not any(".mak" in str(n) for n in store.list_all_nodes())
+        (started,) = [
+            e for e in logger.read_log() if e.event_type is EventType.SESSION_STARTED
+        ]
+        assert started.payload["pruned_nodes"] == 1
+
+
+# --- Wave 11.3: dropped results are loud and diagnosable ---------------------
+
+
+class _StrayRunner:
+    """An agent that returns source for a node it was never granted."""
+
+    def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+        stray = NodeId("other.py::function::x")
+        return TaskResult(
+            task_id=task.task_id,
+            success=True,
+            modified_nodes=[stray],
+            new_sources={stray: "def x():\n    return 1\n"},
+        )
+
+
+class TestAgentResultDiagnostics:
+    def test_out_of_grant_source_is_logged_with_id_and_grant(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        logger = SessionLogger(tmp_path / "session.log")
+        session = _session(
+            tmp_path,
+            runner=_StrayRunner(),
+            node_store=store,
+            logger=logger,
+            max_attempts=1,
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        result = session.run()
+
+        assert result.failed == ("a",)
+        dropped = [
+            e for e in logger.read_log() if e.event_type is EventType.SOURCE_DROPPED
+        ]
+        assert dropped, "an out-of-scope returned id must never be dropped silently"
+        payload = dropped[0].payload
+        assert payload["node_id"] == "other.py::function::x"
+        assert payload["granted"] == ["m.py::function::a"]
+        assert payload["source_length"] == len("def x():\n    return 1\n")
+
+    def test_failure_reason_names_the_out_of_grant_ids(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        session = _session(
+            tmp_path, runner=_StrayRunner(), node_store=store, max_attempts=1
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        reason = session.run().failure_reasons["a"]
+        assert "none within its grant" in reason
+        assert "other.py::function::x" in reason
+        assert "m.py::function::a" in reason
+
+    def test_failure_reason_distinguishes_an_empty_success(
+        self, tmp_path: Path
+    ) -> None:
+        # The other candidate cause of the same operator-visible symptom: the
+        # agent claimed success and returned nothing at all.
+        store = _store(tmp_path)
+
+        class NoOpRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(task_id=task.task_id, success=True)
+
+        session = _session(
+            tmp_path, runner=NoOpRunner(), node_store=store, max_attempts=1
+        )
+        session.initialize()
+        session.install_plan([_task("create", ["editor/motions.py"])])
+        reason = session.run().failure_reasons["create"]
+        assert "no sources" in reason
+        assert "editor/motions.py" in reason
+
+    def test_agent_result_event_records_the_wire_result(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        logger = SessionLogger(tmp_path / "session.log")
+        new_source = "def a():\n    return 99\n"
+        session = _session(
+            tmp_path,
+            runner=WireRunner({"m.py::function::a": new_source}),
+            node_store=store,
+            logger=logger,
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        assert session.run().ok
+
+        (event,) = [
+            e for e in logger.read_log() if e.event_type is EventType.AGENT_RESULT
+        ]
+        assert event.payload["task_id"] == "a"
+        assert event.payload["attempt"] == 1
+        assert event.payload["success"] is True
+        assert event.payload["granted"] == ["m.py::function::a"]
+        assert event.payload["returned_nodes"] == ["m.py::function::a"]
+        assert event.payload["source_lengths"] == {
+            "m.py::function::a": len(new_source)
+        }
+
+
+class TestNodeGranularityContract:
+    """11.3d: symbol ids returned under a whole-file grant are folded, not lost."""
+
+    def test_symbol_ids_fold_into_a_whole_file_grant(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+
+        class FragmentRunner:
+            """Returns symbol-level ids for a bare-path (whole-file) grant."""
+
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                sources = {
+                    NodeId("editor/motions.py::function::move_word"): (
+                        "def move_word(buf):\n    return buf\n"
+                    ),
+                    NodeId("editor/motions.py::function::move_line"): (
+                        "def move_line(buf):\n    return buf\n"
+                    ),
+                }
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=True,
+                    modified_nodes=list(sources),
+                    new_sources=sources,
+                )
+
+        session = _session(tmp_path, runner=FragmentRunner(), node_store=store)
+        session.initialize()
+        session.install_plan([_task("motions", ["editor/motions.py"])])
+        result = session.run()
+
+        assert result.ok, result.failure_reasons
+        written = (tmp_path / "editor" / "motions.py").read_text()
+        assert "def move_word" in written
+        assert "def move_line" in written
+
+    def test_source_for_an_ungranted_file_is_still_refused(
+        self, tmp_path: Path
+    ) -> None:
+        # Folding must not become a licence to write files the task never held a
+        # lock on: only the granted file's own symbols are absorbed.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        session = _session(
+            tmp_path, runner=_StrayRunner(), node_store=store, max_attempts=1
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
+        assert session.run().failed == ("a",)
+        assert not (tmp_path / "other.py").exists()
