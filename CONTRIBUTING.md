@@ -2075,10 +2075,14 @@ here so contributors don't mistake them for bugs:
   node and returns just the shell is *rejected* by the parse gate (never corrupted).
   Reconstruction validates the assembled file, so this is safe; making shells
   standalone-parseable (or the detector shell-aware) is a possible improvement.
-- **The conflict detector is name-based and shallow.** Its cross-file signature check
-  can flag a call to a same-named-but-unrelated function in another module — a false
-  positive that costs a bounded retry, not correctness. It is a structural gate, not a
-  type checker, by design.
+- **The conflict detector is name-based and shallow.** It is a structural gate, not a
+  type checker, by design. Wave 11 closed the worst of this for *methods* — an
+  attribute call only resolves through `self`/`cls`/the owning class name, never by
+  bare method name, so a call on an untyped receiver is skipped rather than guessed
+  at (§5.1). The remaining exposure is **module-level functions**, which are still
+  keyed by bare name across the whole merged batch: a bare `foo(...)` can flag
+  against a same-named-but-unrelated top-level function defined in another file in
+  the same round — a false positive that costs a bounded retry, not correctness.
 - **`context_nodes` are read-locked at dispatch.** The scheduler acquires a WRITE
   lock on each target node and a **READ lock** on each `context_node` (deduped against
   the write set) in the same atomic `try_acquire_all`, so a concurrent task cannot be
@@ -2151,8 +2155,20 @@ cut as `TruncatedResponseError`, `response.py` distinguishes truncated from malf
 rather than lumping both into "bad JSON", and a truncated attempt is retried with a
 request for a *smaller* plan instead of an identical one. Raising the budget in turn
 pushed the Anthropic planner call past the SDK's non-streaming ceiling, so that
-backend now streams and assembles the final message. What remains is the
-open-problems list above.
+backend now streams and assembles the final message.
+
+**Wave 11** fixed three defects found by reading one real session's artifacts in
+full — a run that ended 6 completed / 3 failed / 6 skipped, where every failure
+traced back to MAK itself, not the planner or the agents (§5.1, §10, §7.4). The
+signature check stopped rejecting correct Python (`@staticmethod` receivers,
+attribute-call resolution, bare-name method shadowing), the node store stopped
+ingesting its own `.mak/` persistence directory (an exact +325 nodes/run,
+compounding), and a dropped agent result stopped being silent (`AGENT_RESULT` /
+`SOURCE_DROPPED` events, specific failure reasons, and a node-granularity contract
+enforced by `map_returned_sources` so a symbol id returned under a whole-file grant
+is folded in rather than discarded). A false-positive/true-positive corpus
+(`tests/conflict_detector/test_false_positive_corpus.py`) is the standing guard
+against the first regressing. What remains is the open-problems list above.
 
 ---
 
