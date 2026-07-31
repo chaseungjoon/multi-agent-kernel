@@ -2250,22 +2250,7 @@ from the environment and doesn't auto-load `.env`. Then: a `mak` console entry p
 SDKs are heavy), a CI release workflow (OIDC trusted publishing), and a `Dockerfile`
 that bind-mounts the target repo (`docker run -v "$PWD:/work" …`).
 
-### 4. Planner quality — **[RESOLVED — Wave 10]**
-
-One-shot decomposition + HitL degraded on large, interdependent tasks (missed
-dependency edges → runtime collisions, hallucinated node ids, over/under
-serialization). Shipped: a static dependency graph over the node store
-(`mak/planner/depgraph.py`) and deterministic plan validation against it
-(`mak/planner/validation.py`, §8) that grounds hallucinated node ids, auto-adds
-acyclic-safe missing `depends_on` edges, flags (never removes) spurious ones, and
-drops unknown context nodes — every change surfaced to HitL, which remains the
-backstop. Also shipped: a config-gated outline→detail planner and self-critique pass
-(both default off), and plan-quality metrics (realized concurrency,
-conflict/re-dispatch rate) recorded in `SessionResult.metrics` and the session log.
-**Not done:** few-shot exemplar plans in the prompt — a smaller, separate,
-prompt-only item, still open.
-
-### 5. Local LLM support
+### 4. Local LLM support
 
 Only hosted API adapters today; local models (Ollama, vLLM, llama.cpp, LM Studio)
 matter for cost, privacy, and offline/air-gapped repos. Most local servers expose an
