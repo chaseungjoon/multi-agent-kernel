@@ -286,3 +286,83 @@ class TestMaintenance:
     def test_remove_unknown_node_is_a_no_op(self, tmp_path: Path) -> None:
         store = NodeStore(tmp_path / "ns")
         assert store.remove_node(NodeId("nope.py::function::f")) is False
+
+
+class TestPreviewFragments:
+    """The pre-commit preview must model the state the commit would produce.
+
+    ``commit_node`` supersedes a file's ``path::…`` fragments when a whole-file
+    node commits (``_supersede_fragments``). Before this was mirrored here, a
+    whole-file rewrite of a fragment-stored file previewed as the *old* file
+    followed by the *entire new* file — so the gate rejected work the commit
+    would have accepted, deterministically, on every attempt.
+    """
+
+    @staticmethod
+    def _fragmented(tmp_path: Path) -> tuple[NodeStore, NodeId]:
+        store = NodeStore(tmp_path / "ns")
+        store.parse_file_into_nodes("mod.py", SAMPLE_SOURCE)
+        return store, NodeId("mod.py")
+
+    def test_staged_whole_file_supersedes_committed_fragments(
+        self, tmp_path: Path
+    ) -> None:
+        store, whole = self._fragmented(tmp_path)
+        assert len(store.list_nodes("mod.py")) > 1  # genuinely fragment-stored
+
+        new_source = "import sys\n\n\ndef greet(name):\n    return name\n"
+        store.put_node(whole, NodeFragment(whole, "module", new_source, 1))
+        staged = store.get_staged(whole)
+        assert staged is not None
+
+        preview = store.get_preview_fragments("mod.py", {whole: staged})
+        assert [f.node_id for f in preview] == [whole]
+        assert preview[0].source == new_source
+
+    def test_a_future_import_rewrite_previews_as_valid_python(
+        self, tmp_path: Path
+    ) -> None:
+        # The exact live failure: concatenating the new file after the old put
+        # `from __future__` mid-file, which compile() rejects outright — so the
+        # task lost its work every attempt with "reconstruction would produce
+        # invalid Python", a verdict that said nothing about the agent's source.
+        store, whole = self._fragmented(tmp_path)
+        new_source = (
+            '"""Rewritten."""\n\nfrom __future__ import annotations\n\n'
+            "import sys\n\n\ndef greet(name):\n    return name\n"
+        )
+        store.put_node(whole, NodeFragment(whole, "module", new_source, 1))
+        staged = store.get_staged(whole)
+        assert staged is not None
+
+        from mak.node_store.reconstruction import assemble_fragments
+
+        assembled = assemble_fragments(
+            store.get_preview_fragments("mod.py", {whole: staged})
+        )
+        compile(assembled, "<preview>", "exec")  # must not raise
+        assert assembled.count("def greet") == 1  # not doubled
+
+    def test_greenfield_whole_file_still_previews(self, tmp_path: Path) -> None:
+        # A brand-new file has no committed fragments to supersede; the staged
+        # whole-file node is still the whole preview.
+        store = NodeStore(tmp_path / "ns")
+        whole = NodeId("new.py")
+        store.put_node(whole, NodeFragment(whole, "module", "x = 1\n", 1))
+        staged = store.get_staged(whole)
+        assert staged is not None
+        preview = store.get_preview_fragments("new.py", {whole: staged})
+        assert [f.node_id for f in preview] == [whole]
+
+    def test_fragment_level_edits_are_unaffected(self, tmp_path: Path) -> None:
+        # The superseding rule must not fire for a normal symbol-level edit:
+        # every sibling fragment still belongs in the preview.
+        store, _ = self._fragmented(tmp_path)
+        target = NodeId("mod.py::function::greet")
+        store.put_node(target, _frag(target, "def greet(name):\n    return 'hi'\n"))
+        staged = store.get_staged(target)
+        assert staged is not None
+
+        preview = store.get_preview_fragments("mod.py", {target: staged})
+        assert len(preview) == len(store.list_nodes("mod.py"))
+        assert any("return 'hi'" in f.source for f in preview)

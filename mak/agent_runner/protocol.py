@@ -263,7 +263,24 @@ def decode_task_result(raw: str) -> TaskResult:
         raise AgentProtocolError(f"agent result was not valid JSON: {exc}") from exc
     data = _require_mapping(parsed, "result")
     _check_version(data)
+    # The provider's own telemetry is merged into the payload by the adapter
+    # before decoding, so it is available even when the *body* turns out to be
+    # undecodable. Attaching it to the failure keeps a rejected attempt
+    # accountable: without it a malformed reply logs `usage={}`, and the tokens
+    # it burned — often the clue to why the model's schema slipped — are lost.
+    stop_reason = data.get("stop_reason")
+    usage = _decode_usage(data.get("usage"))
+    try:
+        return _decode_result_body(data)
+    except AgentProtocolError as exc:
+        if exc.stop_reason is None and not exc.usage:
+            exc.stop_reason = stop_reason if isinstance(stop_reason, str) else None
+            exc.usage = usage
+        raise
 
+
+def _decode_result_body(data: dict[str, Any]) -> TaskResult:
+    """Validate and assemble the result fields; see :func:`decode_task_result`."""
     modified: list[NodeId] = []
     new_sources: dict[NodeId, str] = {}
 

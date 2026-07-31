@@ -1337,6 +1337,35 @@ class TestSourceTransport:
         assert rebuilt.count("def b(") == 1
         assert "return 1" in rebuilt and "return 2" in rebuilt
 
+    def test_whole_file_rewrite_with_a_future_import_is_accepted(
+        self, tmp_path: Path
+    ) -> None:
+        # The live failure the sibling test above could not catch: its rewrite
+        # happened to compile even when the preview doubled the file, so the gate
+        # let it through and `commit_node` cleaned up afterwards. A rewrite opening
+        # with `from __future__` cannot — doubled, that import lands mid-file and
+        # compile() rejects it, so the task was rejected with "reconstruction would
+        # produce invalid Python" on every attempt and lost ~40 KB of real work
+        # each time. The preview must supersede the fragments, as the commit does.
+        (tmp_path / "m.py").write_text(
+            "from __future__ import annotations\n\n\ndef a():\n    return 0\n"
+        )
+        store = _store(tmp_path)
+        new_source = (
+            '"""Rewritten."""\n\nfrom __future__ import annotations\n\n'
+            "import sys\n\n\ndef a():\n    return sys.maxsize\n"
+        )
+        runner = WireRunner({"m.py": new_source})
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("rewrite", ["m.py"])])
+        result = session.run()
+        assert result.ok, result.failure_reasons
+        assert result.completed == ("rewrite",)
+        rebuilt = (tmp_path / "m.py").read_text()
+        assert rebuilt.count("from __future__ import annotations") == 1
+        assert "sys.maxsize" in rebuilt
+
     def test_noop_audit_of_existing_file_completes(self, tmp_path: Path) -> None:
         # An "audit" task targeting an existing file whose agent finds nothing to
         # change must COMPLETE — the file is already correct — not retry to
@@ -1456,6 +1485,59 @@ class TestSourceTransport:
         assert notes[0] is None
         assert notes[1] is not None
         assert "cut off" in notes[1]
+
+    def test_a_task_failing_differently_each_attempt_reports_every_reason(
+        self, tmp_path: Path
+    ) -> None:
+        # A real run rejected attempts 1-2 on one underlying defect and then hit a
+        # one-off malformed response on attempt 3 — and reported only attempt 3,
+        # which named nothing relevant to the actual problem. Every distinct
+        # reason is now reported, in the order first seen.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        errors = ["first cause", "first cause", "unrelated one-off"]
+
+        class VaryingRunner:
+            def __init__(self) -> None:
+                self.n = 0
+
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                error = errors[min(self.n, len(errors) - 1)]
+                self.n += 1
+                return TaskResult(task_id=task.task_id, success=False, error=error)
+
+        session = _session(
+            tmp_path, runner=VaryingRunner(), node_store=store, max_attempts=3
+        )
+        session.initialize()
+        session.install_plan([_task("t", ["m.py"])])
+        result = session.run()
+        assert result.failed == ("t",)
+        reason = result.failure_reasons["t"]
+        assert "first cause" in reason
+        assert "unrelated one-off" in reason
+        assert "3 attempts failed for 2 reasons" in reason
+
+    def test_a_single_recurring_reason_is_reported_plainly(
+        self, tmp_path: Path
+    ) -> None:
+        # The common case must not gain noise: one reason stays one sentence.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+
+        class AlwaysFailsRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(
+                    task_id=task.task_id, success=False, error="the same cause"
+                )
+
+        session = _session(
+            tmp_path, runner=AlwaysFailsRunner(), node_store=store, max_attempts=3
+        )
+        session.initialize()
+        session.install_plan([_task("t", ["m.py"])])
+        result = session.run()
+        assert result.failure_reasons["t"] == "the same cause"
 
     def test_a_non_retryable_result_fails_without_spending_attempts(
         self, tmp_path: Path

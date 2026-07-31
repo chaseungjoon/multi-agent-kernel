@@ -345,3 +345,23 @@ class TestMapReturnedSources:
         )
         assert accepted == {}
         assert [n for n, _r in dropped] == [NodeId("m.py")]
+
+    def test_a_decode_failure_keeps_the_providers_telemetry(self) -> None:
+        # The adapter merges stop_reason/usage into the payload before decoding,
+        # so they are in hand even when the body is undecodable. Losing them made
+        # a rejected attempt log `usage={}` — hiding how many tokens it burned,
+        # which is usually the clue to why the model's schema slipped.
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_fragments": "not an array",
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 24000, "output_tokens": 21425},
+        }
+        with pytest.raises(AgentProtocolError) as excinfo:
+            decode_task_result(json.dumps(data))
+        assert excinfo.value.stop_reason == "tool_use"
+        assert excinfo.value.usage == {
+            "input_tokens": 24000,
+            "output_tokens": 21425,
+        }

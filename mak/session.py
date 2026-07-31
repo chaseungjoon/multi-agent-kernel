@@ -326,6 +326,11 @@ class Session:
         # Most recent reason a task did not make progress (agent error or a
         # rejection reason), surfaced on the result so a failure is diagnosable.
         self._failure_reasons: dict[str, str] = {}
+        # Every distinct reason, in attempt order. A task can fail differently on
+        # each attempt, and reporting only the last one hides the cause: a run
+        # whose real defect rejected attempts 1-2 reported only attempt 3's
+        # one-off malformed response, which named nothing relevant.
+        self._failure_history: dict[str, list[str]] = {}
         # Per-wave commit log: node_id → (source_before, source_after).
         # Populated during run(); read by detect_cascade_tasks() after run().
         self._wave_committed: dict[NodeId, tuple[str | None, str]] = {}
@@ -566,6 +571,7 @@ class Session:
         self._completed = []
         self._failed = []
         self._failure_reasons = {}
+        self._failure_history = {}
         self._wave_committed = {}
         self._conflict_rejections = 0
         self._redispatches = 0
@@ -861,7 +867,7 @@ class Session:
         elif result.error:
             # The agent call itself failed (API error, or a truncated/malformed
             # structured response). Keep the reason so the run can report it.
-            self._failure_reasons[task_id] = result.error
+            self._record_failure(task_id, result.error)
         # A node is committable only if a pending fragment actually exists for it —
         # either staged here from the agent's returned source, or put directly by a
         # test/local runner. An id the agent *claims* it changed but provided no
@@ -894,8 +900,8 @@ class Session:
         # the returned ids are still in hand. Left to _handle_incomplete this
         # becomes a catch-all string that names no suspect.
         if result.success and not staged and not progress.is_complete:
-            self._failure_reasons[task_id] = self._describe_empty_result(
-                progress, result
+            self._record_failure(
+                task_id, self._describe_empty_result(progress, result)
             )
 
         if progress.is_complete:
@@ -1130,7 +1136,7 @@ class Session:
         self._conflict_rejections += 1
         self._log(EventType.CONFLICT_DETECTED, task_id=task_id, reasons=reasons)
         if reasons:
-            self._failure_reasons[task_id] = "; ".join(reasons)
+            self._record_failure(task_id, "; ".join(reasons))
         for node_id in staged:
             self._node_store.rollback_node(node_id)
 
@@ -1262,11 +1268,8 @@ class Session:
         if exhausted or unretryable:
             scheduler.on_task_failed(progress.task_id, requeue=False)
             self._failed.append(progress.task_id)
-            reason = self._failure_reasons.setdefault(
-                progress.task_id,
-                "agent reported success but staged no usable source "
-                f"after {progress.attempts} attempt(s)",
-            )
+            reason = self._final_failure_reason(progress)
+            self._failure_reasons[progress.task_id] = reason
             if unretryable and not exhausted:
                 reason = (
                     f"{reason} (not retryable — the remaining "
@@ -1287,6 +1290,43 @@ class Session:
             progress.retry_note = self._retry_note(progress, result)
             self._redispatches += 1
             self._partial_queue.append(progress.task_id)
+
+    def _record_failure(self, task_id: str, reason: str) -> None:
+        """Record why an attempt made no progress, keeping the earlier ones.
+
+        ``_failure_reasons`` holds the latest reason (what the retry acts on);
+        ``_failure_history`` accumulates the distinct ones so the *final* report
+        can name a cause that recurred across attempts rather than whichever
+        happened to land last.
+        """
+        self._failure_reasons[task_id] = reason
+        history = self._failure_history.setdefault(task_id, [])
+        if reason not in history:
+            history.append(reason)
+
+    def _final_failure_reason(self, progress: SubTaskProgress) -> str:
+        """Summarize why a task failed across *all* of its attempts.
+
+        A task can fail differently each time, and reporting only the last
+        attempt buries the cause: one real run rejected attempts 1-2 on the same
+        underlying defect and then hit a one-off malformed response on attempt 3
+        — so the run reported only the malformed response, which named nothing
+        relevant to the actual problem. Distinct reasons are therefore all
+        reported, in the order they were first seen.
+        """
+        history = self._failure_history.get(progress.task_id, [])
+        if not history:
+            return (
+                "agent reported success but staged no usable source "
+                f"after {progress.attempts} attempt(s)"
+            )
+        if len(history) == 1:
+            return history[0]
+        listed = "; ".join(f"({i}) {r}" for i, r in enumerate(history, 1))
+        return (
+            f"{progress.attempts} attempts failed for {len(history)} "
+            f"reasons: {listed}"
+        )
 
     def _retry_note(
         self, progress: SubTaskProgress, result: TaskResult | None

@@ -353,8 +353,22 @@ class NodeStore:
         caller therefore gets a correctly-indented source that ``compile()``
         can validate, rather than a flat (dedented) concatenation that would
         always fail for any file containing class methods.
+
+        A **staged whole-file node supersedes the file's fragments**, mirroring
+        what ``commit_node`` does via ``_supersede_fragments``.  The preview must
+        model the state the commit would actually produce: without this, a
+        whole-file rewrite of a file still stored as fragments previews as the
+        old fragments *plus* the entire new file concatenated after them, which
+        duplicates every symbol and — for any module opening with
+        ``from __future__ import …`` — cannot compile at all.  The gate then
+        rejects a state that would never have been committed, deterministically,
+        discarding the agent's work on every attempt.
         """
         with self._lock:
+            staged_whole_file = staged_overrides.get(NodeId(file_path))
+            if staged_whole_file is not None:
+                return [staged_whole_file]
+
             result: list[NodeFragment] = []
             seen: set[NodeId] = set()
             for nid in self.list_nodes(file_path):

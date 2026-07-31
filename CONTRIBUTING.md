@@ -205,7 +205,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **1021 tests pass**,
+The **kernel is functionally complete and well-tested**: **1029 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -608,6 +608,22 @@ committing — it substitutes staged versions for their committed counterparts a
 re-applies each fragment's `indent_prefix` so that class methods appear at the
 correct column (dedented method source concatenated directly would always fail the
 `compile()` gate for files containing class methods).
+
+**The preview must model what the commit would produce.** A *staged* whole-file
+node supersedes the file's fragments here, exactly as `commit_node` does via
+`_supersede_fragments`. Without that mirroring, a whole-file rewrite of a file
+still stored as fragments previewed as the old fragments **plus** the entire new
+file appended after them. That doubles every symbol, and — because this codebase's
+modules open with `from __future__ import annotations` — puts a `__future__`
+import mid-file, which `compile()` rejects outright. The gate then failed the task
+with "reconstruction would produce invalid Python" on *every* attempt, discarding
+~40 KB of correct agent output each time, for a state the commit would never have
+built. Note that the greenfield case (no committed fragments) and the
+already-whole-file case both worked; only a whole-file grant over a
+fragment-stored file hit it, which is why it survived the existing
+`test_whole_file_rewrite_of_existing_file_is_not_doubled` — that test's rewrite
+happens to compile even when doubled, so the gate let it through and the commit
+cleaned up afterwards.
 
 The store **owns version assignment**: `put_node` ignores any version on the
 incoming fragment and stamps it `current_committed + 1`, so callers never guess the
@@ -1085,7 +1101,11 @@ it cost that task a whole attempt. `decode_task_result` now:
 
 No malformed shape can escape `decode_task_result` as a raw `TypeError` or
 `KeyError` any more — every one is a named `AgentProtocolError`, which
-`AgentRunner` (§7.5) reports as a decode failure rather than a transport one.
+`AgentRunner` (§7.5) reports as a decode failure rather than a transport one. The
+raised error also **keeps the provider's `stop_reason` and `usage`**: the adapter
+merges them into the payload before decoding, so they are in hand even when the
+body is not, and a rejected attempt still accounts for the tokens it burned
+instead of logging `usage={}`.
 
 **The node-granularity contract.** MAK grants write locks per node id, so an id it
 did not grant is an id it cannot safely apply. Both halves of that rule live in
@@ -1480,7 +1500,13 @@ Robustness properties worth knowing:
   conflict/parse/lock-revalidation, or a fallback for an agent that claimed success
   but staged nothing. `SessionResult.failure_reasons` carries it for the failed
   tasks, and the CLI prints one line per failed task — so a failure is never a bare
-  task id with no explanation.
+  task id with no explanation. **Every distinct reason is reported, not just the
+  last** (`_record_failure` / `_final_failure_reason`): a task can fail differently
+  on each attempt, and reporting only the final one buries the cause — a real run
+  was rejected twice by the same underlying defect and then hit a one-off malformed
+  response on its third attempt, so the run reported *only* the malformed response,
+  which named nothing relevant. One recurring reason still reports as one plain
+  sentence; two or more are listed in the order first seen.
 - **A retry differs from the attempt it follows, and a refusal doesn't burn the
   budget (Wave 12).** `_handle_incomplete` used to re-queue a task's remaining
   grants unchanged — for a truncation, that is three identical API calls
@@ -2096,7 +2122,7 @@ in `tests/models/` touches the network — every provider fetch is a fake `Model
 Three gates must be green for every change — locally, in pre-commit, and in CI:
 
 ```bash
-pytest -q                  # the full suite (currently 1021 tests)
+pytest -q                  # the full suite (currently 1029 tests)
 mypy --strict mak          # zero errors
 ruff check mak tests       # zero findings
 ```
