@@ -6,6 +6,8 @@ This document is the **single, self-contained reference** for working on the pro
 MAK is and why, walks through every subsystem in depth, and lays out exactly how to
 set up, build, test, and submit changes.
 
+By participating you agree to uphold the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 This file is long on purpose. MAK implements an unusual idea (a shared-memory concurrency
 kernel for coding agents), and contributing effectively requires understanding the
 architecture, not just the file layout. Read `Part I` for the mental model, `Part II`

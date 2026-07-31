@@ -273,6 +273,9 @@ python3 benchmark/run_benchmark.py --mode real \
 [**CONTRIBUTING.md**](CONTRIBUTING.md) is the full guide — architecture, every
 subsystem in depth, setup, the quality gates, coding standards, and where to help.
 
+Everyone participating in this project is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
 [MIT](LICENSE) © 2026 Seungjoon Cha
