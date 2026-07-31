@@ -203,6 +203,7 @@ def test_task_bundle_round_trip() -> None:
         "target_nodes": [],
         "locks": [],
         "context": {"k": "v"},
+        "retry_note": None,
     }
 
     restored = TaskBundle(**d)

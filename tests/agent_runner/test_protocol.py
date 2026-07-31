@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -14,6 +15,7 @@ from mak.agent_runner.protocol import (
     encode_task_result,
     map_returned_sources,
 )
+from mak.core.exceptions import AgentProtocolError
 from mak.core.types import (
     LockEntry,
     LockMode,
@@ -191,6 +193,104 @@ class TestTaskResultProtocol:
         result = decode_task_result(json.dumps(data))
         assert result.modified_nodes == [NodeId("m.py::function::a")]
         assert result.new_sources == {}
+
+    def test_decode_carries_the_response_metadata(self) -> None:
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "no_changes_required": True,
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 10, "output_tokens": 3, "junk": "x"},
+            "retryable": False,
+        }
+        result = decode_task_result(json.dumps(data))
+        assert result.no_changes_required is True
+        assert result.stop_reason == "tool_use"
+        assert result.usage == {"input_tokens": 10, "output_tokens": 3}
+        assert result.retryable is False
+
+    def test_metadata_defaults_are_conservative(self) -> None:
+        result = decode_task_result(json.dumps({"task_id": "t1", "success": True}))
+        assert result.no_changes_required is False
+        assert result.stop_reason is None
+        assert result.usage == {}
+        assert result.retryable is True
+
+
+class TestMalformedTaskResults:
+    """12.4 — every bad shape names the field and the type, and never TypeErrors.
+
+    ``modified_fragments`` as a lone object was the live failure: iterating it
+    yields its *keys*, so ``fragment["node_id"]`` raised
+    ``TypeError: string indices must be integers`` — which the runner then
+    reported as "api call failed", blaming the transport for a decode, and which
+    a retry could do nothing with.
+    """
+
+    def test_a_lone_fragment_object_is_coerced(self) -> None:
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_fragments": {
+                "node_id": "m.py::function::a",
+                "new_source": "x = 1\n",
+            },
+        }
+        result = decode_task_result(json.dumps(data))
+        assert result.new_sources == {NodeId("m.py::function::a"): "x = 1\n"}
+
+    @pytest.mark.parametrize(
+        ("fragments", "expected"),
+        [
+            ("just a string", "must be an array"),
+            (["m.py::function::a"], "modified_fragments[0]"),
+            ([{"new_source": "x = 1\n"}], "node_id"),
+            ([{"node_id": "m.py::function::a", "new_source": 42}], "new_source"),
+            ([{"node_id": "", "new_source": "x = 1\n"}], "node_id"),
+        ],
+    )
+    def test_bad_fragment_shapes_are_named(
+        self, fragments: object, expected: str
+    ) -> None:
+        data = {"task_id": "t1", "success": True, "modified_fragments": fragments}
+        with pytest.raises(AgentProtocolError, match=re.escape(expected)):
+            decode_task_result(json.dumps(data))
+
+    def test_a_missing_required_field_is_named(self) -> None:
+        # Exactly what a truncated tool_use produces: the fields that finished.
+        with pytest.raises(AgentProtocolError, match="'success'"):
+            decode_task_result(json.dumps({"task_id": "t1"}))
+
+    def test_a_non_mapping_new_sources_is_named(self) -> None:
+        data = {"task_id": "t1", "success": True, "new_sources": ["x = 1\n"]}
+        with pytest.raises(AgentProtocolError, match="'new_sources' must be an object"):
+            decode_task_result(json.dumps(data))
+
+    def test_a_non_string_source_is_named(self) -> None:
+        data = {"task_id": "t1", "success": True, "new_sources": {"m.py": 7}}
+        with pytest.raises(AgentProtocolError, match="must be a string"):
+            decode_task_result(json.dumps(data))
+
+    def test_a_non_object_payload_is_named(self) -> None:
+        with pytest.raises(AgentProtocolError, match="must be an object"):
+            decode_task_result(json.dumps(["t1", True]))
+
+    def test_invalid_json_is_named(self) -> None:
+        with pytest.raises(AgentProtocolError, match="not valid JSON"):
+            decode_task_result("{not json")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            '{"task_id": "t1", "success": true, "modified_fragments": {"node_id": 1}}',
+            '{"task_id": "t1", "success": true, "modified_nodes": "m.py"}',
+            '{"task_id": "t1"}',
+            "{}",
+        ],
+    )
+    def test_no_shape_escapes_as_a_typeerror_or_keyerror(self, payload: str) -> None:
+        with pytest.raises(AgentProtocolError):
+            decode_task_result(payload)
 
 
 class TestMapReturnedSources:

@@ -17,7 +17,11 @@ from mak.agent_runner.protocol import (
     encode_task_result,
 )
 from mak.agent_runner.runner import AgentRunner
-from mak.core.exceptions import AgentError
+from mak.core.exceptions import (
+    AgentError,
+    AgentRefusedError,
+    AgentTruncatedError,
+)
 from mak.core.types import NodeId, TaskBundle, TaskResult
 
 # --- API-style stub adapters -------------------------------------------------
@@ -52,6 +56,31 @@ class ExplodingApiAdapter(StubApiAdapter):
 
     def send(self, prompt: str) -> str:
         raise RuntimeError("backend exploded")
+
+
+class TruncatedApiAdapter(StubApiAdapter):
+    """An API adapter whose provider reported the reply was cut off."""
+
+    def send(self, prompt: str) -> str:
+        raise AgentTruncatedError(
+            "anthropic stopped at the 8192-token output limit",
+            stop_reason="max_tokens",
+            usage={"input_tokens": 500, "output_tokens": 8192},
+        )
+
+
+class RefusingApiAdapter(StubApiAdapter):
+    """An API adapter whose provider declined."""
+
+    def send(self, prompt: str) -> str:
+        raise AgentRefusedError("model declined", stop_reason="refusal")
+
+
+class UndecodableApiAdapter(StubApiAdapter):
+    """An API adapter whose response body cannot be decoded."""
+
+    def send(self, prompt: str) -> str:
+        return '{"task_id": "t1"}'
 
 
 class NotAnAdapter(AgentAdapter):
@@ -207,6 +236,33 @@ class TestApiDispatch:
     def test_unknown_adapter_shape_raises(self) -> None:
         with pytest.raises(AgentError, match="neither an API adapter"):
             AgentRunner().assign(NotAnAdapter(), _bundle())
+
+
+class TestApiFailureClasses:
+    """12.4d — a rejected response is not a transport failure, and says so."""
+
+    def test_truncation_keeps_its_provider_signals(self) -> None:
+        adapter = TruncatedApiAdapter(TaskResult(task_id="t1", success=True))
+        result = AgentRunner().assign(adapter, _bundle("t1"))
+        assert result.success is False
+        assert result.stop_reason == "max_tokens"
+        assert result.usage == {"input_tokens": 500, "output_tokens": 8192}
+        assert result.retryable is True
+        # Not blamed on the transport: the HTTP call succeeded.
+        assert "api call failed" not in (result.error or "")
+
+    def test_refusal_is_marked_non_retryable(self) -> None:
+        adapter = RefusingApiAdapter(TaskResult(task_id="t1", success=True))
+        result = AgentRunner().assign(adapter, _bundle("t1"))
+        assert result.retryable is False
+        assert result.stop_reason == "refusal"
+
+    def test_a_decode_failure_is_not_reported_as_a_transport_failure(self) -> None:
+        adapter = UndecodableApiAdapter(TaskResult(task_id="t1", success=True))
+        result = AgentRunner().assign(adapter, _bundle("t1"))
+        assert result.success is False
+        assert "api call failed" not in (result.error or "")
+        assert "'success'" in (result.error or "")
 
 
 # --- subprocess path tests ---------------------------------------------------

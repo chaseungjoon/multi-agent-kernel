@@ -27,6 +27,12 @@ class EventType(StrEnum):
     # A returned source MAK refused to stage, with the id and the task's grant.
     # Silent data loss in the agent -> store transport is never acceptable.
     SOURCE_DROPPED = "source_dropped"
+    # A task closed because the agent *asserted* there was nothing to change,
+    # not because it produced work. Logged separately from TASK_COMPLETED: an
+    # operator reading "4 completed" otherwise has no way to learn which of them
+    # changed a line, and "decided there was none" is a different claim from
+    # "did the work".
+    ACCEPTED_NOOP = "accepted_noop"
     SESSION_STARTED = "session_started"
     SESSION_ENDED = "session_ended"
     PLAN_VALIDATED = "plan_validated"

@@ -234,6 +234,22 @@ def test_agent_adapter_params_default_to_none() -> None:
     assert agent.model is None
     assert agent.api_key_env is None
     assert agent.cmd is None
+    assert agent.max_tokens is None
+
+
+def test_agent_max_tokens_parsed(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("agents:\n  - type: anthropic_api\n    max_tokens: 12000\n")
+    assert load_config(path).agents[0].max_tokens == 12000
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
+def test_agent_max_tokens_rejects_nonsense(tmp_path: Path, value: str) -> None:
+    # A budget of zero or a typo would silently clip every reply; fail at load.
+    path = tmp_path / "config.yaml"
+    path.write_text(f"agents:\n  - type: anthropic_api\n    max_tokens: {value}\n")
+    with pytest.raises(ConfigError, match="max_tokens"):
+        load_config(path)
 
 
 def test_frozen_dataclasses_are_immutable() -> None:

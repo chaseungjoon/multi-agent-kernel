@@ -58,6 +58,20 @@ def _opt_str(raw: dict[str, Any], key: str) -> str | None:
     return None if value is None else str(value)
 
 
+def _opt_positive_int(raw: dict[str, Any], key: str) -> int | None:
+    """Return an optional positive integer setting, or None when unset."""
+    value = raw.get(key)
+    if value is None:
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"'{key}' must be an integer, got {value!r}") from exc
+    if number <= 0:
+        raise ConfigError(f"'{key}' must be greater than 0, got {number}")
+    return number
+
+
 def _as_bool(raw: dict[str, Any], key: str, default: bool) -> bool:
     value = raw.get(key, default)
     if isinstance(value, bool):
@@ -77,7 +91,13 @@ class AgentConfig:
 
     ``model`` / ``api_key_env`` parameterize API adapters (the env var is read at
     composition time so a key is never persisted in config). ``cmd`` points a CLI
-    adapter at its binary. All three are optional.
+    adapter at its binary. All are optional.
+
+    ``max_tokens`` caps the agent's output budget. ``None`` (the default) means
+    "resolve it from the model catalog" for Anthropic and "send no cap, inherit
+    the model's own maximum" for OpenAI/Gemini — a hardcoded constant here is
+    what silently clipped whole-file rewrites. Set it to bound spend on a metered
+    model, or to fit a local model whose real limit the catalog does not know.
     """
 
     type: str
@@ -86,6 +106,7 @@ class AgentConfig:
     model: str | None = None
     api_key_env: str | None = None
     cmd: str | None = None
+    max_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +214,7 @@ def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
         model=_opt_str(raw, "model"),
         api_key_env=_opt_str(raw, "api_key_env"),
         cmd=_opt_str(raw, "cmd"),
+        max_tokens=_opt_positive_int(raw, "max_tokens"),
     )
 
 

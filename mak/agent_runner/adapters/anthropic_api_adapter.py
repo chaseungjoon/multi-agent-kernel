@@ -7,6 +7,16 @@ the request pins ``tool_choice`` to a single ``submit_task_result`` tool whose
 with prose — it must return a well-formed result object. No stdout parsing, no
 regex, no format drift.
 
+**Output budget.** A forced tool call carries the node's whole rewritten source
+in one response, so a budget below the file's size cuts the ``modified_fragments``
+array mid-generation. What arrives is a ``tool_use`` block holding only the scalar
+fields that finished — ``{task_id, success}`` — which decodes into a perfectly
+valid *successful* result with no changes: work reported as done that was never
+done. The budget is therefore taken from the model's documented output limit, and
+``stop_reason`` is checked **before** the payload is read, so a cut can never be
+mistaken for "nothing to change". The request streams for the same reason the
+planner's does: at a real budget the SDK refuses a non-streaming call.
+
 The SDK is imported lazily and the client is injectable, so the adapter (and its
 tests) do not require the ``anthropic`` package to be installed unless a real call
 is made.
@@ -18,19 +28,24 @@ import json
 from typing import Any
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
+from mak.agent_runner.adapters.budget import resolve_agent_max_tokens
 from mak.agent_runner.protocol import (
+    NO_CHANGE_CONTRACT,
     NODE_ID_CONTRACT,
     PROTOCOL_VERSION,
+    RETRY_NOTE_CONTRACT,
     decode_task_result,
     encode_task_bundle,
+)
+from mak.agent_runner.stop_signals import (
+    check_stop_reason,
+    extract_usage,
+    with_response_metadata,
 )
 from mak.core.exceptions import AgentError
 from mak.core.types import TaskBundle, TaskResult
 
 _DEFAULT_MODEL = "claude-sonnet-5"
-# A node's whole new source travels back in one structured response; a truncated
-# reply is unparseable and fails the task, so give generation real headroom.
-_DEFAULT_MAX_TOKENS = 8192
 _RESULT_TOOL_NAME = "submit_task_result"
 
 _RESULT_TOOL: dict[str, Any] = {
@@ -74,6 +89,13 @@ _RESULT_TOOL: dict[str, Any] = {
                     "required": ["node_id", "new_source"],
                 },
             },
+            "no_changes_required": {
+                "type": "boolean",
+                "description": (
+                    "True only when you inspected every target and found nothing "
+                    "to change. Never true alongside modified_fragments."
+                ),
+            },
             "error": {
                 "type": ["string", "null"],
                 "description": "Failure reason when success is false, else null.",
@@ -92,7 +114,8 @@ _SYSTEM_PROMPT = (
     "same task_id. For every node you changed, put its id and its FULL rewritten "
     "source in 'modified_fragments' — return complete node source, never a diff, "
     "and only for nodes you were authorized to modify. "
-    f"{NODE_ID_CONTRACT} Do not reply with prose."
+    f"{NODE_ID_CONTRACT} {NO_CHANGE_CONTRACT} {RETRY_NOTE_CONTRACT} "
+    "Do not reply with prose."
 )
 
 
@@ -107,12 +130,16 @@ class AnthropicApiAdapter(AgentAdapter):
         client: Any | None = None,
         model: str = _DEFAULT_MODEL,
         api_key: str | None = None,
-        max_tokens: int = _DEFAULT_MAX_TOKENS,
+        max_tokens: int | None = None,
         agent_id: str = "anthropic-0",
     ) -> None:
         self.agent_id = agent_id
         self.model = model
-        self.max_tokens = max_tokens
+        # None means "ask the catalog what this model can actually emit" — a
+        # constant here is what silently clipped every large file.
+        self.max_tokens = (
+            max_tokens if max_tokens is not None else resolve_agent_max_tokens(model)
+        )
         self._api_key = api_key
         self._client = client
 
@@ -137,17 +164,44 @@ class AnthropicApiAdapter(AgentAdapter):
         return encode_task_bundle(task_bundle)
 
     def send(self, prompt: str) -> str:
-        """Call the Messages API and return the result tool's JSON payload."""
+        """Call the Messages API and return the result tool's JSON payload.
+
+        Streams the request: an agent-sized output budget is large enough that
+        the SDK rejects a plain ``messages.create`` ("Streaming is required for
+        operations that may take longer than 10 minutes").
+        ``get_final_message`` yields the same assembled message a non-streaming
+        call would have returned, ``tool_use`` block included.
+        """
         client = self._get_client()
-        response = client.messages.create(
+        with client.messages.stream(
             model=self.model,
             max_tokens=self.max_tokens,
             system=_SYSTEM_PROMPT,
             tools=[_RESULT_TOOL],
             tool_choice={"type": "tool", "name": _RESULT_TOOL_NAME},
             messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            response = stream.get_final_message()
+        return self._read_response(response)
+
+    def _read_response(self, response: Any) -> str:
+        """Reject a cut or refused reply, then extract the result tool payload.
+
+        Order matters: on a cut, ``block.input`` holds whatever the model had
+        finished writing, which for a partial array is a syntactically fine
+        result object missing the work. Checking the stop reason first is what
+        keeps that from being read as a success.
+        """
+        usage = extract_usage(getattr(response, "usage", None))
+        stop_reason = getattr(response, "stop_reason", None)
+        check_stop_reason(
+            stop_reason,
+            provider="anthropic",
+            budget=self.max_tokens,
+            usage=usage,
         )
-        return self._extract_tool_payload(response)
+        payload = self._extract_tool_payload(response)
+        return with_response_metadata(payload, stop_reason=stop_reason, usage=usage)
 
     @staticmethod
     def _extract_tool_payload(response: Any) -> str:

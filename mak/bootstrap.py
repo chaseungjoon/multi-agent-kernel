@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from typing import Any
 
 from mak.agent_runner.adapters.anthropic_api_adapter import AnthropicApiAdapter
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
@@ -123,9 +124,15 @@ def _api_factory(agent: AgentConfig) -> Callable[[], AgentAdapter]:
 
     def make() -> AgentAdapter:
         key = _resolve_api_key(agent)
+        # Each unset option is *omitted* rather than passed as None, so the
+        # adapter's own default (including "resolve the budget from the model
+        # catalog") stays the single place that decides it.
+        options: dict[str, Any] = {"api_key": key}
         if agent.model is not None:
-            return cls(model=agent.model, api_key=key)
-        return cls(api_key=key)
+            options["model"] = agent.model
+        if agent.max_tokens is not None:
+            options["max_tokens"] = agent.max_tokens
+        return cls(**options)
 
     return make
 

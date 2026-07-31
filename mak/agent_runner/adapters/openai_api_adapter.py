@@ -5,6 +5,12 @@ output, here via OpenAI's JSON mode (``response_format={"type": "json_object"}``
 The model is instructed to emit exactly the ``TaskResult`` field set, which is then
 decoded through MAK's wire protocol — no stdout scraping.
 
+**Output budget.** Unlike the Anthropic adapter this one sends no cap unless one
+is configured, so it inherits the model's own maximum — the better default. It
+still has to read ``finish_reason``: a length-truncated JSON-mode reply usually
+fails as invalid JSON, but "usually" is not a contract, and a cut that lands on a
+closing brace would decode as a successful result with no work in it.
+
 The SDK is imported lazily and the client is injectable, so neither the adapter
 nor its tests require the ``openai`` package unless a real call is made.
 """
@@ -16,10 +22,17 @@ from typing import Any
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
 from mak.agent_runner.protocol import (
+    NO_CHANGE_CONTRACT,
     NODE_ID_CONTRACT,
     PROTOCOL_VERSION,
+    RETRY_NOTE_CONTRACT,
     decode_task_result,
     encode_task_bundle,
+)
+from mak.agent_runner.stop_signals import (
+    check_stop_reason,
+    extract_usage,
+    with_response_metadata,
 )
 from mak.core.exceptions import AgentError
 from mak.core.types import TaskBundle, TaskResult
@@ -34,9 +47,10 @@ _SYSTEM_PROMPT = (
     "containing exactly these keys: 'task_id' (string, echoing the bundle's "
     "task_id), 'success' (boolean), 'modified_fragments' (array of objects, each "
     "with 'node_id' and the FULL rewritten 'new_source' of that node — complete "
-    "source, never a diff, only for nodes you may modify), and 'error' (string "
-    "reason when success is false, otherwise null). "
-    f"{NODE_ID_CONTRACT} Respond with only that JSON object."
+    "source, never a diff, only for nodes you may modify), "
+    "'no_changes_required' (boolean), and 'error' (string reason when success is "
+    f"false, otherwise null). {NODE_ID_CONTRACT} {NO_CHANGE_CONTRACT} "
+    f"{RETRY_NOTE_CONTRACT} Respond with only that JSON object."
 )
 
 
@@ -51,10 +65,15 @@ class OpenAiApiAdapter(AgentAdapter):
         client: Any | None = None,
         model: str = _DEFAULT_MODEL,
         api_key: str | None = None,
+        max_tokens: int | None = None,
         agent_id: str = "openai-0",
     ) -> None:
         self.agent_id = agent_id
         self.model = model
+        # None = send no cap and inherit the model's own maximum. Only a
+        # configured value is forwarded, so a user on a small or metered model can
+        # bound the spend without every other user being silently clipped.
+        self.max_tokens = max_tokens
         self._api_key = api_key
         self._client = client
 
@@ -81,6 +100,11 @@ class OpenAiApiAdapter(AgentAdapter):
     def send(self, prompt: str) -> str:
         """Call Chat Completions in JSON mode and return the result JSON."""
         client = self._get_client()
+        extra: dict[str, Any] = (
+            {"max_completion_tokens": self.max_tokens}
+            if self.max_tokens is not None
+            else {}
+        )
         response = client.chat.completions.create(
             model=self.model,
             response_format={"type": "json_object"},
@@ -88,22 +112,41 @@ class OpenAiApiAdapter(AgentAdapter):
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
+            **extra,
         )
-        return self._extract_content(response)
+        return self._read_response(response)
 
-    @staticmethod
-    def _extract_content(response: Any) -> str:
-        """Pull the JSON content out of the first choice and normalize it."""
+    def _read_response(self, response: Any) -> str:
+        """Reject a cut or filtered reply, then normalize the JSON content."""
         choices = getattr(response, "choices", None) or []
         if not choices:
             raise AgentError("openai response contained no choices")
-        content = choices[0].message.content
+        usage = extract_usage(getattr(response, "usage", None))
+        finish_reason = getattr(choices[0], "finish_reason", None)
+        check_stop_reason(
+            finish_reason,
+            provider="openai",
+            budget=self.max_tokens,
+            usage=usage,
+        )
+        payload = self._extract_content(choices[0])
+        return with_response_metadata(payload, stop_reason=finish_reason, usage=usage)
+
+    @staticmethod
+    def _extract_content(choice: Any) -> str:
+        """Pull the JSON content out of a choice and normalize it."""
+        content = choice.message.content
         if content is None:
             raise AgentError("openai response message had no content")
         try:
             payload = json.loads(content)
         except json.JSONDecodeError as exc:
             raise AgentError(f"openai response was not valid JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise AgentError(
+                "openai response JSON was not an object (got "
+                f"{type(payload).__name__})"
+            )
         payload["protocol_version"] = PROTOCOL_VERSION
         return json.dumps(payload)
 

@@ -8,7 +8,11 @@ from typing import Any
 import pytest
 
 from mak.agent_runner.adapters.gemini_api_adapter import GeminiApiAdapter
-from mak.core.exceptions import AgentError
+from mak.core.exceptions import (
+    AgentError,
+    AgentRefusedError,
+    AgentTruncatedError,
+)
 from mak.core.types import NodeId, TaskBundle
 
 
@@ -29,13 +33,34 @@ class FakeContent:
 
 
 class FakeCandidate:
-    def __init__(self, parts: list[FakePart]) -> None:
+    def __init__(self, parts: list[FakePart], finish_reason: object = "STOP") -> None:
         self.content = FakeContent(parts)
+        self.finish_reason = finish_reason
+
+
+class FakeUsage:
+    def __init__(self, prompt: int, candidates: int) -> None:
+        self.prompt_token_count = prompt
+        self.candidates_token_count = candidates
+
+
+class FakeFinishReasonEnum:
+    """Stands in for the SDK enum whose str() is dotted."""
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __str__(self) -> str:
+        """Render as the SDK's dotted enum text."""
+        return f"FinishReason.{self._name}"
 
 
 class FakeResponse:
-    def __init__(self, candidates: list[FakeCandidate]) -> None:
+    def __init__(
+        self, candidates: list[FakeCandidate], usage: FakeUsage | None = None
+    ) -> None:
         self.candidates = candidates
+        self.usage_metadata = usage
 
 
 class FakeModels:
@@ -112,6 +137,69 @@ class TestSend:
         adapter = GeminiApiAdapter(client=client, model="gemini-3-flash")
         adapter.send("{}")
         assert client.models.calls[0]["model"] == "gemini-3-flash"
+
+    def test_no_cap_is_sent_by_default(self) -> None:
+        adapter, client = _adapter_with_result(task_id="t", success=True)
+        adapter.send("{}")
+        assert "max_output_tokens" not in client.models.calls[0]["config"]
+
+    def test_configured_cap_is_forwarded(self) -> None:
+        client = FakeClient(
+            FakeResponse([FakeCandidate([_result_part(task_id="t", success=True)])])
+        )
+        GeminiApiAdapter(client=client, max_tokens=4096).send("{}")
+        assert client.models.calls[0]["config"]["max_output_tokens"] == 4096
+
+    def test_function_declaration_offers_the_noop_assertion(self) -> None:
+        adapter, client = _adapter_with_result(task_id="t", success=True)
+        adapter.send("{}")
+        decl = client.models.calls[0]["config"]["tools"][0]["function_declarations"][0]
+        props = decl["parameters"]["properties"]
+        assert props["no_changes_required"]["type"] == "boolean"
+
+
+class TestDegradedResponses:
+    """12.5a — Gemini's function-call path truncates like Anthropic's."""
+
+    @staticmethod
+    def _adapter_with(
+        candidate: FakeCandidate, usage: FakeUsage | None = None
+    ) -> GeminiApiAdapter:
+        return GeminiApiAdapter(client=FakeClient(FakeResponse([candidate], usage)))
+
+    def test_max_tokens_enum_is_a_truncation(self) -> None:
+        candidate = FakeCandidate(
+            [_result_part(task_id="t1", success=True)],
+            finish_reason=FakeFinishReasonEnum("MAX_TOKENS"),
+        )
+        with pytest.raises(AgentTruncatedError) as excinfo:
+            self._adapter_with(candidate, FakeUsage(700, 8000)).send("{}")
+        assert excinfo.value.usage == {"input_tokens": 700, "output_tokens": 8000}
+
+    def test_max_tokens_plain_string_is_a_truncation(self) -> None:
+        candidate = FakeCandidate(
+            [_result_part(task_id="t1", success=True)], finish_reason="MAX_TOKENS"
+        )
+        with pytest.raises(AgentTruncatedError):
+            self._adapter_with(candidate).send("{}")
+
+    def test_safety_block_is_not_retryable(self) -> None:
+        candidate = FakeCandidate([FakePart(None)], finish_reason="SAFETY")
+        with pytest.raises(AgentRefusedError) as excinfo:
+            self._adapter_with(candidate).send("{}")
+        assert excinfo.value.retryable is False
+
+    def test_recitation_block_is_not_retryable(self) -> None:
+        candidate = FakeCandidate([FakePart(None)], finish_reason="RECITATION")
+        with pytest.raises(AgentRefusedError):
+            self._adapter_with(candidate).send("{}")
+
+    def test_stop_reason_and_usage_reach_the_result(self) -> None:
+        candidate = FakeCandidate([_result_part(task_id="t1", success=True)])
+        adapter = self._adapter_with(candidate, FakeUsage(80, 20))
+        result = adapter.parse_result(adapter.send("{}"))
+        assert result.stop_reason == "STOP"
+        assert result.usage == {"input_tokens": 80, "output_tokens": 20}
 
 
 class TestParseResult:

@@ -28,6 +28,14 @@ agents:
     api_key_env: "ANTHROPIC_API_KEY"
     max_instances: 2
     timeout: 300
+    # max_tokens: 32000     # output budget for one agent reply. Unset (the
+    #                       # default) resolves it from the model catalog for
+    #                       # anthropic_api, and sends no cap at all for
+    #                       # openai_api / gemini_api (inheriting the model's own
+    #                       # maximum). An agent returns a node's WHOLE rewritten
+    #                       # source, so a budget under the largest file it may
+    #                       # write truncates the reply; set this only to bound
+    #                       # spend, or for a local model the catalog does not know.
   - type: "openai_api"
     model: "gpt-5.6-terra"
     api_key_env: "OPENAI_API_KEY"

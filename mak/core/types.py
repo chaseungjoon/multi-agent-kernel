@@ -54,13 +54,21 @@ class LockEntry:
 
 @dataclass(frozen=True, slots=True)
 class TaskBundle:
-    """A task sent to an agent for execution."""
+    """A task sent to an agent for execution.
+
+    ``retry_note`` is the feedback channel for a re-dispatch: why the previous
+    attempt produced nothing, and what to do differently. Without it a retry
+    re-issues a byte-identical request, which for a truncated reply yields an
+    identically-cut reply — three attempts, three identical failures, full token
+    cost. Every adapter surfaces it to the model.
+    """
 
     task_id: str
     description: str
     target_nodes: list[NodeId] = field(default_factory=list)
     locks: list[LockEntry] = field(default_factory=list)
     context: dict[str, str] = field(default_factory=dict)
+    retry_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +81,21 @@ class TaskResult:
     and committing. ``modified_nodes`` lists the ids that changed (it is derivable
     from ``new_sources`` but kept explicit for the wire and for agents that report
     ids without re-sending source).
+
+    The remaining fields exist because "the agent returned nothing" has several
+    causes that used to be indistinguishable:
+
+    - ``no_changes_required`` — the agent's *positive assertion* that it
+      inspected the targets and found nothing to change. An empty result without
+      it is a failure, not a no-op: a reply cut off at the output-token limit is
+      byte-identical to a deliberate "nothing to do", and only one of the two
+      may be reported as a completed task.
+    - ``stop_reason`` / ``usage`` — the provider's own signals for the attempt,
+      carried through so ``AGENT_RESULT`` can show why a reply was empty instead
+      of leaving it to be inferred.
+    - ``retryable`` — False for a failure that repeats verbatim on an identical
+      request (a refusal), so the session fails fast rather than spending its
+      whole attempt budget on the same answer.
     """
 
     task_id: str
@@ -80,6 +103,10 @@ class TaskResult:
     modified_nodes: list[NodeId] = field(default_factory=list)
     new_sources: dict[NodeId, str] = field(default_factory=dict)
     error: str | None = None
+    no_changes_required: bool = False
+    stop_reason: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+    retryable: bool = True
 
 
 @dataclass(frozen=True, slots=True)

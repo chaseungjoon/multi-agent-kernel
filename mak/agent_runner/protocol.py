@@ -12,6 +12,7 @@ import json
 from dataclasses import asdict
 from typing import Any
 
+from mak.core.exceptions import AgentProtocolError
 from mak.core.types import (
     LockEntry,
     LockMode,
@@ -36,6 +37,24 @@ NODE_ID_CONTRACT = (
     "them verbatim, never invent narrower, broader, or renamed ids. A target "
     "that is a bare file path (no '::') is a whole file: return its complete "
     "source under that exact id, not one entry per function."
+)
+
+# The no-op half of the contract. MAK used to accept *any* successful result with
+# no fragments as "the agent audited this and found nothing to change" — which is
+# also exactly what a reply cut off at the output-token limit looks like, so
+# truncated work was reported as a completed task. A no-op now needs the agent to
+# say so, which a truncated reply can never do.
+NO_CHANGE_CONTRACT = (
+    "If — and only if — you inspected every target and no change is needed, set "
+    "'no_changes_required' to true and return no fragments. An empty result "
+    "without that flag is treated as a failed attempt, never as 'nothing to do'."
+)
+
+# The retry half. Populated by the session on a re-dispatch; absent on attempt 1.
+RETRY_NOTE_CONTRACT = (
+    "If the bundle carries a 'retry_note', your previous attempt at this task "
+    "produced nothing usable for the reason it gives — follow its instruction "
+    "instead of repeating that attempt."
 )
 
 
@@ -124,6 +143,7 @@ def decode_task_bundle(raw: str) -> TaskBundle:
         target_nodes=[NodeId(n) for n in data.get("target_nodes", [])],
         locks=[_decode_lock_entry(e) for e in data.get("locks", [])],
         context=data.get("context", {}),
+        retry_note=data.get("retry_note"),
     )
 
 
@@ -132,6 +152,92 @@ def encode_task_result(result: TaskResult) -> str:
     data = asdict(result)
     data["protocol_version"] = PROTOCOL_VERSION
     return json.dumps(data) + "\n"
+
+
+def _type_name(value: object) -> str:
+    """Return the JSON-ish name of ``value``'s type, for error messages."""
+    return {
+        dict: "object",
+        list: "array",
+        str: "string",
+        bool: "boolean",
+        int: "number",
+        float: "number",
+        type(None): "null",
+    }.get(type(value), type(value).__name__)
+
+
+def _require_mapping(data: object, field_name: str) -> dict[str, Any]:
+    """Return ``data`` as a mapping, or raise naming the field and what arrived."""
+    if not isinstance(data, dict):
+        raise AgentProtocolError(
+            f"'{field_name}' must be an object, got {_type_name(data)}"
+        )
+    return data
+
+
+def _as_fragment_list(raw: object) -> list[dict[str, Any]]:
+    """Normalize ``modified_fragments`` to a list of objects.
+
+    The documented shape is an array of ``{node_id, new_source}``. A model that
+    returns a **single object** instead is a common schema slip, and iterating it
+    yields its *keys* — strings — so indexing them raised
+    ``TypeError: string indices must be integers``, which the runner then
+    reported as "api call failed" and the retry could do nothing with. One object
+    is obviously one fragment, so coerce it; anything else is named and rejected.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        return [raw]
+    if not isinstance(raw, list):
+        raise AgentProtocolError(
+            "'modified_fragments' must be an array of {node_id, new_source} "
+            f"objects, got {_type_name(raw)}"
+        )
+    fragments: list[dict[str, Any]] = []
+    for index, fragment in enumerate(raw):
+        if not isinstance(fragment, dict):
+            raise AgentProtocolError(
+                f"'modified_fragments[{index}]' must be an object with 'node_id' "
+                f"and 'new_source', got {_type_name(fragment)}"
+            )
+        fragments.append(fragment)
+    return fragments
+
+
+def _fragment_node_id(fragment: dict[str, Any], index: int) -> NodeId:
+    node_id = fragment.get("node_id")
+    if not isinstance(node_id, str) or not node_id:
+        raise AgentProtocolError(
+            f"'modified_fragments[{index}].node_id' must be a non-empty string, "
+            f"got {_type_name(node_id)}"
+        )
+    return NodeId(node_id)
+
+
+def _fragment_source(fragment: dict[str, Any], index: int) -> str | None:
+    """Return a fragment's ``new_source``, or None when the agent sent only an id."""
+    source = fragment.get("new_source")
+    if source is None:
+        return None
+    if not isinstance(source, str):
+        raise AgentProtocolError(
+            f"'modified_fragments[{index}].new_source' must be a string holding "
+            f"the node's full source, got {_type_name(source)}"
+        )
+    return source
+
+
+def _decode_usage(raw: object) -> dict[str, int]:
+    """Return the provider's token counts, dropping anything not an integer."""
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(key): int(value)
+        for key, value in raw.items()
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
 
 
 def decode_task_result(raw: str) -> TaskResult:
@@ -145,11 +251,20 @@ def decode_task_result(raw: str) -> TaskResult:
       adapters elicit from the model);
     - ``new_sources``: an explicit ``{node_id: source}`` mapping (the canonical
       field, e.g. from a re-encoded ``TaskResult``).
+
+    Every malformed shape — including a payload cut off before its required
+    fields arrived — raises ``AgentProtocolError`` naming the field and the type
+    received, so the runner can report a decode failure as such and a retry has
+    something to act on. It never raises a bare ``TypeError``/``KeyError``.
     """
-    data = json.loads(raw.strip())
+    try:
+        parsed = json.loads(raw.strip())
+    except json.JSONDecodeError as exc:
+        raise AgentProtocolError(f"agent result was not valid JSON: {exc}") from exc
+    data = _require_mapping(parsed, "result")
     _check_version(data)
 
-    modified: list[NodeId] = [NodeId(n) for n in data.get("modified_nodes", [])]
+    modified: list[NodeId] = []
     new_sources: dict[NodeId, str] = {}
 
     def _record(node_id: NodeId, source: str | None) -> None:
@@ -158,17 +273,42 @@ def decode_task_result(raw: str) -> TaskResult:
         if source is not None:
             new_sources[node_id] = source
 
-    for fragment in data.get("modified_fragments") or []:
-        node_id = NodeId(str(fragment["node_id"]))
-        raw_source = fragment.get("new_source")
-        _record(node_id, None if raw_source is None else str(raw_source))
-    for node_id_str, source in (data.get("new_sources") or {}).items():
-        _record(NodeId(str(node_id_str)), str(source))
+    raw_modified = data.get("modified_nodes") or []
+    if not isinstance(raw_modified, list):
+        raise AgentProtocolError(
+            f"'modified_nodes' must be an array of node ids, got "
+            f"{_type_name(raw_modified)}"
+        )
+    for node_id in raw_modified:
+        _record(NodeId(str(node_id)), None)
+
+    for index, fragment in enumerate(_as_fragment_list(data.get("modified_fragments"))):
+        _record(_fragment_node_id(fragment, index), _fragment_source(fragment, index))
+
+    raw_sources = data.get("new_sources") or {}
+    for node_id_str, source in _require_mapping(raw_sources, "new_sources").items():
+        if not isinstance(source, str):
+            raise AgentProtocolError(
+                f"'new_sources[{node_id_str}]' must be a string holding the "
+                f"node's full source, got {_type_name(source)}"
+            )
+        _record(NodeId(str(node_id_str)), source)
+
+    for required in ("task_id", "success"):
+        if required not in data:
+            raise AgentProtocolError(
+                f"agent result is missing the required '{required}' field "
+                f"(present: {', '.join(sorted(data)) or 'nothing'})"
+            )
 
     return TaskResult(
-        task_id=data["task_id"],
-        success=data["success"],
+        task_id=str(data["task_id"]),
+        success=bool(data["success"]),
         modified_nodes=modified,
         new_sources=new_sources,
         error=data.get("error"),
+        no_changes_required=bool(data.get("no_changes_required", False)),
+        stop_reason=data.get("stop_reason"),
+        usage=_decode_usage(data.get("usage")),
+        retryable=bool(data.get("retryable", True)),
     )

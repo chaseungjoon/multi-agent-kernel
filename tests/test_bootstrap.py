@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from mak.agent_runner.adapters.anthropic_api_adapter import AnthropicApiAdapter
+from mak.agent_runner.adapters.budget import resolve_agent_max_tokens
 from mak.agent_runner.adapters.claude_code_adapter import ClaudeCodeAdapter
 from mak.agent_runner.adapters.copilot_adapter import CopilotAdapter
 from mak.agent_runner.adapters.gemini_api_adapter import GeminiApiAdapter
@@ -91,6 +92,24 @@ class TestBuildRegistry:
         adapter = registry.get("anthropic_api")
         assert isinstance(adapter, AnthropicApiAdapter)
         assert adapter.model == "claude-sonnet-4-6"
+
+    def test_configured_max_tokens_reaches_the_adapter(self) -> None:
+        registry = build_registry(
+            _config(AgentConfig(type="anthropic_api", max_tokens=12000))
+        )
+        adapter = registry.get("anthropic_api")
+        assert isinstance(adapter, AnthropicApiAdapter)
+        assert adapter.max_tokens == 12000
+
+    def test_unset_max_tokens_leaves_the_adapter_to_resolve_it(self) -> None:
+        # An unset knob must not arrive as an explicit None — the adapter's own
+        # catalog lookup is the single place that decides the budget.
+        registry = build_registry(
+            _config(AgentConfig(type="anthropic_api", model="claude-sonnet-5"))
+        )
+        adapter = registry.get("anthropic_api")
+        assert isinstance(adapter, AnthropicApiAdapter)
+        assert adapter.max_tokens == resolve_agent_max_tokens("claude-sonnet-5")
 
     def test_configured_model_reaches_openai_adapter(self) -> None:
         registry = build_registry(_config(AgentConfig(type="openai_api", model="o3")))

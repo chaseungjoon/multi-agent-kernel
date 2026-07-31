@@ -19,15 +19,15 @@ planner can ask for a smaller plan instead of blindly retrying.
 
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Any
 
+from mak.core.budget import resolve_output_budget
 from mak.core.exceptions import PlannerFailedError
 from mak.planner.planner import PlannerLLM
 from mak.planner.response import ResponseError, TruncatedResponseError
 
-# Used when the catalog knows nothing about the model. Twice the agent adapters'
-# budget: a plan spans the whole repo, while an agent result covers a few nodes.
+# Used when the catalog knows nothing about the model. A plan spans the whole
+# repo, so this sits above the agent adapters' fallback, which covers a few nodes.
 _DEFAULT_MAX_TOKENS = 16384
 # Floor and ceiling around whatever the catalog reports. The ceiling keeps the
 # request comfortably inside the non-streaming window the SDKs allow; a plan that
@@ -36,33 +36,19 @@ _MIN_MAX_TOKENS = 4096
 _MAX_MAX_TOKENS = 32000
 
 
-@lru_cache(maxsize=1)
-def _documented_output_limits() -> dict[str, int]:
-    """Return ``{model_id: max_output}`` from the model catalog."""
-    try:
-        from mak.models.registry import ModelRegistry
-
-        return {
-            entry.model_id: entry.max_output
-            for entry in ModelRegistry().all_models()
-            if entry.max_output
-        }
-    except Exception:  # noqa: BLE001 - the budget below is a safe fallback
-        # The catalog is an optimisation, not a dependency: a missing manifest or
-        # an unreadable cache must not stop the planner from running.
-        return {}
-
-
 def resolve_max_tokens(model: str) -> int:
-    """Return the output-token budget to request for ``model``.
+    """Return the planner's output-token budget for ``model``.
 
-    Uses the model's documented output limit when the catalog knows it, clamped
-    to a sane range; falls back to ``_DEFAULT_MAX_TOKENS`` for an unknown model.
+    Thin wrapper over the shared :func:`mak.core.budget.resolve_output_budget`
+    with the planner's own clamp; the agent adapters use the same resolver with a
+    clamp of their own.
     """
-    documented = _documented_output_limits().get(model)
-    if documented is None:
-        return _DEFAULT_MAX_TOKENS
-    return max(_MIN_MAX_TOKENS, min(documented, _MAX_MAX_TOKENS))
+    return resolve_output_budget(
+        model,
+        fallback=_DEFAULT_MAX_TOKENS,
+        minimum=_MIN_MAX_TOKENS,
+        maximum=_MAX_MAX_TOKENS,
+    )
 
 
 class AnthropicPlannerLLM:

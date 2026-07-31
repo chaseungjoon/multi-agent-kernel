@@ -75,7 +75,8 @@ above to the COMPLETE rewritten Python source of that node (never a diff). Use \
 exactly these keys:
 {ids}
 {contract}
-If you cannot complete the task, respond with the JSON object {{"error": "<why>"}}.
+{retry}If you cannot complete the task, respond with the JSON object \
+{{"error": "<why>"}}.
 """
 
 
@@ -92,12 +93,16 @@ def build_prompt(bundle: TaskBundle) -> str:
     ]
     context = ("\nRead-only context:\n" + "\n".join(reads) + "\n") if reads else ""
     ids = "\n".join(str(n) for n in bundle.target_nodes)
+    # A re-dispatch says why the last attempt produced nothing usable; without it
+    # the CLI is asked the identical question and gives the identical answer.
+    retry = f"{bundle.retry_note}\n" if bundle.retry_note else ""
     return _PROMPT_TEMPLATE.format(
         description=bundle.description,
         targets="\n".join(targets) or "(none)",
         context=context,
         ids=ids or "(none)",
         contract=NODE_ID_CONTRACT,
+        retry=retry,
     )
 
 

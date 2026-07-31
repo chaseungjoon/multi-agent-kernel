@@ -28,10 +28,17 @@ from typing import Any
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
 from mak.agent_runner.protocol import (
+    NO_CHANGE_CONTRACT,
     NODE_ID_CONTRACT,
     PROTOCOL_VERSION,
+    RETRY_NOTE_CONTRACT,
     decode_task_result,
     encode_task_bundle,
+)
+from mak.agent_runner.stop_signals import (
+    check_stop_reason,
+    extract_usage,
+    with_response_metadata,
 )
 from mak.core.exceptions import AgentError
 from mak.core.types import TaskBundle, TaskResult
@@ -82,6 +89,13 @@ _RESULT_FUNCTION: dict[str, Any] = {
                     "required": ["node_id", "new_source"],
                 },
             },
+            "no_changes_required": {
+                "type": "boolean",
+                "description": (
+                    "True only when you inspected every target and found nothing "
+                    "to change. Never true alongside modified_fragments."
+                ),
+            },
             "error": {
                 "type": "string",
                 "nullable": True,
@@ -101,7 +115,7 @@ _SYSTEM_PROMPT = (
     "the same task_id. For every node you changed, put its id and its FULL "
     "rewritten source in 'modified_fragments' — complete node source, never a "
     f"diff, only for nodes you may modify. {NODE_ID_CONTRACT} "
-    "Do not reply with prose."
+    f"{NO_CHANGE_CONTRACT} {RETRY_NOTE_CONTRACT} Do not reply with prose."
 )
 
 
@@ -116,10 +130,14 @@ class GeminiApiAdapter(AgentAdapter):
         client: Any | None = None,
         model: str = _DEFAULT_MODEL,
         api_key: str | None = None,
+        max_tokens: int | None = None,
         agent_id: str = "gemini-0",
     ) -> None:
         self.agent_id = agent_id
         self.model = model
+        # None = send no cap and inherit the model's own maximum (see the OpenAI
+        # adapter for the same reasoning).
+        self.max_tokens = max_tokens
         self._api_key = api_key
         self._client = client
 
@@ -146,21 +164,42 @@ class GeminiApiAdapter(AgentAdapter):
     def send(self, prompt: str) -> str:
         """Call ``generate_content`` with a forced function call; return its JSON."""
         client = self._get_client()
+        config: dict[str, Any] = {
+            "system_instruction": _SYSTEM_PROMPT,
+            "tools": [{"function_declarations": [_RESULT_FUNCTION]}],
+            "tool_config": {
+                "function_calling_config": {
+                    "mode": "ANY",
+                    "allowed_function_names": [_RESULT_FN_NAME],
+                }
+            },
+        }
+        if self.max_tokens is not None:
+            config["max_output_tokens"] = self.max_tokens
         response = client.models.generate_content(
             model=self.model,
             contents=prompt,
-            config={
-                "system_instruction": _SYSTEM_PROMPT,
-                "tools": [{"function_declarations": [_RESULT_FUNCTION]}],
-                "tool_config": {
-                    "function_calling_config": {
-                        "mode": "ANY",
-                        "allowed_function_names": [_RESULT_FN_NAME],
-                    }
-                },
-            },
+            config=config,
         )
-        return self._extract_function_call(response)
+        return self._read_response(response)
+
+    def _read_response(self, response: Any) -> str:
+        """Reject a cut or blocked candidate, then extract the function call.
+
+        Gemini's function-call path truncates the same way Anthropic's does: the
+        arguments object arrives with whatever fields finished, which without
+        this check decodes into a successful result carrying no work.
+        """
+        usage = extract_usage(getattr(response, "usage_metadata", None))
+        finish_reason = self._first_finish_reason(response)
+        check_stop_reason(
+            finish_reason,
+            provider="gemini",
+            budget=self.max_tokens,
+            usage=usage,
+        )
+        payload = self._extract_function_call(response)
+        return with_response_metadata(payload, stop_reason=finish_reason, usage=usage)
 
     @staticmethod
     def _extract_function_call(response: Any) -> str:
@@ -176,6 +215,20 @@ class GeminiApiAdapter(AgentAdapter):
         raise AgentError(
             f"gemini response contained no '{_RESULT_FN_NAME}' function call"
         )
+
+    @staticmethod
+    def _first_finish_reason(response: Any) -> str | None:
+        """Return the first candidate's finish reason, or None when absent.
+
+        Left as a string: the SDK returns an enum whose ``str`` is
+        ``FinishReason.MAX_TOKENS``, while older versions and the REST shape use
+        a plain string, so the signal is matched on the text.
+        """
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            return None
+        reason = getattr(candidates[0], "finish_reason", None)
+        return None if reason is None else str(reason)
 
     def parse_result(self, raw_output: str) -> TaskResult:
         """Decode the function-call payload into a ``TaskResult``."""

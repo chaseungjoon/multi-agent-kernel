@@ -37,6 +37,7 @@ def test_all_event_type_values_exist() -> None:
         "agent_spawned",
         "agent_result",
         "source_dropped",
+        "accepted_noop",
         "session_started",
         "session_ended",
         "plan_validated",

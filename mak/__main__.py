@@ -394,11 +394,20 @@ def main(
         print(f"mak: {exc}", file=sys.stderr)
         return 1
 
+    # "N completed" used to include tasks where the agent changed nothing, with
+    # no way for an operator to tell the two apart — so a task that declined to
+    # do work is counted, but named.
+    noop_note = f" ({len(result.noop)} no-op)" if result.noop else ""
     print(
-        f"mak: {len(result.completed)} completed, "
+        f"mak: {len(result.completed)} completed{noop_note}, "
         f"{len(result.failed)} failed, {len(result.skipped)} skipped, "
         f"{len(result.blocked)} blocked."
     )
+    if result.noop:
+        print(
+            "mak: no-op (the agent reported nothing needed changing): "
+            f"{', '.join(result.noop)}"
+        )
     if not result.ok:
         if result.failed:
             print(f"mak: failed tasks: {', '.join(result.failed)}", file=sys.stderr)

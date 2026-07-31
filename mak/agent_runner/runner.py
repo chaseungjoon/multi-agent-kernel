@@ -27,10 +27,22 @@ from mak.agent_runner.adapters.base_adapter import (
     AgentAdapter,
     SubprocessAgentAdapter,
 )
-from mak.core.exceptions import AgentError
+from mak.core.exceptions import AgentError, AgentResponseError
 from mak.core.types import TaskBundle, TaskResult
 
 _DEFAULT_TIMEOUT_S = 300.0
+
+
+def _response_failure(task_id: str, exc: AgentResponseError) -> TaskResult:
+    """Turn a rejected provider response into a failed result that keeps its facts."""
+    return TaskResult(
+        task_id=task_id,
+        success=False,
+        error=str(exc),
+        stop_reason=exc.stop_reason,
+        usage=exc.usage,
+        retryable=exc.retryable,
+    )
 
 
 @runtime_checkable
@@ -91,17 +103,42 @@ class AgentRunner:
     # -- API path ----------------------------------------------------------
 
     def _assign_api(self, adapter: ApiAdapter, task: TaskBundle) -> TaskResult:
+        """Run one API call, mapping each failure class to its own failed result.
+
+        The three classes are genuinely different problems and used to share the
+        wording "api call failed", which blamed the transport for a truncated or
+        malformed *response body* and left the retry nothing to act on:
+
+        - ``AgentResponseError`` — the provider answered, but the answer was cut
+          off, refused, or undecodable. Its stop reason, token usage, and
+          retryability travel on the result so the session can log them and,
+          for a refusal, stop retrying.
+        - anything else out of ``send`` — a real transport/SDK failure.
+        - anything else out of ``parse_result`` — a decode MAK did not
+          anticipate; still not a transport failure.
+        """
         prompt = adapter.format_task(task)
         try:
             raw = adapter.send(prompt)
-            return adapter.parse_result(raw)
+        except AgentResponseError as exc:
+            return _response_failure(task.task_id, exc)
         except Exception as exc:
-            # A backend or parse failure is a failed task, not a runner crash —
-            # return a result so the scheduler can release locks and re-queue.
+            # A backend failure is a failed task, not a runner crash — return a
+            # result so the scheduler can release locks and re-queue.
             return TaskResult(
                 task_id=task.task_id,
                 success=False,
                 error=f"api call failed: {exc}",
+            )
+        try:
+            return adapter.parse_result(raw)
+        except AgentResponseError as exc:
+            return _response_failure(task.task_id, exc)
+        except Exception as exc:
+            return TaskResult(
+                task_id=task.task_id,
+                success=False,
+                error=f"could not decode agent result: {exc}",
             )
 
     # -- subprocess path ---------------------------------------------------

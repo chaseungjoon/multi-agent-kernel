@@ -205,7 +205,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **954 tests pass**,
+The **kernel is functionally complete and well-tested**: **1021 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -234,6 +234,7 @@ The module-by-module state:
 | `mak/agent_runner/sandbox.py` (Docker isolation) | Complete |
 | **Concurrent execution** | **Complete (Wave 5)** — see below |
 | **Pipeline integrity** | **Complete (Wave 11)** — no false conflicts, no store self-pollution, no silent drops |
+| **Agent output budget / truncation safety** | **Complete (Wave 12)** — no truncated reply reads as success, no laundered no-op |
 | `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
@@ -466,22 +467,46 @@ skip to the subsystem you're touching.
     `acquired_at`, `timeout_s`).
   - `ResourceRef` / `ResourceKind` — a reference to a file- or symbol-level resource.
   - `TaskBundle` — the unit sent *to* an agent: `task_id`, `description`,
-    `target_nodes`, and a `context` dict (enriched with write/read source).
+    `target_nodes`, a `context` dict (enriched with write/read source), and
+    (Wave 12) `retry_note: str | None` — feedback attached to a re-dispatch
+    explaining why the previous attempt produced nothing usable, so the second
+    attempt is not a byte-identical re-issue of the first.
   - `TaskResult` — the unit returned *from* an agent: `task_id`, `success`,
-    `modified_nodes`, `error`.
+    `modified_nodes`, `new_sources`, `error`. Wave 12 adds four fields that make
+    a truncated reply distinguishable from a deliberate no-op:
+    `no_changes_required` (the agent's *positive assertion* that it inspected
+    the targets and found nothing to change — required for the no-op path
+    below, §10), `stop_reason` / `usage` (the provider's own stop signal and
+    token counts, carried through for every attempt, good or bad), and
+    `retryable` (False for a failure that repeats verbatim on an identical
+    request — a refusal — so the session doesn't burn its whole attempt budget
+    re-asking it).
   - `SubTask` — a planned unit of work: `task_id`, `description`, `target_nodes`
     (what it will *write*), `context_nodes` (what it needs to *read*),
     `depends_on`, `agent_type`.
 - **`exceptions.py`** — every domain exception derives from `MakError`:
   `LockError`, `SchedulingError`, `ConflictDetectionError`, `GitIntegrationError`,
   `NodeStoreError`, `PlannerFailedError`, `PlanReviewAborted`, `SessionError`,
-  `AgentError`, `UnknownAgentTypeError`, `ConfigError`.
+  `AgentError`, `UnknownAgentTypeError`, `ConfigError`. Wave 12 adds
+  `AgentResponseError(AgentError)` and three subclasses that give a rejected
+  provider response a name instead of a bare string: `AgentTruncatedError` (hit
+  the output cap mid-generation — retryable), `AgentRefusedError` (the model
+  declined — **not** retryable, since the same prompt earns the same refusal),
+  and `AgentProtocolError` (the HTTP call succeeded but the body could not be
+  decoded into a `TaskResult` — a decode failure, never a transport one). All
+  three carry `stop_reason` and `usage` so the runner can put them on the
+  failed `TaskResult` it returns.
 - **`logging.py`** — `SessionLogger`: an append-only JSON-Lines event log. `EventType`
   is a `StrEnum`; `LogEntry` round-trips via `to_json()` / `from_json()`. Writes are
   serialized under a lock and flushed, so events never interleave or truncate.
   Two of the event types exist purely so a failed run can be diagnosed *without
-  re-running it*: `AGENT_RESULT` (what an agent actually returned, per attempt) and
+  re-running it*: `AGENT_RESULT` (what an agent actually returned, per attempt —
+  Wave 12 adds `stop_reason`, `usage`, and `no_changes_required` to this payload,
+  which is the whole reason a truncation is provable from the log) and
   `SOURCE_DROPPED` (anything MAK refused to stage, with the id and the grant).
+  Wave 12 adds `ACCEPTED_NOOP` — a task that closed because the agent *asserted*
+  no change was needed, logged distinctly from an ordinary `TASK_COMPLETED` so
+  the log shows "decided there was none" apart from "did the work".
 
 ## 2. Node Store
 
@@ -920,9 +945,62 @@ time stays fast and the tests never make a real call (they inject fakes).
 
 The whole new source of every changed node travels back inside that one structured
 reply, so a node's full file can be large — especially a **whole-file node** (§2)
-returning an entire new module. A truncated reply is unparseable and fails the task,
-so the Anthropic adapter's default `max_tokens` is **8192** (overridable per adapter);
-pair a big-file workload with a model and limit that can emit it in one response.
+returning an entire new module.
+
+### 7.2.1 Output budget and truncation safety (Wave 12)
+
+**The defect.** A truncated structured reply and a deliberate "nothing to change"
+are byte-identical by the time the session sees them: both are a `success=True`
+result with no fragments. Before Wave 12, `AnthropicApiAdapter` requested a
+hardcoded `max_tokens=8192` — about 6% of `claude-sonnet-5`'s documented output
+limit, and just under the size of the whole-file rewrites this project actually
+asks agents to produce (a 26 KB module costs roughly 7,900 output tokens once
+JSON-escaped). A reply cut at that cap arrives as a `tool_use` block holding only
+the scalar fields that finished (`{task_id, success}`), which decoded into a
+perfectly valid *successful* empty result — reported as a completed task for
+work that was never done. A real run against a Vim-clone codebase completed 4
+tasks and failed 2, but 2 of those 4 "completions" had received no work at all;
+real progress was 2 tasks out of 20.
+
+**The fix, adapter by adapter.** All three API adapters now share a uniform
+contract via two new modules:
+
+- `mak/core/budget.py` — `resolve_output_budget(model, *, fallback, minimum,
+  maximum)`, the catalog lookup lifted out of the planner's
+  `resolve_max_tokens` (§8) so an adapter is not reaching into `mak.planner.*`
+  (the wrong dependency direction). `mak/planner/llm.py::resolve_max_tokens` is
+  now a thin delegate over this with the planner's own clamp — its behavior and
+  public name are unchanged.
+- `mak/agent_runner/adapters/budget.py` — `resolve_agent_max_tokens(model)`,
+  the same resolver with an **agent-shaped clamp**: floor 8192 (above the
+  largest single-file rewrite this project has needed), ceiling 32000 (matches
+  the planner's, and keeps the request inside the SDKs' non-streaming window),
+  fallback 16384 for a model the catalog doesn't know. It also declares the
+  provider stop-signal vocabulary: `TRUNCATION_STOP_REASONS` (`max_tokens`,
+  `length`, `MAX_TOKENS`) and `REFUSAL_STOP_REASONS` (`refusal`,
+  `content_filter`, `SAFETY`, `RECITATION`, `PROHIBITED_CONTENT`, `BLOCKLIST`).
+- `mak/agent_runner/stop_signals.py` — `check_stop_reason(stop_reason, ...)`
+  raises `AgentTruncatedError`/`AgentRefusedError` *before* any caller can read
+  a partial payload as a result; `extract_usage(...)` normalizes each
+  provider's differently-named token counts into `{input_tokens,
+  output_tokens, total_tokens}`; `with_response_metadata(...)` merges the stop
+  reason and usage into the JSON payload the protocol decoder sees, so a
+  *good* attempt carries them too.
+
+| Adapter | Budget | Streaming | Stop-signal check |
+|---|---|---|---|
+| `anthropic_api` | `resolve_agent_max_tokens(model)` — **32000** for `claude-sonnet-5`/`claude-opus-5`, not 8192 | `messages.stream(...)` + `get_final_message()` — the same trap the planner hotfix already hit: past a real budget the SDK refuses a non-streaming call ("Streaming is required for operations that may take longer than 10 minutes") | `stop_reason` checked **before** `_extract_tool_payload` reads `block.input`, so a cut-mid-array payload is never read as a result |
+| `openai_api` | none sent unless `max_tokens` is configured — inherits the model's own maximum, which Wave 12 judged the better default | unchanged (`chat.completions.create`) | `choices[0].finish_reason == "length"` → truncated; `"content_filter"` → refusal. A length-truncated JSON-mode reply usually fails as invalid JSON already, but "usually" was not a contract — a cut landing on a closing brace would otherwise decode clean |
+| `gemini_api` | none sent unless `max_tokens` is configured (as `max_output_tokens`) | unchanged (`generate_content`) | `candidate.finish_reason` containing `MAX_TOKENS` (string-compared, since the SDK's enum `str()` is dotted) → truncated; `SAFETY`/`RECITATION`/`PROHIBITED_CONTENT` → refusal |
+
+Each adapter's forced-output schema (and CLI-bridge prompt, §7.2/§7.4) also
+gained a `no_changes_required` boolean the model must set to assert a no-op —
+see §10 for why an *absence* of fragments is no longer enough — and every
+prompt now honours an optional `retry_note` on the bundle (§7.4, §10).
+
+`AgentConfig.max_tokens: int | None = None` (§11) lets an operator override the
+resolved budget per agent — `None` keeps the catalog/no-cap default described
+above.
 
 CLI subprocess adapters (`claude_code`, `codex`, `copilot`) are a **secondary
 fallback**, implemented over a shared `CliSubprocessAdapter` base (`cli_adapter.py`).
@@ -984,6 +1062,31 @@ staged out of band, e.g. by a local test runner), a `modified_fragments` array o
 commit phase (§10), so a real agent's edit reaches the store through the normal
 transactional path.
 
+**Decode hardening (Wave 12).** A live run hit
+`TypeError: string indices must be integers, not 'str'` when a model returned
+`modified_fragments` as a **single object** rather than an array — iterating a
+dict yields its keys, so `fragment["node_id"]` indexed a string. The runner's
+blanket `except Exception` then reported this as `"api call failed: …"`, blaming
+the transport for what was actually a decode of a well-formed HTTP response, and
+it cost that task a whole attempt. `decode_task_result` now:
+
+- coerces a lone `modified_fragments` object into a one-element list (an
+  obviously-intended shape) and rejects anything else that isn't an array, naming
+  the field and the type received;
+- validates every fragment is an object with a non-empty string `node_id` and
+  (if present) a string `new_source`, and that `new_sources` is a mapping of
+  string values — each violation raises `AgentProtocolError` naming exactly
+  what was expected and what arrived;
+- replaces the bare `data["task_id"]` / `data["success"]` `KeyError`s (exactly
+  what a truncated tool_use produces — the fields that finished, nothing else)
+  with the same descriptive failure;
+- decodes the new `no_changes_required` / `stop_reason` / `usage` / `retryable`
+  fields (§1) into the `TaskResult`.
+
+No malformed shape can escape `decode_task_result` as a raw `TypeError` or
+`KeyError` any more — every one is a named `AgentProtocolError`, which
+`AgentRunner` (§7.5) reports as a decode failure rather than a transport one.
+
 **The node-granularity contract.** MAK grants write locks per node id, so an id it
 did not grant is an id it cannot safely apply. Both halves of that rule live in
 `protocol.py`:
@@ -1006,6 +1109,16 @@ Folding exists because dropping was worse. A greenfield task granted
 had every fragment discarded silently, retried three times, and failed — taking its
 dependents with it.
 
+**Two more contracts every adapter's prompt states (Wave 12), alongside
+`NODE_ID_CONTRACT`:**
+
+- `NO_CHANGE_CONTRACT` — a no-op is accepted only when the agent *sets
+  `no_changes_required`*, never merely by omission (§10 explains why an absence
+  of fragments stopped being sufficient evidence).
+- `RETRY_NOTE_CONTRACT` — if the bundle carries a `retry_note` (populated by the
+  session on a re-dispatch, §10), follow its instruction instead of repeating
+  the attempt that produced nothing.
+
 ### 7.5 The runner
 
 `AgentRunner.assign(adapter, task)` (`runner.py`) is the single entry point and
@@ -1022,6 +1135,22 @@ routes by adapter type:
 Every path returns a `TaskResult`: backend failures become `success=False` (so the
 scheduler can re-queue); a genuinely misconfigured adapter raises `AgentError`.
 `shutdown()` drains the pool.
+
+**Three failure classes, not one (Wave 12).** `_assign_api` used to flatten
+every `send`/`parse_result` exception into `f"api call failed: {exc}"` — which
+blamed the transport for a truncated or malformed *response body*, and gave a
+retry nothing to act on. It now distinguishes:
+
+1. **`AgentResponseError`** (§1) — the provider answered, but the reply was
+   rejected before or during decode (cut off, refused, undecodable). The
+   failed `TaskResult` carries the exception's `stop_reason`, `usage`, and
+   `retryable` straight through, so the session (§10) can log them and, for a
+   refusal, stop retrying immediately.
+2. **Any other exception out of `send`** — a genuine transport/SDK failure,
+   still reported as `"api call failed: …"`.
+3. **Any other exception out of `parse_result`** — a decode MAK did not
+   anticipate; reported as `"could not decode agent result: …"`, not blamed on
+   the transport.
 
 ### 7.6 Sandboxing CLI agents
 
@@ -1105,7 +1234,10 @@ so it is unit-testable without Docker.
   can construct a working planner from `config.planner.model` alone.
   `resolve_max_tokens(model)` sizes the output budget from the model's own
   documented `max_output` in the model catalog (§13), clamped to 4,096–32,000, and
-  falls back to 16,384 for a model the catalog does not know. A fixed 4,096-token
+  falls back to 16,384 for a model the catalog does not know — as of Wave 12 this
+  is a thin delegate over the shared `mak.core.budget.resolve_output_budget`
+  (§7.2.1), which the agent adapters now use too with their own clamp, so both
+  call sites share one catalog lookup instead of two. A fixed 4,096-token
   budget used to cut real plans off mid-string, and because the same request
   produces the same over-long plan, the cut repeated on every retry and failed the
   run — so each backend also reports a provider-signalled cut
@@ -1263,13 +1395,17 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
 
   **Every attempt is diagnosable from the log alone.** `AGENT_RESULT` records what
   came back (task, attempt, success, granted ids, returned ids, per-id source
-  length, error); `SOURCE_DROPPED` records anything MAK refused to stage, with the
-  id and the grant. And when a *successful* result leaves nothing to commit,
+  length, error, and — Wave 12 — `no_changes_required`, `stop_reason`, `usage`);
+  `SOURCE_DROPPED` records anything MAK refused to stage, with the id and the
+  grant. And when a *successful* result leaves nothing to commit,
   `_describe_empty_result` names the actual cause instead of the old catch-all
   ("agent reported success but staged no usable source"), which described a symptom
-  shared by four different causes: ids outside the grant (listing both sides), ids
+  shared by several different causes: a `stop_reason` naming a provider truncation
+  (checked first, Wave 12), ids outside the grant (listing both sides), ids
   listed with no source, success with no sources and a target that does not exist,
-  or success with no changes on a file that is still not valid Python.
+  success with no changes on a file that is still not valid Python, or — the
+  remaining catch-all — success with no sources and no `no_changes_required`
+  assertion, which is also exactly what a truncated reply looks like.
 - **cascade detection** (`detect_cascade_tasks()`) — called after every `run()` wave.
   Compares old vs new AST signatures for every node committed in `_wave_committed`.
   When a function's signature changed, it scans all other stored nodes for callers
@@ -1295,18 +1431,34 @@ Robustness properties worth knowing:
   completed grants are accepted and committed and only their locks released; the
   *remaining* grants are re-dispatched as a narrowed task. This is tracked per task
   by `SubTaskProgress` and bounded by `max_attempts`.
-- **No-op acceptance** — an "audit / review" task may legitimately inspect an
-  already-complete file and return `success=True` with **no** changes. If the agent
-  succeeded, claimed no edits, the targets already exist (`_target_exists`), and
-  `_file_is_syntactically_valid()` confirms the assembled file passes `compile()`,
-  those targets are marked done. Additionally, the committed node store content is
-  **synced to disk** at this point (`_reconstruct_affected`) — ensuring that if a
-  prior MAK run wrote a correct whole-file node but the on-disk file is out of date
-  (e.g. from a failed run that never reached reconstruction), the file is corrected
-  before teardown's test suite runs. This is distinct from the misbehaving-agent
-  case (success that *claims* edits but stages no source), which is not accepted; and
-  from a create task whose target does *not* exist and returns nothing, which
-  correctly still fails.
+- **No-op acceptance requires the agent's assertion, not just an absence (Wave
+  12).** An "audit / review" task may legitimately inspect an already-complete
+  file and report there is nothing to change — but `success=True` with no
+  fragments used to be accepted as exactly that, and it is also byte-identical
+  to what a reply cut off at the provider's output cap looks like. A real run
+  hit this: two tasks (`marks`, `modes`) were **silently marked complete**
+  having received no work, because their target files happened to already
+  exist from an earlier run — while two others (`motions`, `search`) failed
+  outright on the identical empty-result shape, purely because *their* files
+  didn't exist yet. The run reported `tasks_completed: 4.0`; real progress was
+  2 tasks out of 20.
+
+  The fix (`Session._is_asserted_noop`): a no-op is accepted only when the
+  agent *set* `TaskResult.no_changes_required` — a field a truncated reply can
+  never contain, since the model never got far enough to write it — **and**
+  the existing guards still hold: the targets already exist (`_target_exists`)
+  and `_file_is_syntactically_valid()` confirms the assembled file passes
+  `compile()`. `Session._accept_noop` then closes those grants, syncs the
+  committed node store content to disk (`_reconstruct_affected`, unchanged from
+  before — ensures a prior run's whole-file node that never reached
+  reconstruction is corrected before teardown's tests run), and logs
+  `ACCEPTED_NOOP` (§1) — kept apart from an ordinary `TASK_COMPLETED` so the
+  log shows "decided there was none" apart from "did the work". This is
+  distinct from the misbehaving-agent case (success that *claims* edits but
+  stages no source), which is not accepted; from a create task whose target
+  does *not* exist and returns nothing, which correctly still fails; and now
+  from an **unasserted** empty success, which also correctly fails — the
+  contract the old code lacked.
 - **Crash recovery** — `recover()` expires stale leases and rebuilds the scheduler
   from `task_graph.json` via `from_persisted` (which also restores each task's
   `context_nodes`, so recovered tasks re-acquire their read locks). It is reachable
@@ -1329,16 +1481,43 @@ Robustness properties worth knowing:
   but staged nothing. `SessionResult.failure_reasons` carries it for the failed
   tasks, and the CLI prints one line per failed task — so a failure is never a bare
   task id with no explanation.
+- **A retry differs from the attempt it follows, and a refusal doesn't burn the
+  budget (Wave 12).** `_handle_incomplete` used to re-queue a task's remaining
+  grants unchanged — for a truncation, that is three identical API calls
+  producing three identical cuts, since the same request is cut at the same
+  point every time (this was directly observable in one session's log:
+  `motions` and `search` each failed on three byte-for-byte identical
+  `agent_result` events). It now:
+    - computes a `retry_note` (`Session._retry_note`) and stashes it on
+      `SubTaskProgress`, so `_submit_partials` attaches it to the re-dispatched
+      `TaskBundle` (§1, §7.4). A truncation gets a **compaction** instruction
+      ("return the same work in less output… if one node's full source
+      genuinely cannot fit, return `success=false`" rather than a partial
+      rewrite); any other failure gets the recorded reason plus an instruction
+      not to repeat it;
+    - fails the task **immediately**, without spending the remaining attempt
+      budget, when the result is marked `retryable=False` (a refusal) — the
+      same prompt would earn the same refusal on every remaining attempt, so
+      `_handle_incomplete` treats an unretryable result the same as an
+      exhausted attempt count, and the reason names why ("not retryable — the
+      remaining N attempt(s) would repeat it verbatim").
 - **Plan-quality metrics** (Wave 10) — `_run_loop` samples `len(scheduler.dispatched)`
   after every `tick()` into `_concurrency_samples`; `_reject` increments
   `_conflict_rejections` and `_handle_incomplete` increments `_redispatches` on a
   partial-completion re-dispatch. `_finalize` computes `max_concurrency`,
   `mean_concurrency` (2 dp), `conflict_rejections`, `redispatches`,
-  `tasks_completed`, and `tasks_failed` into `SessionResult.metrics` (an additive
-  dict field, default `{}`, so every prior `SessionResult(...)` construction and
-  equality check stays valid) and logs one `PLAN_METRICS` event — a per-wave signal
-  for whether a plan's `depends_on` structure is actually realizing parallelism or
-  serializing/colliding more than it should.
+  `tasks_completed`, `tasks_failed`, and (Wave 12) `tasks_noop` into
+  `SessionResult.metrics` (an additive dict field, default `{}`, so every prior
+  `SessionResult(...)` construction and equality check stays valid) and logs one
+  `PLAN_METRICS` event — a per-wave signal for whether a plan's `depends_on`
+  structure is actually realizing parallelism or serializing/colliding more than
+  it should. `tasks_noop` (`Session._noop_task_ids`) counts a completed task only
+  when *every* grant it closed was an asserted no-op (a task that changed one
+  node and declined another still counts as work done) — so `tasks_completed`
+  is never inflated by hollow completions, and `SessionResult.noop` carries the
+  task ids for the CLI/TUI to print apart from the headline "N completed" (both
+  `mak/__main__.py` and `cli/ui.py::show_results` now render
+  `"N completed (M no-op)"` and, in the CLI, list which tasks were no-ops).
 
 All collaborators are injected behind `Protocol`s, so the session is testable with
 fakes.
@@ -1371,6 +1550,10 @@ agents:                         # first entry is the default agent
     api_key_env: "ANTHROPIC_API_KEY"
     max_instances: 2
     timeout: 300
+    # max_tokens: 32000       # output budget override (Wave 12) — unset resolves
+                              # from the model catalog for anthropic_api, and
+                              # sends no cap (inherits the model's own maximum)
+                              # for openai_api/gemini_api; see §7.2.1
   - type: "openai_api"
     model: "gpt-5.6-sol"
     api_key_env: "OPENAI_API_KEY"
@@ -1405,7 +1588,13 @@ node_store:
 
 Rules and behaviors:
 - `agents` is **required** and must be non-empty; each entry needs a `type`. Per-agent
-  fields `model`, `api_key_env`, and `cmd` are all optional.
+  fields `model`, `api_key_env`, `cmd`, and (Wave 12) `max_tokens` are all optional.
+  `max_tokens` must be a positive integer if set — `0`, a negative value, or a
+  non-numeric string all raise `ConfigError` at load time rather than silently
+  clipping every reply to nothing. `None` (unset) is not the same as passing an
+  explicit value: it is omitted entirely when the composition root constructs the
+  adapter (`_api_factory`, §7.3), so the adapter's own default — resolve from the
+  catalog, or send no cap — is the single place that decides the budget.
 - **`config.yaml` is the single source of truth for model choice.**
   `PlannerConfig.model` defaults to `""` (unset) in `mak/config.py` — the dataclass
   carries no hardcoded model name, mirroring `AgentConfig.model` (`str | None = None`).
@@ -1819,7 +2008,9 @@ mak/
 ├── core/
 │   ├── types.py           # NodeId, NodeFragment, LockEntry, TaskBundle, …
 │   ├── exceptions.py      # all MakError subclasses
-│   └── logging.py         # append-only JSON-Lines session logger
+│   ├── logging.py         # append-only JSON-Lines session logger
+│   └── budget.py          # resolve_output_budget: shared catalog-driven token
+│                          #   budget resolver (Wave 12, §7.2.1)
 │
 ├── node_store/
 │   ├── ingestion.py       # file → raw-source span-tiled fragments
@@ -1856,8 +2047,12 @@ mak/
 │   ├── registry.py        # AdapterRegistry (instance, not global)
 │   ├── protocol.py        # TaskBundle/TaskResult wire (de)serialization
 │   ├── sandbox.py         # Docker isolation for CLI agents (--sandbox)
+│   ├── stop_signals.py    # provider stop-signal check + usage normalization
+│   │                      #   shared by all three API adapters (Wave 12, §7.2.1)
 │   ├── adapters/
 │   │   ├── base_adapter.py
+│   │   ├── budget.py                  # agent-shaped output budget + stop-signal
+│   │   │                              #   vocabulary (Wave 12, §7.2.1)
 │   │   ├── anthropic_api_adapter.py   # primary
 │   │   ├── openai_api_adapter.py      # primary
 │   │   ├── gemini_api_adapter.py      # primary
@@ -1901,7 +2096,7 @@ in `tests/models/` touches the network — every provider fetch is a fake `Model
 Three gates must be green for every change — locally, in pre-commit, and in CI:
 
 ```bash
-pytest -q                  # the full suite (currently 540 tests)
+pytest -q                  # the full suite (currently 1021 tests)
 mypy --strict mak          # zero errors
 ruff check mak tests       # zero findings
 ```
@@ -2168,7 +2363,39 @@ compounding), and a dropped agent result stopped being silent (`AGENT_RESULT` /
 enforced by `map_returned_sources` so a symbol id returned under a whole-file grant
 is folded in rather than discarded). A false-positive/true-positive corpus
 (`tests/conflict_detector/test_false_positive_corpus.py`) is the standing guard
-against the first regressing. What remains is the open-problems list above.
+against the first regressing.
+
+**Wave 12** is the same defect class as the Wave 10 planner hotfix, one hop
+downstream: MAK could not tell a truncated agent response from a deliberate
+"nothing to change" (§7.2.1, §10). Wave 11's own `AGENT_RESULT` event is what
+made this diagnosable in one pass on the next real run: 8 of 11 `agent_result`
+events came back `success: true` with no returned nodes and no error, and two of
+the four "completed" tasks (`marks`, `modes`) had in fact received no work — the
+run reported `tasks_completed: 4.0` against real progress of 2 tasks out of 20.
+Root cause: the Anthropic adapter's `max_tokens` was hardcoded at 8192 (6% of the
+model's documented limit, and just under the size of the whole-file rewrites this
+project actually emits), and nothing in any adapter read the provider's stop
+reason, so a cut-off reply decoded into a valid, empty, *successful* result. Fixed
+by taking the budget from the model catalog (shared with the planner's resolver),
+checking `stop_reason`/`finish_reason` before any payload is read, and switching
+the Anthropic adapter to streaming (the same non-streaming ceiling the Wave 10
+hotfix hit). The more dangerous half was independent of the cause: the session's
+no-op acceptance treated *any* empty success on an existing, valid file as "audited,
+nothing to change" — which a truncation satisfies exactly — so it now requires the
+agent's positive assertion (`no_changes_required`) before accepting a no-op, logs
+it as `ACCEPTED_NOOP` distinct from ordinary completions, and counts it in its own
+`tasks_noop` metric rather than folding it into `tasks_completed`. A retry after a
+truncation now carries a compaction instruction instead of re-issuing an identical
+request, and a refusal fails a task immediately instead of spending its whole
+attempt budget re-earning the same refusal. Separately, a model returning
+`modified_fragments` as a single object instead of an array used to raise
+`TypeError: string indices must be integers` (misreported as `"api call failed"`);
+every malformed shape now raises a named `AgentProtocolError` instead, and the
+runner reports a decode failure as such rather than blaming the transport. A
+table-driven "degraded response" test corpus per adapter (truncated/refused/
+malformed/undecodable) is the standing guard: it asserts that none of those shapes
+can ever produce `success=True` with an empty result. What remains is the
+open-problems list above.
 
 ---
 
@@ -2208,6 +2435,14 @@ the grain.
   sequentially (Wave 4) before adding the thread pool (Wave 5). Don't add concurrency
   to a pipeline that has never run once — and don't claim the concurrent path works
   until its integration test is green.
+- **A no-op requires positive assertion, never absence of evidence (Wave 12).**
+  "The agent returned nothing" is not one condition — it's the collision of at
+  least two: a genuine "nothing to change" and a reply truncated before it could
+  say anything at all. Treating an absence as if it were a claim is what let a
+  truncated response read as a successful no-op. The fix generalizes past this
+  one case: whenever a positive and a negative outcome can produce
+  indistinguishable evidence, require the positive case to assert itself
+  explicitly rather than inferring it from the negative case's absence.
 
 ---
 

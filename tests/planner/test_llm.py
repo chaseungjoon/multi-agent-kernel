@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-import mak.planner.llm as llm_module
+import mak.core.budget as budget_module
 from mak.core.exceptions import PlannerFailedError
 from mak.planner.llm import (
     AnthropicPlannerLLM,
@@ -190,7 +190,9 @@ class _Enum:
 class TestMaxTokens:
     @staticmethod
     def _limits(monkeypatch: pytest.MonkeyPatch, limits: dict[str, int]) -> None:
-        monkeypatch.setattr(llm_module, "_documented_output_limits", lambda: limits)
+        monkeypatch.setattr(
+            budget_module, "documented_output_limits", lambda: limits
+        )
 
     def test_uses_the_models_documented_output_limit(
         self, monkeypatch: pytest.MonkeyPatch
@@ -223,11 +225,11 @@ class TestMaxTokens:
             raise OSError("no manifest")
 
         monkeypatch.setattr(registry_module, "ModelRegistry", boom)
-        llm_module._documented_output_limits.cache_clear()
+        budget_module.documented_output_limits.cache_clear()
         try:
             assert resolve_max_tokens("claude-opus-5") == 16384
         finally:
-            llm_module._documented_output_limits.cache_clear()
+            budget_module.documented_output_limits.cache_clear()
 
     def test_real_catalog_budget_beats_the_old_default(self) -> None:
         """The regression guard: 4096 tokens truncated real plans mid-string."""

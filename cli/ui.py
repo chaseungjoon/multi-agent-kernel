@@ -166,6 +166,11 @@ def show_results(console: Console, result: Any, tests_passed: bool) -> None:
     line = Text("  ")
     line.append(sym, style=style)
     line.append(f" {ok} completed", style="green" if ok else "dim")
+    # A task that reported "nothing needed changing" completed without changing a
+    # line; folding it into the headline number overstates what the run did.
+    noop = len(getattr(result, "noop", ()))
+    if noop:
+        line.append(f" ({noop} no-op)", style="dim")
     if bad:
         line.append(f" · {bad} failed", style="red")
     if skp or blk:

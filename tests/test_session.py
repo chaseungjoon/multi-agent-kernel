@@ -1339,14 +1339,19 @@ class TestSourceTransport:
 
     def test_noop_audit_of_existing_file_completes(self, tmp_path: Path) -> None:
         # An "audit" task targeting an existing file whose agent finds nothing to
-        # change (success=True, no modified_nodes, no sources) must COMPLETE — the
-        # file is already correct — not retry to failure.
+        # change must COMPLETE — the file is already correct — not retry to
+        # failure. Rewritten for Wave 12: the agent now has to *assert* the no-op
+        # (no_changes_required), because "success with no fragments" is also
+        # exactly what a reply cut off at the output-token limit looks like, and
+        # that shape was closing tasks on which no work had been done.
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
         store = _store(tmp_path)
 
         class NoOpRunner:
             def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
-                return TaskResult(task_id=task.task_id, success=True)
+                return TaskResult(
+                    task_id=task.task_id, success=True, no_changes_required=True
+                )
 
         session = _session(tmp_path, runner=NoOpRunner(), node_store=store)
         session.initialize()
@@ -1354,8 +1359,133 @@ class TestSourceTransport:
         result = session.run()
         assert result.ok
         assert result.completed == ("audit",)
+        # Reported apart from work that actually happened.
+        assert result.noop == ("audit",)
+        assert result.metrics["tasks_noop"] == 1.0
         # The file is untouched and still valid.
         assert (tmp_path / "m.py").read_text() == "def a():\n    return 0\n"
+
+    def test_unasserted_empty_success_does_not_complete(self, tmp_path: Path) -> None:
+        # 12.2 / 12.5b, the defect this wave exists for: `marks` and `modes` were
+        # reported completed on exactly this shape — success, no fragments, target
+        # already on disk — having received no work at all.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+
+        class EmptyRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(task_id=task.task_id, success=True)
+
+        session = _session(
+            tmp_path, runner=EmptyRunner(), node_store=store, max_attempts=2
+        )
+        session.initialize()
+        session.install_plan([_task("extend", ["m.py"])])
+        result = session.run()
+        assert result.failed == ("extend",)
+        assert result.completed == ()
+        assert result.metrics["tasks_completed"] == 0.0
+        assert "did not assert" in result.failure_reasons["extend"]
+
+    def test_noop_assertion_does_not_mask_a_missing_target(
+        self, tmp_path: Path
+    ) -> None:
+        # The assertion is about the *work*, not about the file: claiming "nothing
+        # to change" for a file that does not exist proves nothing.
+        store = _store(tmp_path)
+
+        class AssertedNoOpRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(
+                    task_id=task.task_id, success=True, no_changes_required=True
+                )
+
+        session = _session(
+            tmp_path, runner=AssertedNoOpRunner(), node_store=store, max_attempts=2
+        )
+        session.initialize()
+        session.install_plan([_task("create", ["new.py"])])
+        result = session.run()
+        assert result.failed == ("create",)
+
+    def test_truncated_result_fails_with_a_named_reason(self, tmp_path: Path) -> None:
+        # A truncation reaches the session as a failed result carrying the stop
+        # reason; the run must say so rather than reporting a vague empty result.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+
+        class TruncatedRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=True,
+                    stop_reason="max_tokens",
+                )
+
+        session = _session(
+            tmp_path, runner=TruncatedRunner(), node_store=store, max_attempts=2
+        )
+        session.initialize()
+        session.install_plan([_task("extend", ["m.py"])])
+        result = session.run()
+        assert result.failed == ("extend",)
+        assert "output-token limit" in result.failure_reasons["extend"]
+
+    def test_a_retry_after_truncation_differs_from_the_first_attempt(
+        self, tmp_path: Path
+    ) -> None:
+        # 12.3a: three identical agent_result events for one task can no longer
+        # happen — the re-dispatch carries why the last attempt produced nothing.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        notes: list[str | None] = []
+
+        class TruncatedRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                notes.append(task.retry_note)
+                return TaskResult(
+                    task_id=task.task_id, success=True, stop_reason="max_tokens"
+                )
+
+        session = _session(
+            tmp_path, runner=TruncatedRunner(), node_store=store, max_attempts=3
+        )
+        session.initialize()
+        session.install_plan([_task("extend", ["m.py"])])
+        session.run()
+        assert notes[0] is None
+        assert notes[1] is not None
+        assert "cut off" in notes[1]
+
+    def test_a_non_retryable_result_fails_without_spending_attempts(
+        self, tmp_path: Path
+    ) -> None:
+        # 12.3c: a refusal earns the same refusal every time, so it must not
+        # consume the whole attempt budget.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        calls: list[str] = []
+
+        class RefusingRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                calls.append(task.task_id)
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=False,
+                    error="model declined",
+                    stop_reason="refusal",
+                    retryable=False,
+                )
+
+        session = _session(
+            tmp_path, runner=RefusingRunner(), node_store=store, max_attempts=3
+        )
+        session.initialize()
+        session.install_plan([_task("extend", ["m.py"])])
+        result = session.run()
+        assert result.failed == ("extend",)
+        assert len(calls) == 1
+        assert "not retryable" in result.failure_reasons["extend"]
 
     def test_noop_rejected_when_file_has_syntax_error(self, tmp_path: Path) -> None:
         # The no-op acceptance MUST be blocked when the target file currently has

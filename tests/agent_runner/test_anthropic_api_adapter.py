@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 
 from mak.agent_runner.adapters.anthropic_api_adapter import AnthropicApiAdapter
-from mak.core.exceptions import AgentError
+from mak.agent_runner.adapters.budget import resolve_agent_max_tokens
+from mak.core.exceptions import (
+    AgentError,
+    AgentRefusedError,
+    AgentResponseError,
+    AgentTruncatedError,
+)
 from mak.core.types import NodeId, TaskBundle
 
 
@@ -27,19 +33,55 @@ class FakeBlock:
         self.input = input or {}
 
 
+class FakeUsage:
+    def __init__(self, input_tokens: int, output_tokens: int) -> None:
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
 class FakeResponse:
-    def __init__(self, content: list[FakeBlock]) -> None:
+    def __init__(
+        self,
+        content: list[FakeBlock],
+        *,
+        stop_reason: str | None = "tool_use",
+        usage: FakeUsage | None = None,
+    ) -> None:
         self.content = content
+        self.stop_reason = stop_reason
+        self.usage = usage
+
+
+class FakeStream:
+    """Stands in for the SDK's MessageStreamManager context manager."""
+
+    def __init__(self, response: FakeResponse) -> None:
+        self._response = response
+        self.closed = False
+
+    def __enter__(self) -> FakeStream:
+        """Enter the stream context, as the SDK's manager does."""
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        """Close the stream on exit."""
+        self.closed = True
+
+    def get_final_message(self) -> FakeResponse:
+        return self._response
 
 
 class FakeMessages:
     def __init__(self, response: FakeResponse) -> None:
         self._response = response
         self.calls: list[dict[str, Any]] = []
+        self.streams: list[FakeStream] = []
 
-    def create(self, **kwargs: Any) -> FakeResponse:
+    def stream(self, **kwargs: Any) -> FakeStream:
         self.calls.append(kwargs)
-        return self._response
+        stream = FakeStream(self._response)
+        self.streams.append(stream)
+        return stream
 
 
 class FakeClient:
@@ -65,6 +107,16 @@ class TestFormatTask:
         assert data["task_id"] == "t1"
         assert data["protocol_version"] == "1.0"
 
+    def test_retry_note_reaches_the_model(self) -> None:
+        # 12.3a: the re-dispatch channel is only useful if it is actually sent.
+        adapter, _ = _adapter_with_result(task_id="t1", success=True)
+        bundle = TaskBundle(
+            task_id="t1", description="do it", retry_note="return less output"
+        )
+        assert json.loads(adapter.format_task(bundle))["retry_note"] == (
+            "return less output"
+        )
+
 
 class TestSend:
     def test_forces_result_tool(self) -> None:
@@ -74,6 +126,13 @@ class TestSend:
         assert call["tool_choice"] == {"type": "tool", "name": "submit_task_result"}
         assert call["model"] == "claude-sonnet-5"
         assert call["tools"][0]["name"] == "submit_task_result"
+
+    def test_send_streams_and_closes_the_stream(self) -> None:
+        # A real agent budget exceeds the SDK's non-streaming window, so the call
+        # must go through messages.stream — the trap the planner hotfix hit.
+        adapter, client = _adapter_with_result(task_id="t1", success=True)
+        adapter.send("{}")
+        assert client.messages.streams[0].closed is True
 
     def test_send_extracts_tool_payload(self) -> None:
         adapter, _ = _adapter_with_result(
@@ -96,6 +155,92 @@ class TestSend:
         adapter = AnthropicApiAdapter(client=client, model="claude-opus-4")
         adapter.send("{}")
         assert client.messages.calls[0]["model"] == "claude-opus-4"
+
+
+class TestOutputBudget:
+    """12.1b / 12.5c — the budget must come from the catalog, not a constant."""
+
+    def test_budget_is_catalog_resolved_not_8192(self) -> None:
+        adapter, client = _adapter_with_result(task_id="t", success=True)
+        adapter.send("{}")
+        requested = client.messages.calls[0]["max_tokens"]
+        assert requested == resolve_agent_max_tokens("claude-sonnet-5")
+        # The regression this wave exists for: 8192 is 6% of the documented limit
+        # and sits just under the size of a real whole-file rewrite.
+        assert requested > 8192
+
+    def test_explicit_budget_wins(self) -> None:
+        client = FakeClient(FakeResponse([_result_block(task_id="t", success=True)]))
+        adapter = AnthropicApiAdapter(client=client, max_tokens=4096)
+        adapter.send("{}")
+        assert client.messages.calls[0]["max_tokens"] == 4096
+
+
+class TestDegradedResponses:
+    """12.5a — every shape a real provider returns when generation goes wrong.
+
+    The one thing none of them may do is produce a successful, empty result.
+    """
+
+    @staticmethod
+    def _send(response: FakeResponse) -> None:
+        AnthropicApiAdapter(client=FakeClient(response)).send("{}")
+
+    def test_truncated_tool_use_is_a_typed_error(self) -> None:
+        # Byte-for-byte the reproduction from the session log: the scalar fields
+        # arrived, the modified_fragments array never did.
+        response = FakeResponse(
+            [_result_block(task_id="t1", success=True)],
+            stop_reason="max_tokens",
+            usage=FakeUsage(1000, 8192),
+        )
+        with pytest.raises(AgentTruncatedError) as excinfo:
+            self._send(response)
+        assert excinfo.value.stop_reason == "max_tokens"
+        assert excinfo.value.usage == {"input_tokens": 1000, "output_tokens": 8192}
+        assert excinfo.value.retryable is True
+
+    def test_truncation_with_empty_input_is_a_typed_error(self) -> None:
+        with pytest.raises(AgentTruncatedError):
+            self._send(
+                FakeResponse([_result_block()], stop_reason="max_tokens")
+            )
+
+    def test_truncation_beats_a_missing_tool_block(self) -> None:
+        # A cut before the tool call even started must still read as a cut.
+        with pytest.raises(AgentTruncatedError):
+            self._send(FakeResponse([], stop_reason="max_tokens"))
+
+    def test_refusal_is_not_retryable(self) -> None:
+        with pytest.raises(AgentRefusedError) as excinfo:
+            self._send(
+                FakeResponse(
+                    [_result_block(task_id="t1", success=True)],
+                    stop_reason="refusal",
+                )
+            )
+        assert excinfo.value.retryable is False
+
+    def test_empty_content_raises(self) -> None:
+        with pytest.raises(AgentError):
+            self._send(FakeResponse([], stop_reason="end_turn"))
+
+    def test_no_tool_use_block_raises(self) -> None:
+        with pytest.raises(AgentError):
+            self._send(FakeResponse([FakeBlock(type="text")], stop_reason="end_turn"))
+
+    @pytest.mark.parametrize("stop_reason", ["max_tokens", "refusal"])
+    def test_no_degraded_shape_yields_an_empty_success(self, stop_reason: str) -> None:
+        adapter = AnthropicApiAdapter(
+            client=FakeClient(
+                FakeResponse(
+                    [_result_block(task_id="t1", success=True)],
+                    stop_reason=stop_reason,
+                )
+            )
+        )
+        with pytest.raises(AgentResponseError):
+            adapter.parse_result(adapter.send("{}"))
 
 
 class TestParseResult:
@@ -135,6 +280,27 @@ class TestParseResult:
             NodeId("m.py::function::f"): "def f():\n    return 42\n"
         }
 
+    def test_stop_reason_and_usage_reach_the_task_result(self) -> None:
+        # 12.1a: a *good* attempt carries the provider's signals too, so the log
+        # can show what a reply cost and why it ended.
+        client = FakeClient(
+            FakeResponse(
+                [_result_block(task_id="t1", success=True)],
+                stop_reason="tool_use",
+                usage=FakeUsage(1200, 350),
+            )
+        )
+        adapter = AnthropicApiAdapter(client=client)
+        result = adapter.parse_result(adapter.send("{}"))
+        assert result.stop_reason == "tool_use"
+        assert result.usage == {"input_tokens": 1200, "output_tokens": 350}
+
+    def test_no_changes_required_survives_the_round_trip(self) -> None:
+        adapter, _ = _adapter_with_result(
+            task_id="t1", success=True, no_changes_required=True
+        )
+        assert adapter.parse_result(adapter.send("{}")).no_changes_required is True
+
     def test_result_tool_schema_requests_new_source(self) -> None:
         # The forced-output schema must actually ask the model for the rewritten
         # source, or a real agent's edit could never reach the store.
@@ -143,6 +309,13 @@ class TestParseResult:
         schema = client.messages.calls[0]["tools"][0]["input_schema"]
         fragments = schema["properties"]["modified_fragments"]
         assert fragments["items"]["properties"]["new_source"]["type"] == "string"
+
+    def test_result_tool_schema_offers_the_noop_assertion(self) -> None:
+        # 12.2a: the model can only assert a no-op if it is asked for one.
+        adapter, client = _adapter_with_result(task_id="t", success=True)
+        adapter.send("{}")
+        schema = client.messages.calls[0]["tools"][0]["input_schema"]
+        assert schema["properties"]["no_changes_required"]["type"] == "boolean"
 
 
 class TestHealthCheck:

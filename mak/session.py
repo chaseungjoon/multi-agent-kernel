@@ -52,8 +52,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, cast
 
+from mak.agent_runner.adapters.budget import TRUNCATION_STOP_REASONS
 from mak.agent_runner.protocol import map_returned_sources
 from mak.agent_runner.registry import AdapterRegistry
+from mak.agent_runner.stop_signals import matches
 from mak.config import MakConfig
 from mak.conflict_detector.detector import ConflictDetector, EditRound
 from mak.core.exceptions import NodeStoreError, SessionError
@@ -150,6 +152,13 @@ class SubTaskProgress:
     target_nodes: list[NodeId]
     completed_nodes: set[NodeId] = field(default_factory=set)
     attempts: int = 0
+    # Grants closed because the agent asserted no change was needed, rather than
+    # because it returned work. Tracked so a run can report the two separately.
+    noop_nodes: set[NodeId] = field(default_factory=set)
+    # Why the previous attempt produced nothing, phrased as an instruction for the
+    # next one. Carried onto the re-dispatched bundle so a retry differs from the
+    # attempt that failed instead of re-issuing it verbatim.
+    retry_note: str | None = None
 
     @property
     def remaining(self) -> list[NodeId]:
@@ -182,6 +191,10 @@ class SessionResult:
     failed: tuple[str, ...]
     blocked: tuple[str, ...] = ()
     skipped: tuple[str, ...] = ()
+    # The subset of ``completed`` that closed because the agent asserted no change
+    # was needed. These are completions, not failures — but "4 completed" reads as
+    # four files changed, so the two claims are reported apart.
+    noop: tuple[str, ...] = ()
     failure_reasons: dict[str, str] = field(default_factory=dict)
     # Plan-quality metrics for this run (realized parallelism, conflict/redispatch
     # rate). Empty for a session that never ran. See ``Session._finalize``.
@@ -717,6 +730,7 @@ class Session:
             failed=tuple(self._failed),
             blocked=tuple(blocked),
             skipped=tuple(skipped),
+            noop=tuple(self._noop_task_ids()),
             failure_reasons={
                 t: self._failure_reasons[t]
                 for t in self._failed
@@ -726,7 +740,14 @@ class Session:
         )
 
     def _plan_metrics(self) -> dict[str, float]:
-        """Realized-parallelism and rework metrics for the wave just run."""
+        """Realized-parallelism and rework metrics for the wave just run.
+
+        ``tasks_completed`` counts every task that closed — but a task closes only
+        by producing work or by *asserting* there was none, and ``tasks_noop``
+        says how many did the latter. Before this split, an empty response on a
+        file that happened to exist was counted as a completion indistinguishable
+        from real work, so the headline number overstated what a run had done.
+        """
         samples = self._concurrency_samples
         mean = round(sum(samples) / len(samples), 2) if samples else 0.0
         return {
@@ -735,8 +756,27 @@ class Session:
             "conflict_rejections": float(self._conflict_rejections),
             "redispatches": float(self._redispatches),
             "tasks_completed": float(len(self._completed)),
+            "tasks_noop": float(len(self._noop_task_ids())),
             "tasks_failed": float(len(self._failed)),
         }
+
+    def _noop_task_ids(self) -> list[str]:
+        """Completed tasks where *every* closed grant was an asserted no-op.
+
+        Derived rather than tracked, so a task that changed one node and declined
+        another still counts as work done — the distinction only matters when a
+        task produced nothing at all.
+        """
+        noop: list[str] = []
+        for task_id in self._completed:
+            progress = self._progress.get(task_id)
+            if (
+                progress is not None
+                and progress.noop_nodes
+                and progress.completed_nodes <= progress.noop_nodes
+            ):
+                noop.append(task_id)
+        return noop
 
     def _failed_descendants(self, tasks: dict[str, SubTask]) -> set[str]:
         """Tasks that (transitively) depend on a failed task.
@@ -847,30 +887,8 @@ class Session:
             if source is not None:
                 committed_sources[str(node_id)] = source
 
-        # Accept a no-op: an "audit/review" task may inspect an already-correct file
-        # and legitimately return success with no changes. If the agent succeeded,
-        # claimed no edits, the target already exists, AND the file it lives in
-        # currently parses as valid Python, treat it as done. The validity check
-        # is critical: without it, an agent that returns success+no-changes on a
-        # task whose file has a syntax error (the exact bug it was sent to fix)
-        # would be silently accepted as complete, leaving the error in place.
-        if result.success and not result.modified_nodes and not result.new_sources:
-            for node_id in progress.target_nodes:
-                if (
-                    node_id not in progress.completed_nodes
-                    and self._target_exists(node_id)
-                    and self._file_is_syntactically_valid(node_id)
-                ):
-                    # Sync committed node store content to disk.  The on-disk
-                    # file may pre-date the committed version (e.g. an earlier
-                    # MAK run wrote a corrected whole-file node but failed to
-                    # reconstruct because other fragments were still broken).
-                    try:
-                        self._reconstruct_affected([node_id])
-                    except (SyntaxError, OSError):
-                        pass
-                    progress.completed_nodes.add(node_id)
-                    self._release_lock(task_id, node_id)
+        if self._is_asserted_noop(result):
+            self._accept_noop(progress, result)
 
         # Nothing was stageable and the task is still open: say *why*, now, while
         # the returned ids are still in hand. Left to _handle_incomplete this
@@ -883,8 +901,60 @@ class Session:
         if progress.is_complete:
             self._finish_task(task_id)
         else:
-            self._handle_incomplete(progress)
+            self._handle_incomplete(progress, result)
         return committed_sources
+
+    @staticmethod
+    def _is_asserted_noop(result: TaskResult) -> bool:
+        """Whether the agent *claimed* there was nothing to change.
+
+        The old rule was "success with no fragments", which a reply cut off at the
+        provider's output cap satisfies exactly — so truncated work was closed as
+        a completed task whenever the target file happened to exist already.
+        Acceptance now needs positive evidence the agent could only have produced
+        by finishing: the flag it was asked to set, and a reply the provider did
+        not report as cut short.
+        """
+        return (
+            result.success
+            and result.no_changes_required
+            and not result.modified_nodes
+            and not result.new_sources
+        )
+
+    def _accept_noop(self, progress: SubTaskProgress, result: TaskResult) -> None:
+        """Close the grants of a task the agent asserted needed no change.
+
+        Still gated on the target existing and its file parsing: an assertion that
+        nothing needs changing is not evidence about a file that is missing, or
+        one whose syntax error is the very bug the task was sent to fix.
+        """
+        for node_id in progress.target_nodes:
+            if (
+                node_id in progress.completed_nodes
+                or not self._target_exists(node_id)
+                or not self._file_is_syntactically_valid(node_id)
+            ):
+                continue
+            # Sync committed node store content to disk. The on-disk file may
+            # pre-date the committed version (e.g. an earlier MAK run wrote a
+            # corrected whole-file node but failed to reconstruct because other
+            # fragments were still broken).
+            try:
+                self._reconstruct_affected([node_id])
+            except (SyntaxError, OSError):
+                pass
+            progress.completed_nodes.add(node_id)
+            self._release_lock(progress.task_id, node_id)
+            progress.noop_nodes.add(node_id)
+        if progress.noop_nodes:
+            self._log(
+                EventType.ACCEPTED_NOOP,
+                task_id=progress.task_id,
+                attempt=progress.attempts,
+                nodes=[str(n) for n in sorted(progress.noop_nodes)],
+                reason=result.error or "agent asserted no changes were required",
+            )
 
     def _log_agent_result(
         self,
@@ -895,7 +965,9 @@ class Session:
         """Record what the agent actually returned for this attempt.
 
         Enough to reconstruct a dropped-result failure from the log alone: the
-        grant, the ids that came back, and how much source came with each.
+        grant, the ids that came back, how much source came with each, and — the
+        field whose absence made a truncation indistinguishable from a deliberate
+        no-op — the provider's own stop reason and token usage.
         """
         self._log(
             EventType.AGENT_RESULT,
@@ -908,6 +980,9 @@ class Session:
                 str(node_id): len(source)
                 for node_id, source in result.new_sources.items()
             },
+            no_changes_required=result.no_changes_required,
+            stop_reason=result.stop_reason,
+            usage=dict(result.usage),
             error=result.error,
         )
 
@@ -923,6 +998,14 @@ class Session:
         granted = ", ".join(str(n) for n in progress.target_nodes)
         reported = dict.fromkeys([*result.modified_nodes, *result.new_sources])
         returned = [str(n) for n in reported]
+        if result.stop_reason is not None and matches(
+            result.stop_reason, TRUNCATION_STOP_REASONS
+        ):
+            return (
+                "the agent's reply was cut off at the model's output-token limit "
+                f"(stop reason: {result.stop_reason}), so no complete source "
+                f"arrived (granted: {granted})"
+            )
         if returned and result.new_sources:
             return (
                 f"agent returned {len(returned)} node id(s), none within its grant "
@@ -947,7 +1030,12 @@ class Session:
                 "agent returned success with no changes, but the target file is "
                 f"still not valid Python ({', '.join(str(n) for n in invalid)})"
             )
-        return f"agent returned success with no sources (granted: {granted})"
+        return (
+            "agent returned success with no sources and did not assert that no "
+            f"change was required (granted: {granted}); an empty reply is not "
+            "evidence the task was done — it is also what a reply cut off at the "
+            "output-token limit looks like"
+        )
 
     def _target_exists(self, node_id: NodeId) -> bool:
         """Whether a target already exists committed (so a no-op leaves it intact).
@@ -1154,10 +1242,24 @@ class Session:
         self._completed.append(task_id)
         self._log(EventType.TASK_COMPLETED, task_id=task_id)
 
-    def _handle_incomplete(self, progress: SubTaskProgress) -> None:
-        """Retry remaining grants, or fail the task once attempts are exhausted."""
+    def _handle_incomplete(
+        self, progress: SubTaskProgress, result: TaskResult | None = None
+    ) -> None:
+        """Retry remaining grants, or fail the task once attempts are exhausted.
+
+        A retry is only worth an attempt if it can differ from the one that
+        failed. Two cases where it cannot:
+
+        - the provider *refused* — the same prompt earns the same refusal, so the
+          task fails now rather than after three identical calls;
+        - nothing at all was learned — impossible here, since every path that
+          reaches this point has recorded a failure reason, which is fed back to
+          the agent as ``retry_note`` on the re-dispatch.
+        """
         scheduler = self._require_scheduler()
-        if progress.attempts >= self._max_attempts:
+        exhausted = progress.attempts >= self._max_attempts
+        unretryable = result is not None and not result.retryable
+        if exhausted or unretryable:
             scheduler.on_task_failed(progress.task_id, requeue=False)
             self._failed.append(progress.task_id)
             reason = self._failure_reasons.setdefault(
@@ -1165,6 +1267,13 @@ class Session:
                 "agent reported success but staged no usable source "
                 f"after {progress.attempts} attempt(s)",
             )
+            if unretryable and not exhausted:
+                reason = (
+                    f"{reason} (not retryable — the remaining "
+                    f"{self._max_attempts - progress.attempts} attempt(s) would "
+                    "repeat it verbatim)"
+                )
+                self._failure_reasons[progress.task_id] = reason
             self._log(
                 EventType.TASK_COMPLETED,
                 task_id=progress.task_id,
@@ -1173,9 +1282,43 @@ class Session:
             )
         else:
             # Remaining nodes are still locked from the original acquisition; queue
-            # a narrowed re-dispatch covering only what is left.
+            # a narrowed re-dispatch covering only what is left, carrying why the
+            # last attempt produced nothing.
+            progress.retry_note = self._retry_note(progress, result)
             self._redispatches += 1
             self._partial_queue.append(progress.task_id)
+
+    def _retry_note(
+        self, progress: SubTaskProgress, result: TaskResult | None
+    ) -> str | None:
+        """Return the instruction to attach to the next attempt at this task.
+
+        A truncation gets a *compaction* instruction rather than the generic
+        "that failed, try again": re-sending an identical request produces an
+        identically-cut reply, which is exactly how one task burned three
+        attempts on three byte-identical failures.
+        """
+        reason = self._failure_reasons.get(progress.task_id)
+        truncated = result is not None and matches(
+            result.stop_reason, TRUNCATION_STOP_REASONS
+        )
+        if truncated:
+            return (
+                "Your previous response was cut off at the model's output-token "
+                "limit before the result was complete, so none of it could be "
+                "used. Return the same work in less output: emit only the nodes "
+                "you actually changed, no commentary, and no unchanged code. If "
+                "one node's full source genuinely cannot fit in a single "
+                "response, return success=false with an error saying so rather "
+                "than a partial rewrite."
+            )
+        if reason is None:
+            return None
+        return (
+            f"Your previous attempt at this task produced nothing usable: {reason}. "
+            "Do not repeat it — return the full source of every node you change, "
+            "under the exact node ids in target_nodes."
+        )
 
     def _submit_partials(self) -> None:
         """Re-dispatch the narrowed remaining grants of each partial task (async)."""
@@ -1191,6 +1334,7 @@ class Session:
                 task_id=task_id,
                 description=task.description,
                 target_nodes=progress.remaining,
+                retry_note=progress.retry_note,
             )
             runner.assign(adapter, bundle)
 
