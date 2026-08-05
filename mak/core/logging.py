@@ -19,6 +19,14 @@ class EventType(StrEnum):
     LOCK_RELEASED = "lock_released"
     CONFLICT_DETECTED = "conflict_detected"
     AGENT_SPAWNED = "agent_spawned"
+    # What context a bundle actually carried, per attempt: how many write/read
+    # sources and API digests, and their total size. A bundle's context is
+    # everything the agent knows about the codebase, and MAK used to dispatch an
+    # *empty* one — for a task whose targets are new files, every enrichment layer
+    # came back with nothing — without recording it anywhere. The only report came
+    # from the one agent that refused to guess; the rest guessed and were counted
+    # as completed. ``starved: true`` marks a bundle the kernel refused to send.
+    TASK_DISPATCHED = "task_dispatched"
     # What an agent actually returned, per attempt: success, the node ids, the
     # length of each returned source, and any error. Without it a run that drops
     # an agent's work cannot be diagnosed after the fact — the log recorded only

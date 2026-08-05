@@ -7,6 +7,10 @@ session:
   # Command run in the work dir during teardown; a zero exit gates auto_push and
   # is reported as "tests passed". Unset (the default) skips the test step.
   # test_command: "pytest -q"
+  # Per-bundle budget for the source a task carries from the tasks it depends on.
+  # Past the budget an entry degrades to a public API digest (signatures, no
+  # bodies) rather than being dropped. 0 disables the layer; -1 is unbounded.
+  # dependency_context_bytes: 24000
 
 planner:
   model: "claude-opus-5"

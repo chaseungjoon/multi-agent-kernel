@@ -60,6 +60,13 @@ dependency graph is still explicit.
 locks on, edits them in isolation, and returns the modified fragments. The kernel
 reassembles the file.
 
+- Around those write targets the kernel assembles the agent's `read context`
+automatically: same-file siblings, cross-file callers, and — for a task that depends
+on another — whatever that dependency just built, so an agent writing a brand-new
+module is never guessing at the API of the module beside it. A task that would arrive
+with *no* context at all is a kernel bug, and MAK fails it rather than shipping the
+guess.
+
 - Before dispatch, the kernel cross-checks the planner's proposed plan against that
 same AST-derived dependency graph — grounding hallucinated node ids, adding missing
 `depends_on` edges, and flagging spurious ones — so a bad LLM guess is corrected

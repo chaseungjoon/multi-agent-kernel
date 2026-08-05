@@ -35,6 +35,7 @@ def test_all_event_type_values_exist() -> None:
         "lock_released",
         "conflict_detected",
         "agent_spawned",
+        "task_dispatched",
         "agent_result",
         "source_dropped",
         "accepted_noop",

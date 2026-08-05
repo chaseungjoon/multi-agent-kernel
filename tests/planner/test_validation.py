@@ -171,3 +171,73 @@ class TestNoOps:
         # No inventory -> the target is treated as a new node (silent), no edges.
         assert result.plan[0].target_nodes == [NodeId("m.py::function::f")]
         assert result.findings == []
+
+
+class TestForwardContext:
+    """Context a sibling task will create survives, and orders the reader."""
+
+    def test_context_targeted_by_another_task_is_kept(self) -> None:
+        # 'home.py' does not exist yet — 'build' creates it. Dropping it left the
+        # reader with an empty bundle and nothing to write its tests against.
+        plan = [
+            _task("build", ["home.py"]),
+            _task("test", ["test_home.py"], context=["home.py"]),
+        ]
+        result = validate_plan(plan, _GRAPH, _INVENTORY)
+        reader = next(t for t in result.plan if t.task_id == "test")
+        assert reader.context_nodes == [NodeId("home.py")]
+        assert "context_dropped" not in _kinds(result.findings)
+
+    def test_genuinely_phantom_context_is_still_dropped(self) -> None:
+        plan = [
+            _task("build", ["home.py"]),
+            _task("test", ["test_home.py"], context=["nowhere.py"]),
+        ]
+        result = validate_plan(plan, _GRAPH, _INVENTORY)
+        reader = next(t for t in result.plan if t.task_id == "test")
+        assert reader.context_nodes == []
+        assert "context_dropped" in _kinds(result.findings)
+
+    def test_forward_reference_adds_the_ordering_edge(self) -> None:
+        plan = [
+            _task("build", ["home.py"]),
+            _task("test", ["test_home.py"], context=["home.py"]),
+        ]
+        result = validate_plan(plan, _GRAPH, _INVENTORY)
+        reader = next(t for t in result.plan if t.task_id == "test")
+        assert reader.depends_on == ["build"]
+        assert any(
+            "does not exist yet" in f.message for f in result.findings
+        )
+
+    def test_existing_context_needs_no_edge(self) -> None:
+        # parse_config is committed already, so the reader can run at any time.
+        plan = [
+            _task("edit-parse", ["util.py::function::parse_config"]),
+            _task("doc", ["docs.py"], context=["util.py::function::parse_config"]),
+        ]
+        result = validate_plan(plan, _GRAPH, _INVENTORY)
+        doc = next(t for t in result.plan if t.task_id == "doc")
+        assert doc.depends_on == []
+
+    def test_mutual_forward_reference_is_flagged_not_cycled(self) -> None:
+        plan = [
+            _task("build", ["home.py"], depends_on=["test"]),
+            _task("test", ["test_home.py"], context=["home.py"]),
+        ]
+        result = validate_plan(plan, _GRAPH, _INVENTORY)
+        reader = next(t for t in result.plan if t.task_id == "test")
+        assert reader.depends_on == []  # no cycle introduced
+        assert any("order them manually" in f.message for f in result.findings)
+
+    def test_context_is_not_corrected_toward_a_planned_id(self) -> None:
+        # A near-miss of a *planned* target must not be auto-corrected: the
+        # correction would name a node that does not exist and no one declared.
+        plan = [
+            _task("build", ["homescreen.py"]),
+            _task("test", ["test_home.py"], context=["homescren.py"]),
+        ]
+        result = validate_plan(plan, _GRAPH, _INVENTORY)
+        reader = next(t for t in result.plan if t.task_id == "test")
+        assert reader.context_nodes == []
+        assert "corrected_node" not in _kinds(result.findings)

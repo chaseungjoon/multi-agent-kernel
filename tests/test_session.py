@@ -1902,3 +1902,302 @@ class TestNodeGranularityContract:
         session.install_plan([_task("a", ["m.py::function::a"])])
         assert session.run().failed == ("a",)
         assert not (tmp_path / "other.py").exists()
+
+
+# --- wave 13: dependency context ---------------------------------------------
+
+
+class GreenfieldRunner:
+    """An agent that returns whole-file source for brand-new files.
+
+    ``sources`` maps a task id to ``{node_id: source}``. Everything it writes is
+    new, which is the shape that starved the enrichment layers: for a task whose
+    targets do not exist yet, layers 1-4 have nothing to find.
+    """
+
+    def __init__(self, sources: dict[str, dict[str, str]]) -> None:
+        self._sources = sources
+        self.assigned: list[TaskBundle] = []
+
+    def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+        self.assigned.append(task)
+        new = {
+            NodeId(node_id): source
+            for node_id, source in self._sources.get(task.task_id, {}).items()
+        }
+        return TaskResult(
+            task_id=task.task_id,
+            success=bool(new),
+            modified_nodes=list(new),
+            new_sources=new,
+        )
+
+
+_CORE_SRC = (
+    "GREETING = 'hi'\n\n\n"
+    "def build(name, size):\n"
+    "    return f'{name}:{size}'\n"
+)
+_RENDER_SRC = (
+    "from core import build\n\n\n"
+    "def render(name):\n"
+    "    return build(name, 1)\n"
+)
+
+
+def _greenfield_plan() -> list[SubTask]:
+    """Chain core -> render -> tests, every target a file that does not exist."""
+    return [
+        _task("core", ["core.py"]),
+        _task("render", ["render.py"], deps=["core"]),
+        _task("tests", ["test_all.py"], deps=["core", "render"]),
+    ]
+
+
+def _greenfield_sources() -> dict[str, dict[str, str]]:
+    return {
+        "core": {"core.py": _CORE_SRC},
+        "render": {"render.py": _RENDER_SRC},
+        "tests": {
+            "test_all.py": (
+                "from render import render\n\n\n"
+                "def test_render():\n"
+                "    assert render('a')\n"
+            )
+        },
+    }
+
+
+def _bundle_for(runner: GreenfieldRunner, task_id: str) -> TaskBundle:
+    return next(b for b in runner.assigned if b.task_id == task_id)
+
+
+class TestDependencyContext:
+    """A task must arrive with the output of the tasks it depends on."""
+
+    def _run_greenfield(
+        self, tmp_path: Path, *, config: MakConfig | None = None
+    ) -> tuple[GreenfieldRunner, Session, SessionLogger]:
+        store = _store(tmp_path)
+        runner = GreenfieldRunner(_greenfield_sources())
+        logger = SessionLogger(tmp_path / "session.log")
+        session = _session(
+            tmp_path,
+            runner=runner,
+            node_store=store,
+            logger=logger,
+            config=config,
+        )
+        session.initialize()
+        session.install_plan(_greenfield_plan())
+        assert session.run().ok
+        return runner, session, logger
+
+    def test_dependency_output_reaches_the_dependent_task(
+        self, tmp_path: Path
+    ) -> None:
+        # render depends on core and lists no context nodes: without layer 5 its
+        # bundle is empty and it has to invent build()'s signature.
+        runner, _session_obj, _logger = self._run_greenfield(tmp_path)
+        ctx = _bundle_for(runner, "render").context
+        assert "read_source:core.py" in ctx
+        assert "def build(name, size)" in ctx["read_source:core.py"]
+
+    def test_only_direct_dependencies_are_carried(self, tmp_path: Path) -> None:
+        # tests depends on both core and render directly, so it gets both — but
+        # the layer never walks past a direct edge.
+        runner, _session_obj, _logger = self._run_greenfield(tmp_path)
+        ctx = _bundle_for(runner, "tests").context
+        assert "read_source:core.py" in ctx
+        assert "read_source:render.py" in ctx
+
+    def test_no_task_is_dispatched_context_empty(self, tmp_path: Path) -> None:
+        runner, _session_obj, logger = self._run_greenfield(tmp_path)
+        dispatched = [
+            e for e in logger.read_log()
+            if e.event_type is EventType.TASK_DISPATCHED
+        ]
+        assert {str(e.payload["task_id"]) for e in dispatched} == {
+            "core", "render", "tests"
+        }
+        # 'core' has no dependencies and nothing exists yet, so an empty bundle
+        # is legitimate there; every task that *has* an edge must carry context.
+        for event in dispatched:
+            if event.payload["depends_on"]:
+                assert event.payload["starved"] is False
+                assert int(str(event.payload["context_bytes"])) > 0
+
+    def test_dispatch_event_counts_what_was_sent(self, tmp_path: Path) -> None:
+        runner, _session_obj, logger = self._run_greenfield(tmp_path)
+        event = next(
+            e for e in logger.read_log()
+            if e.event_type is EventType.TASK_DISPATCHED
+            and e.payload["task_id"] == "render"
+        )
+        assert event.payload["read_sources"] == 1
+        assert event.payload["attempt"] == 1
+        assert event.payload["targets"] == ["render.py"]
+
+    def test_metrics_report_context_volume(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        runner = GreenfieldRunner(_greenfield_sources())
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan(_greenfield_plan())
+        metrics = session.run().metrics
+        assert metrics["dispatches"] == 3.0
+        assert metrics["context_bytes_total"] > 0
+        assert metrics["starved_dispatches"] == 0.0
+
+    def test_budget_degrades_to_an_api_digest(self, tmp_path: Path) -> None:
+        # Past the byte budget the dependency's *contract* is sent instead of its
+        # body — informed cheaply, never blind.
+        config = MakConfig(
+            session=SessionConfig(
+                work_dir=str(tmp_path),
+                mak_dir=str(tmp_path / ".mak"),
+                dependency_context_bytes=1,
+            ),
+            git=GitConfig(auto_commit=False, auto_push=False),
+            node_store=NodeStoreConfig(),
+        )
+        runner, _session_obj, _logger = self._run_greenfield(
+            tmp_path, config=config
+        )
+        ctx = _bundle_for(runner, "render").context
+        assert "read_source:core.py" not in ctx
+        digest = ctx["read_api:core.py"]
+        assert "def build(name, size):" in digest
+        assert "return f'{name}:{size}'" not in digest
+
+    def test_zero_context_dispatch_fails_as_a_kernel_defect(
+        self, tmp_path: Path
+    ) -> None:
+        # Disabling the layer leaves a dependent greenfield task with literally
+        # nothing. That is the kernel's defect, and it must not reach a model.
+        config = MakConfig(
+            session=SessionConfig(
+                work_dir=str(tmp_path),
+                mak_dir=str(tmp_path / ".mak"),
+                dependency_context_bytes=0,
+            ),
+            git=GitConfig(auto_commit=False, auto_push=False),
+            node_store=NodeStoreConfig(),
+        )
+        store = _store(tmp_path)
+        runner = GreenfieldRunner(_greenfield_sources())
+        session = _session(
+            tmp_path, runner=runner, node_store=store, config=config
+        )
+        session.initialize()
+        session.install_plan(_greenfield_plan())
+        result = session.run()
+
+        assert "render" in result.failed
+        assert "kernel defect" in result.failure_reasons["render"]
+        # The bundle was never handed to an agent.
+        assert not any(b.task_id == "render" for b in runner.assigned)
+        assert result.metrics["starved_dispatches"] >= 1.0
+
+    def test_whole_file_target_still_gets_cross_file_callers(
+        self, tmp_path: Path
+    ) -> None:
+        # Layer 4 derives its search symbols from target ids; a whole-file target
+        # is a bare path with no name segment, which used to disable the layer.
+        (tmp_path / "fruit.py").write_text("def apple():\n    return 1\n")
+        (tmp_path / "animal.py").write_text(
+            "from fruit import apple\n\n\ndef dog():\n    return apple()\n"
+        )
+        store = _store(tmp_path)
+        runner = GreenfieldRunner(
+            {"whole": {"fruit.py": "def apple():\n    return 2\n"}}
+        )
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("whole", ["fruit.py"])])
+        session.run()
+        ctx = _bundle_for(runner, "whole").context
+        assert any(
+            k.startswith("read_source:animal.py") for k in ctx
+        ), "the caller of the targeted file must still be enriched"
+
+
+class TestCrossModuleDefects:
+    """Modules created in one wave must agree with each other."""
+
+    def _run_pair(self, tmp_path: Path, beta_src: str) -> Session:
+        store = _store(tmp_path)
+        runner = GreenfieldRunner({
+            "alpha": {"alpha.py": "def f(a, b):\n    return a + b\n"},
+            "beta": {"beta.py": beta_src},
+        })
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("alpha", ["alpha.py"]), _task("beta", ["beta.py"])])
+        assert session.run().ok
+        return session
+
+    def test_wrong_arity_between_new_modules_is_reported(
+        self, tmp_path: Path
+    ) -> None:
+        session = self._run_pair(
+            tmp_path, "from alpha import f\n\n\ndef g():\n    return f(1)\n"
+        )
+        defects = session.detect_cross_module_defects()
+        assert [d.kind for d in defects] == ["signature_mismatch"]
+        assert "missing required argument 'b'" in defects[0].detail
+
+    def test_importing_a_name_the_module_lacks_is_reported(
+        self, tmp_path: Path
+    ) -> None:
+        session = self._run_pair(
+            tmp_path, "from alpha import missing\n\n\ndef g():\n    return 1\n"
+        )
+        defects = session.detect_cross_module_defects()
+        assert [d.kind for d in defects] == ["unresolved_import"]
+        assert "does not define it" in defects[0].detail
+
+    def test_agreeing_modules_report_clean(self, tmp_path: Path) -> None:
+        session = self._run_pair(
+            tmp_path, "from alpha import f\n\n\ndef g():\n    return f(1, 2)\n"
+        )
+        assert session.detect_cross_module_defects() == []
+        assert session.detect_cascade_tasks() == []
+
+    def test_defects_become_cascade_fix_tasks(self, tmp_path: Path) -> None:
+        session = self._run_pair(
+            tmp_path, "from alpha import f\n\n\ndef g():\n    return f(1)\n"
+        )
+        tasks = session.detect_cascade_tasks()
+        assert [t.task_id for t in tasks] == ["api_fix_beta_py"]
+        assert tasks[0].target_nodes == [NodeId("beta.py")]
+        assert NodeId("alpha.py") in tasks[0].context_nodes
+
+
+class TestPhantomContextIsLockable:
+    """A context node no one has written yet is a legal read-lock target.
+
+    This is the objection that justified dropping such nodes in validation — the
+    lock table is keyed by id and never consults the node store, and the ordering
+    edge validation now adds means the node is committed before the reader runs.
+    """
+
+    def test_context_created_by_a_sibling_task_runs_end_to_end(
+        self, tmp_path: Path
+    ) -> None:
+        store = _store(tmp_path)
+        runner = GreenfieldRunner({
+            "build": {"home.py": "def banner(width, height):\n    return ''\n"},
+            "check": {"test_home.py": "def test_banner():\n    assert True\n"},
+        })
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([
+            _task("build", ["home.py"]),
+            _task("check", ["test_home.py"], context=["home.py"]),
+        ])
+        result = session.run()
+
+        assert result.ok, result.failure_reasons
+        ctx = _bundle_for(runner, "check").context
+        assert "def banner(width, height)" in ctx["read_source:home.py"]

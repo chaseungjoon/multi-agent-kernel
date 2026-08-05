@@ -207,7 +207,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **1029 tests pass**,
+The **kernel is functionally complete and well-tested**: **1067 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -237,6 +237,7 @@ The module-by-module state:
 | **Concurrent execution** | **Complete (Wave 5)** — see below |
 | **Pipeline integrity** | **Complete (Wave 11)** — no false conflicts, no store self-pollution, no silent drops |
 | **Agent output budget / truncation safety** | **Complete (Wave 12)** — no truncated reply reads as success, no laundered no-op |
+| **Dependency context** | **Complete (Wave 13)** — a task receives what its dependencies built; an empty bundle is refused, not dispatched |
 | `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
@@ -249,10 +250,12 @@ The module-by-module state:
 > returns outside its lock grant is refused — and *said out loud*: refusals are
 > logged with the id and the grant, and a symbol id returned under a whole-file
 > grant is folded into it rather than discarded (§7.4). The agent receives its write-target
-> sources plus an automatically-enriched context window: same-file sibling nodes and
-> cross-file callers of the target symbols are included read-only, so the agent
-> always arrives with the full dependency picture even when the planner did not
-> enumerate it (see §3.2). Internalize this and the rest of the codebase follows:
+> sources plus an automatically-enriched context window: same-file sibling nodes,
+> cross-file callers of the target symbols, and the committed output of the tasks it
+> `depends_on` are included read-only, so the agent always arrives with the full
+> dependency picture even when the planner did not enumerate it (see §3.2). A bundle
+> that would carry *nothing* to a task that has dependencies is a kernel defect and
+> is refused rather than dispatched. Internalize this and the rest of the codebase follows:
 > the lock table, scheduler, conflict detector, and transactional commit all exist
 > to make that fragment-transform contract safe under concurrency.
 >
@@ -508,7 +511,11 @@ skip to the subsystem you're touching.
   `SOURCE_DROPPED` (anything MAK refused to stage, with the id and the grant).
   Wave 12 adds `ACCEPTED_NOOP` — a task that closed because the agent *asserted*
   no change was needed, logged distinctly from an ordinary `TASK_COMPLETED` so
-  the log shows "decided there was none" apart from "did the work".
+  the log shows "decided there was none" apart from "did the work". Wave 13 adds
+  `TASK_DISPATCHED` for the other direction — what the kernel *gave* the agent
+  (context entry counts and bytes per attempt, plus `starved`), because a bundle's
+  context is everything an agent knows about the codebase and MAK used to dispatch
+  an empty one without recording it anywhere (§3.2).
 
 ## 2. Node Store
 
@@ -664,7 +671,7 @@ Mechanics:
 ### 3.2 Fragment dispatch (node store → agent)
 
 When a task is dispatched, the session builds a `TaskBundle` and **enriches** it with
-context from four layers, in order:
+context from five layers, in order:
 
 1. **Write targets** — the current committed source (`write_source:<id>`) for every
    node the agent will write.
@@ -677,11 +684,53 @@ context from four layers, in order:
    a word-boundary match for any write-target symbol name (the session scans all
    stored nodes with a regex). This ensures an agent editing `def apple` also receives
    context from `def dog` in a different file that calls `apple`, even if the planner
-   did not enumerate that dependency.
+   did not enumerate that dependency. A **whole-file** target is a bare path with no
+   `::kind::name` segment, so it contributes no symbol of its own; since Wave 13 its
+   search symbols come from the file's committed nodes instead (Wave 11's folding
+   made whole-file grants the normal shape, and deriving nothing from them silently
+   disabled this entire layer for them).
+5. **Dependency outputs** (Wave 13) — the committed source of every `target_node` of
+   every task this one **directly** `depends_on`, as `read_source:<id>`. Direct
+   edges only: the transitive closure grows without bound.
 
-The agent therefore arrives with the full dependency picture — same-file context plus
-cross-file callers — without the planner having to enumerate every relationship. It
-still never sees the whole codebase; it sees a semantically-bounded window.
+The agent therefore arrives with the full dependency picture — same-file context,
+cross-file callers, and what its dependencies built — without the planner having to
+enumerate every relationship. It still never sees the whole codebase; it sees a
+semantically-bounded window.
+
+**Why layer 5 exists.** Layers 1–4 all derive from code that *already exists*. For a
+task whose targets are brand-new files — the normal shape of greenfield work — every
+one of them returns nothing, and the bundle carries literally zero entries. A real
+run dispatched four such tasks: one agent refused to work blind and failed loudly,
+and the other three guessed. One of the guesses shipped a `pick_banner(width)` call
+against a real `pick_banner(width, height)` — a `TypeError` on first use, past every
+gate MAK had, reported as a completed task. `depends_on` is MAK's own assertion that
+the earlier task's output matters to the later one, and by dispatch time the DAG
+guarantees that output is committed and readable; nothing was reading it.
+
+**Budget and degradation.** Whole dependency files are the most expensive thing a
+bundle can carry, so layer 5 spends a per-bundle byte budget
+(`session.dependency_context_bytes`, default `24000`; `0` disables the layer, `-1`
+is unbounded). Past the budget an entry **degrades to a public API digest**
+(`read_api:<id>` — signatures, class members and module constants, no bodies, from
+`mak/node_store/api_digest.py`) rather than being dropped: a test-writing task needs
+its dependency's *contract*, not its implementation, and "informed cheaply" beats
+"blind". This budget is the same one Wave 7 (planner token efficiency) exists to
+control — coordinate changes to it rather than solving it twice.
+
+**Every dispatch is now on the record.** Enrichment ends by logging a
+`TASK_DISPATCHED` event per attempt: task id, attempt number, targets, `depends_on`,
+the count of `write_source` / `read_source` / `read_api` entries, total context
+bytes, and a `starved` flag. Nothing in the kernel used to notice an empty bundle —
+no event, no metric, no guard — so the only report of the defect above came from the
+one agent honest enough to refuse.
+
+**The starvation guard.** A bundle that comes out of enrichment with **zero** context
+entries while its task declares `depends_on` edges or `context_nodes` is a *kernel*
+defect, not an agent failure. `_ConcurrentRunner.assign` never sends it: it queues a
+`TaskResult(success=False, retryable=False)` naming the defect, which flows through
+the normal failure reporting and fails the task immediately rather than spending
+three attempts asking a model to invent an API it was never shown.
 
 ### 3.3 Collection (agent output → node store)
 
@@ -831,6 +880,20 @@ enforces Python's compile-time rules — including `from __future__` placement �
   check attribute dedented class fragments with `class_scope_of`.
 - **`detector.py`** — `ConflictDetector.detect(EditRound)` runs the parse gate then
   all three checks, returning a `ConflictReport` (`ok`, `reasons`, `by_check`).
+- **`cross_module_check.py`** (Wave 13) — the one check that runs *after* a wave
+  rather than inside a task. Every gate above is scoped to one agent's edit, so two
+  tasks can each finish clean and still leave the codebase broken **between** them.
+  `check_cross_module_api(file_sources, scope)` judges the files the wave wrote
+  against the store as it now stands and reports two kinds of `CrossModuleDefect`:
+  `unresolved_import` (importing a name the target module does not bind) and
+  `signature_mismatch` (calling an imported function with an argument shape its
+  definition rejects). It reuses `signature_check`'s extractors and
+  `depgraph.resolve_module_file` for import resolution, so there is one
+  implementation of each rather than two that drift, and inherits the same
+  precision-over-recall contract: a call is judged only when the definition it
+  reaches is provable — resolvable in-repo import, no local shadow, not a method.
+  A file that does not parse yields nothing (the parse gate owns that failure).
+  `Session.detect_cross_module_defects()` drives it; see §10.
 
 ### 5.1 Precision over recall (Wave 11)
 
@@ -1314,8 +1377,27 @@ so it is unit-testable without Docker.
       `spurious_dep` finding, because the LLM may know a semantic ordering the AST
       can't see; validation suggests and corrects, it never silently discards intent.
     - **Unknown `context_nodes` are dropped** (with a `context_dropped` finding) —
-      context is soft, so a phantom id is just removed rather than corrected, to
-      avoid acquiring a read lock on a node that doesn't exist.
+      context is soft, so a phantom id is just removed rather than corrected —
+      **unless another task in the same plan targets it** (Wave 13). Grounding runs
+      in two passes for exactly this: targets first, then context against the
+      inventory *plus every task's targets*. In a greenfield wave a task's context
+      names modules its siblings are about to write, so they are absent from the
+      inventory by construction, and deleting them left the reader with an empty
+      bundle (one real plan dropped 14 context nodes this way). The fix is narrow:
+      the fuzzy-match candidate list stays the real inventory, so a near-miss is
+      never auto-corrected toward an id that does not exist yet, and a context node
+      no task creates is still dropped.
+    - **A forward context reference adds the ordering edge** (Wave 13) — if task A
+      reads a context node that task B creates and A does not already (transitively)
+      depend on B, `B → A` is added with a `missing_dep` finding; a mutual reference
+      is reported and left alone, as elsewhere. Without the edge A can dispatch
+      before the node exists and be starved anyway. `_add_missing_edges` cannot
+      cover this: it works off the `DepGraph`, which is built from committed code
+      and cannot see a file no one has written yet.
+      The read-lock objection that originally justified dropping is settled, not
+      re-litigated: `Scheduler._lock_requests` appends `(node_id, READ)` and the
+      lock table never consults the node store, so locking a not-yet-written id is
+      legal — and with the edge above, it has been committed by dispatch time.
     - A correction is reverted (downgraded back to a suggestion finding) if applying
       it would violate a `parse_plan` invariant, e.g. create a second whole-file
       owner for one file.
@@ -1437,6 +1519,16 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   called and `run()` executes another wave. The loop repeats until no cascades
   remain or the user declines. If the planner's CASCADE PREVENTION worked, this
   path fires zero times.
+- **cross-module defects** (`detect_cross_module_defects()`, Wave 13) — carried by
+  the same call. A wave that creates two modules which disagree about each other's
+  API changed no existing signature, so the comparison above sees nothing, yet the
+  code is broken exactly as if it had: the module both parses and imports fine, and
+  only fails when the call is reached. The session assembles the current source of
+  every file in the store, scopes the check to files with a node in
+  `_wave_committed`, logs each defect as `CONFLICT_DETECTED`, and turns each
+  offending file into an `api_fix_<file>` fix-up `SubTask` (targeting that file's
+  committed nodes, with the defining modules as context) appended to the cascade
+  list — so both classes of breakage share one review flow rather than needing two.
 - **teardown** — run the project's test suite and push if green (when `auto_push`).
   The suite is the `session.test_command` (e.g. `pytest -q`) run in the work dir by a
   `TestRunner` built in the composition root (`mak/test_runner.py`); it reports a real
@@ -1546,6 +1638,11 @@ Robustness properties worth knowing:
   task ids for the CLI/TUI to print apart from the headline "N completed" (both
   `mak/__main__.py` and `cli/ui.py::show_results` now render
   `"N completed (M no-op)"` and, in the CLI, list which tasks were no-ops).
+  Wave 13 adds the *input* side of the same accounting: `dispatches`,
+  `context_bytes_total`, `mean_context_bytes`, and `starved_dispatches`, summed
+  across every attempt from the `TASK_DISPATCHED` path (§3.2). A wave whose mean
+  context is near zero produced its results without being shown the code, which is
+  worth knowing before trusting them.
 
 All collaborators are injected behind `Protocol`s, so the session is testable with
 fakes.
@@ -1563,6 +1660,10 @@ session:
   lock_timeout_s: 300.0
   deadlock_check_interval_s: 5.0
   test_command: "pytest -q"     # run in the work dir at teardown; gates auto_push
+  dependency_context_bytes: 24000  # per-bundle budget for the source a task
+                                   # carries from the tasks it depends on (Wave
+                                   # 13, §3.2); past it entries degrade to an API
+                                   # digest. 0 disables the layer, -1 unbounded
 
 planner:
   model: "claude-opus-5"
@@ -2297,9 +2398,13 @@ here so contributors don't mistake them for bugs:
   rewriting a node this task reads as context. Multiple readers coexist; a writer
   waits for readers and vice-versa (the canonical conflict matrix). Atomic
   pre-allocation keeps this deadlock-free, and `from_persisted` restores
-  `context_nodes` so recovery re-takes the read locks. A *hard* dependency on another
-  task's output still belongs in `depends_on` (the DAG enforces ordering);
-  `context_nodes` are the *soft* reference layer.
+  `context_nodes` so recovery re-takes the read locks. A read lock on an id with no
+  committed fragment is legal — the lock table is keyed by id and never consults the
+  node store — which is what lets a context node another task is about to create
+  survive validation (Wave 13, §8). A *hard* dependency on another task's output
+  still belongs in `depends_on` (the DAG enforces ordering, and since Wave 13 also
+  delivers that output as context); `context_nodes` are the *soft* reference layer,
+  and a forward one now has its ordering edge added for it.
 - **The deadlock watchdog never fires.** Atomic lock pre-allocation means a waiting
   task holds no locks, so the wait graph is acyclic by construction. The
   `DeadlockDetector` runs each iteration as genuine defense-in-depth that, by design,
@@ -2407,8 +2512,33 @@ every malformed shape now raises a named `AgentProtocolError` instead, and the
 runner reports a decode failure as such rather than blaming the transport. A
 table-driven "degraded response" test corpus per adapter (truncated/refused/
 malformed/undecodable) is the standing guard: it asserts that none of those shapes
-can ever produce `success=True` with an empty result. What remains is the
-open-problems list above.
+can ever produce `success=True` with an empty result.
+
+**Wave 13** moved one hop further upstream again: Waves 11 and 12 were about what an
+agent *returned*, this one is about what it was *given* (§3.2, §5, §8, §10). The next
+real run ended 7 completed / 1 failed, and the single failure was the only honest
+result — an agent that refused to write code against APIs it had never been shown.
+Three of the seven "completions" had the same defect and guessed instead; one shipped
+a `pick_banner(width)` call against a real `pick_banner(width, height)`, a `TypeError`
+on first use that passed every gate MAK had, plus an import of a function its target
+module does not define, wrapped in `try/except: pass` so the feature was silently
+dead. The unifying cause: **MAK builds a dependency graph and then dispatches every
+task without the source of the things it depends on.** Three fixes, in the order the
+context was lost. Plan validation stopped deleting context nodes a *sibling task in
+the same plan* creates — in a greenfield wave those modules do not exist yet by
+construction, and one plan lost 14 of them — and now adds the ordering edge that
+makes such a node readable by dispatch time. Enrichment gained a fifth layer that
+carries a task's direct dependencies' committed output, budget-bounded and degrading
+to a public API digest rather than to nothing; and its cross-file layer, which
+derived its search symbols from `::name` segments only, stopped being a silent no-op
+for the whole-file targets Wave 11's folding made normal. And the kernel now records
+what it dispatched (`TASK_DISPATCHED`, plus `context_bytes` metrics) and *refuses* to
+dispatch a bundle with no context at all to a task that has dependencies — the same
+lesson as `AGENT_RESULT` and `stop_reason`: the fact that would have made the defect
+obvious was never written down. A post-wave `cross_module_check` catches the
+consequence as well as the cause: two modules created in one wave that disagree about
+each other's API now surface as fix-up tasks instead of reporting clean. What remains
+is the open-problems list above.
 
 ---
 

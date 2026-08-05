@@ -343,17 +343,20 @@ def main(
             session.plan(args.task, review=not args.no_review)
         result = session.run()
 
-        # Cascade loop: after each wave, check whether any committed signature
-        # changes broke callers in other files.  If so, surface those as a new
-        # plan for the user to review (same UI as the initial plan), then run
-        # another wave.  Repeat until no cascades remain or the user declines.
+        # Cascade loop: after each wave, check whether the wave broke callers —
+        # a committed signature change that existing code still calls the old
+        # way, or two modules the wave created that disagree about each other's
+        # API.  If so, surface those as a new plan for the user to review (same
+        # UI as the initial plan), then run another wave.  Repeat until no
+        # cascades remain or the user declines.
         while True:
             cascade_tasks = session.detect_cascade_tasks()
             if not cascade_tasks:
                 break
             print(
                 f"\nmak: {len(cascade_tasks)} cascade task(s) detected — "
-                "function signatures changed and the following callers need updating.",
+                "the files below call or import something that does not match "
+                "what it now is.",
                 file=sys.stderr,
             )
             if args.no_review:
@@ -368,8 +371,9 @@ def main(
                     cascade_tasks,
                     header=(
                         "\n=== CASCADE WAVE ===\n"
-                        "Function signatures changed in the previous wave.\n"
-                        "The tasks below update affected call sites.\n"
+                        "The previous wave left call sites or imports that do "
+                        "not resolve.\n"
+                        "The tasks below reconcile them.\n"
                         "Approve, edit, or abort.\n"
                         "==================="
                     ),

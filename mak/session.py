@@ -57,6 +57,10 @@ from mak.agent_runner.protocol import map_returned_sources
 from mak.agent_runner.registry import AdapterRegistry
 from mak.agent_runner.stop_signals import matches
 from mak.config import MakConfig
+from mak.conflict_detector.cross_module_check import (
+    CrossModuleDefect,
+    check_cross_module_api,
+)
 from mak.conflict_detector.detector import ConflictDetector, EditRound
 from mak.core.exceptions import NodeStoreError, SessionError
 from mak.core.logging import EventType, SessionLogger
@@ -71,6 +75,7 @@ from mak.core.types import (
 )
 from mak.git_integration.git import GitHelper
 from mak.lock_manager.deadlock_detector import DeadlockDetector
+from mak.node_store.api_digest import public_api_digest
 from mak.node_store.reconstruction import assemble_fragments, reconstruct_file
 from mak.node_store.store import NodeStore
 from mak.planner.depgraph import dep_graph_from_store
@@ -219,6 +224,22 @@ class _Completion:
     result: TaskResult
 
 
+@dataclass(frozen=True, slots=True)
+class _Dispatch:
+    """An enriched bundle, or the reason the kernel must not send it to an agent.
+
+    ``starved_reason`` is set when enrichment produced *no context at all* for a
+    task that declares dependencies or context nodes. That is a kernel defect, not
+    an agent failure: the model would be asked to write code against APIs it has
+    never been shown, and the only way anyone learned it had happened was an agent
+    honest enough to refuse. The bundle is kept so the completion still names the
+    task it belongs to.
+    """
+
+    bundle: TaskBundle
+    starved_reason: str | None = None
+
+
 class _ConcurrentRunner:
     """Enriches a bundle, runs the agent on a worker thread, queues the result.
 
@@ -238,7 +259,7 @@ class _ConcurrentRunner:
         inner: _Assigner,
         executor: ThreadPoolExecutor,
         completions: queue.Queue[_Completion],
-        enrich: Callable[[TaskBundle], TaskBundle],
+        enrich: Callable[[TaskBundle], _Dispatch],
     ) -> None:
         self._inner = inner
         self._executor = executor
@@ -246,8 +267,22 @@ class _ConcurrentRunner:
         self._enrich = enrich
 
     def assign(self, adapter: object, task: object) -> object:
-        bundle = self._enrich(cast(TaskBundle, task))
-        self._executor.submit(self._run, adapter, bundle)
+        dispatch = self._enrich(cast(TaskBundle, task))
+        if dispatch.starved_reason is not None:
+            # Never spend a model call on a bundle the kernel knows is empty:
+            # queue the failure directly so it flows through the normal reporting
+            # path, unretryable because a re-dispatch would build the same bundle.
+            self._completions.put(_Completion(
+                dispatch.bundle,
+                TaskResult(
+                    task_id=dispatch.bundle.task_id,
+                    success=False,
+                    error=dispatch.starved_reason,
+                    retryable=False,
+                ),
+            ))
+            return None
+        self._executor.submit(self._run, adapter, dispatch.bundle)
         return None
 
     def _run(self, adapter: object, bundle: TaskBundle) -> None:
@@ -343,6 +378,13 @@ class Session:
         self._conflict_rejections = 0
         self._redispatches = 0
         self._concurrency_samples: list[int] = []
+        # Context volume actually dispatched this wave. A bundle's context is the
+        # only thing an agent knows about the codebase, so how much of it each
+        # attempt received is a first-class run statistic — and ``starved`` counts
+        # the dispatches the kernel refused because there was none.
+        self._dispatches = 0
+        self._context_bytes = 0
+        self._starved_dispatches = 0
 
     # -- logging helper ----------------------------------------------------
 
@@ -576,6 +618,9 @@ class Session:
         self._conflict_rejections = 0
         self._redispatches = 0
         self._concurrency_samples = []
+        self._dispatches = 0
+        self._context_bytes = 0
+        self._starved_dispatches = 0
         # Validate/augment against the code graph (grounds ids, adds missing edges)
         # here — so the CLI's plan() path, the TUI's direct install, cascade waves,
         # and user-edited plans all get validation. Idempotent when plan() already
@@ -753,9 +798,20 @@ class Session:
         says how many did the latter. Before this split, an empty response on a
         file that happened to exist was counted as a completion indistinguishable
         from real work, so the headline number overstated what a run had done.
+
+        ``context_bytes_total`` / ``mean_context_bytes`` are the input side of the
+        same accounting: what the run actually *gave* its agents. A wave whose
+        mean is near zero produced its results without being shown the code, which
+        is worth knowing before trusting them — and ``starved_dispatches`` counts
+        the ones the kernel refused outright.
         """
         samples = self._concurrency_samples
         mean = round(sum(samples) / len(samples), 2) if samples else 0.0
+        mean_bytes = (
+            round(self._context_bytes / self._dispatches, 2)
+            if self._dispatches
+            else 0.0
+        )
         return {
             "max_concurrency": float(max(samples, default=0)),
             "mean_concurrency": mean,
@@ -764,6 +820,10 @@ class Session:
             "tasks_completed": float(len(self._completed)),
             "tasks_noop": float(len(self._noop_task_ids())),
             "tasks_failed": float(len(self._failed)),
+            "dispatches": float(self._dispatches),
+            "context_bytes_total": float(self._context_bytes),
+            "mean_context_bytes": mean_bytes,
+            "starved_dispatches": float(self._starved_dispatches),
         }
 
     def _noop_task_ids(self) -> list[str]:
@@ -1378,10 +1438,10 @@ class Session:
             )
             runner.assign(adapter, bundle)
 
-    def _enrich_bundle(self, bundle: TaskBundle) -> TaskBundle:
-        """Attach write targets, planner context, and all dependency sources.
+    def _enrich_bundle(self, bundle: TaskBundle) -> _Dispatch:
+        """Attach every layer of context, record what was attached, and gate it.
 
-        Four layers of context, each only adding entries not already present:
+        Five layers, each only adding entries not already present:
 
         1. ``write_source:<id>`` — every node the agent will modify.
         2. ``read_source:<id>`` — nodes the planner explicitly listed as context.
@@ -1392,59 +1452,200 @@ class Session:
            any target symbol name (word-boundary match).  Captures cross-file
            callers and callees so the agent is never blind to dependencies that
            live outside its own file.
+        5. ``read_source:<id>`` / ``read_api:<id>`` — the committed output of the
+           tasks this one directly ``depends_on``.  Layers 1-4 all derive from
+           code that already exists, so for a task whose targets are brand-new
+           files they return *nothing*; this is the layer that carries what a
+           dependency built.
+
+        The result is logged (``TASK_DISPATCHED``) and, when it is empty for a
+        task that declares dependencies, refused rather than sent — see
+        :class:`_Dispatch`.
         """
         task = self._dag_task(bundle.task_id)
         context = dict(bundle.context)
+        self._add_write_targets(bundle.target_nodes, context)
+        self._add_planner_context(task.context_nodes, context)
+        target_files = self._add_same_file_siblings(bundle.target_nodes, context)
+        self._add_cross_file_references(bundle.target_nodes, target_files, context)
+        self._add_dependency_outputs(task, context)
+        return self._gate_dispatch(task, replace(bundle, context=context))
 
-        # Layer 1: write targets
-        for node_id in bundle.target_nodes:
+    def _add_write_targets(
+        self, target_nodes: list[NodeId], context: dict[str, str]
+    ) -> None:
+        """Layer 1: the current source of every node the agent will modify."""
+        for node_id in target_nodes:
             source = self._node_source(node_id)
             if source is not None:
                 context[f"write_source:{node_id}"] = source
 
-        # Layer 2: planner-specified context
-        for node_id in task.context_nodes:
+    def _add_planner_context(
+        self, context_nodes: list[NodeId], context: dict[str, str]
+    ) -> None:
+        """Layer 2: the nodes the planner explicitly listed as context."""
+        for node_id in context_nodes:
             source = self._node_source(node_id)
             if source is not None:
                 context[f"read_source:{node_id}"] = source
 
-        # Layer 3: same-file siblings
+    def _add_same_file_siblings(
+        self, target_nodes: list[NodeId], context: dict[str, str]
+    ) -> set[str]:
+        """Layer 3: every other node in a target's file; returns the target files."""
         target_files: set[str] = set()
-        for node_id in bundle.target_nodes:
+        for node_id in target_nodes:
             file_path = str(node_id).split("::", 1)[0]
             target_files.add(file_path)
             for sibling_id in self._node_store.list_nodes(file_path):
-                write_key = f"write_source:{sibling_id}"
-                read_key = f"read_source:{sibling_id}"
-                if write_key not in context and read_key not in context:
-                    source = self._node_source(sibling_id)
-                    if source is not None:
-                        context[read_key] = source
+                if _context_has(context, sibling_id):
+                    continue
+                source = self._node_source(sibling_id)
+                if source is not None:
+                    context[f"read_source:{sibling_id}"] = source
+        return target_files
 
-        # Layer 4: cross-file references — nodes in other files that mention
-        # any target symbol by name, covering callers and callees across the
-        # whole codebase.  Symbol = rightmost segment of the qualified name
-        # (e.g. "apple" from "FruitManager.apple" or "apple").
+    def _add_cross_file_references(
+        self,
+        target_nodes: list[NodeId],
+        target_files: set[str],
+        context: dict[str, str],
+    ) -> None:
+        """Layer 4: nodes in other files that mention a target symbol by name."""
+        symbols = self._target_symbols(target_nodes)
+        if not symbols:
+            return
+        symbol_re = re.compile(
+            r"\b(?:" + "|".join(re.escape(s) for s in sorted(symbols)) + r")\b"
+        )
+        for xfile_id in self._node_store.list_nodes():
+            if str(xfile_id).split("::", 1)[0] in target_files:
+                continue  # same-file already handled in layer 3
+            if _context_has(context, xfile_id):
+                continue
+            source = self._node_source(xfile_id)
+            if source and symbol_re.search(source):
+                context[f"read_source:{xfile_id}"] = source
+
+    def _target_symbols(self, target_nodes: list[NodeId]) -> set[str]:
+        """Return the symbol names a task's targets define, for the layer-4 scan.
+
+        A ``file::kind::name`` id contributes the rightmost segment of its
+        qualified name ("apple" from "FruitManager.apple"). A bare-path
+        *whole-file* id has no name segment at all — and whole-file grants are not
+        an edge case, Wave 11's folding made them the normal shape — so an id like
+        ``editor/home.py`` used to contribute nothing and silently disable the
+        entire layer. Its symbols come from the file's committed nodes instead.
+        """
         symbols: set[str] = set()
-        for nid in bundle.target_nodes:
-            parts = str(nid).split("::")
+        for node_id in target_nodes:
+            parts = str(node_id).split("::")
             if len(parts) >= 3:
-                symbols.add(parts[2].rsplit(".", 1)[-1])
-        if symbols:
-            symbol_re = re.compile(
-                r"\b(?:" + "|".join(re.escape(s) for s in symbols) + r")\b"
-            )
-            for xfile_id in self._node_store.list_nodes():
-                if str(xfile_id).split("::", 1)[0] in target_files:
-                    continue  # same-file already handled in layer 3
-                write_key = f"write_source:{xfile_id}"
-                read_key = f"read_source:{xfile_id}"
-                if write_key not in context and read_key not in context:
-                    source = self._node_source(xfile_id)
-                    if source and symbol_re.search(source):
-                        context[read_key] = source
+                symbols.add(_symbol_of(parts[2]))
+            else:
+                symbols |= self._file_symbols(parts[0])
+        return {s for s in symbols if s}
 
-        return replace(bundle, context=context)
+    def _file_symbols(self, file_path: str) -> set[str]:
+        """Symbol names defined by a file's committed nodes, fragments or whole."""
+        symbols: set[str] = set()
+        for node_id in self._node_store.list_nodes(file_path):
+            parts = str(node_id).split("::")
+            if len(parts) >= 3:
+                symbols.add(_symbol_of(parts[2]))
+        source = self._node_source(NodeId(file_path))
+        if source is not None:
+            symbols |= _top_level_names(source)
+        return symbols
+
+    def _add_dependency_outputs(
+        self, task: SubTask, context: dict[str, str]
+    ) -> int:
+        """Layer 5: the committed output of every task this one depends on.
+
+        ``depends_on`` is MAK's own assertion that the earlier task's output
+        matters to the later one, and by dispatch time the DAG guarantees that
+        output is committed and readable — yet nothing looked at it. A task whose
+        dependencies created new files therefore arrived with an empty bundle and
+        invented their APIs; one such guess shipped a call that raises
+        ``TypeError`` the first time it runs.
+
+        Direct dependencies only: the transitive closure grows without bound.
+        Spending is bounded by ``session.dependency_context_bytes`` — past the
+        budget an entry degrades to a public API digest rather than being dropped,
+        because a test-writing task needs its dependency's *contract*, not its
+        bodies, and "informed cheaply" beats "blind". Returns the bytes spent.
+        """
+        budget = self._config.session.dependency_context_bytes
+        if budget == 0:
+            return 0
+        spent = 0
+        for dep_id in sorted(task.depends_on):
+            for node_id in self._dag_task(dep_id).target_nodes:
+                if _context_has(context, node_id):
+                    continue
+                source = self._dependency_source(node_id)
+                if not source:
+                    continue
+                if budget < 0 or spent + len(source) <= budget:
+                    context[f"read_source:{node_id}"] = source
+                    spent += len(source)
+                    continue
+                digest = public_api_digest(source)
+                if digest:
+                    context[f"read_api:{node_id}"] = digest
+                    spent += len(digest)
+        return spent
+
+    def _dependency_source(self, node_id: NodeId) -> str | None:
+        """Return a dependency target's source, assembling a file when needed.
+
+        A whole-file target is often committed as fragments rather than as one
+        bare-path node, so the bare id itself has no source of its own.
+        """
+        source = self._node_source(node_id)
+        if source is not None:
+            return source
+        if "::" in str(node_id):
+            return None
+        fragments = self._node_store.get_committed_fragments(str(node_id))
+        return assemble_fragments(fragments) if fragments else None
+
+    def _gate_dispatch(self, task: SubTask, bundle: TaskBundle) -> _Dispatch:
+        """Log the bundle's context volume; refuse to dispatch a starved bundle.
+
+        Nothing in the kernel used to notice an empty bundle — no event, no
+        metric, no guard — so the only report of it came from the one agent that
+        refused to work blind. The others guessed and were recorded as completed.
+        """
+        counts = _context_counts(bundle.context)
+        total_bytes = sum(len(v) for v in bundle.context.values())
+        progress = self._progress.get(bundle.task_id)
+        starved = not bundle.context and bool(task.depends_on or task.context_nodes)
+        self._dispatches += 1
+        self._context_bytes += total_bytes
+        if starved:
+            self._starved_dispatches += 1
+        self._log(
+            EventType.TASK_DISPATCHED,
+            task_id=bundle.task_id,
+            attempt=(progress.attempts + 1) if progress is not None else 1,
+            targets=[str(n) for n in bundle.target_nodes],
+            depends_on=list(task.depends_on),
+            write_sources=counts["write_source"],
+            read_sources=counts["read_source"],
+            read_apis=counts["read_api"],
+            context_bytes=total_bytes,
+            starved=starved,
+        )
+        if not starved:
+            return _Dispatch(bundle)
+        return _Dispatch(bundle, starved_reason=(
+            "kernel defect: the bundle carried no context at all, while the task "
+            f"declares {len(task.depends_on)} dependency edge(s) and "
+            f"{len(task.context_nodes)} context node(s). The agent would have had "
+            "to invent the APIs it was asked to build against."
+        ))
 
     def _stage_returned_sources(
         self, task_id: str, grant: list[NodeId], new_sources: dict[NodeId, str]
@@ -1634,12 +1835,20 @@ class Session:
         in the store — across all files — that references that symbol by name is
         a potential broken caller and gets its own SubTask.
 
+        It also carries the *cross-module* check
+        (:meth:`detect_cross_module_defects`): a wave that created two modules
+        which disagree about each other's API changed no existing signature, so
+        the comparison above sees nothing, yet the code is broken exactly as if it
+        had. Both classes of breakage are fix-up work for the next wave, so they
+        share one entry point rather than needing a second review flow.
+
         Returns an empty list when no signatures changed, which is the expected
         outcome when the planner was thorough about including all affected nodes.
         A non-empty return is a signal that the planner missed callers; the
         caller (``__main__``) should present these tasks to the user for review
         before running a second wave.
         """
+        tasks = self._cross_module_fix_tasks(self.detect_cross_module_defects())
         changed: list[tuple[NodeId, str, str, str]] = []
         for node_id, (old_src, new_src) in self._wave_committed.items():
             parts = str(node_id).split("::")
@@ -1654,9 +1863,8 @@ class Session:
                 changed.append((node_id, symbol, old_sig, new_sig))
 
         if not changed:
-            return []
+            return tasks
 
-        tasks: list[SubTask] = []
         already_targeted: set[NodeId] = set()
 
         for node_id, symbol, old_sig, new_sig in changed:
@@ -1685,6 +1893,74 @@ class Session:
                     agent_type=self._default_agent_type or "",
                 ))
 
+        return tasks
+
+    def detect_cross_module_defects(self) -> list[CrossModuleDefect]:
+        """Report where the files this wave wrote contradict the modules they use.
+
+        Every gate MAK runs is scoped to one task's edit, so two tasks can each
+        finish clean and still leave the codebase broken between them: a module
+        that imports a name its target never defines, or calls a sibling's
+        function with the wrong arity. Both parse, so the parse gate passes; the
+        signature is *new*, so cascade detection has no "before" to compare.
+
+        Scope is every file with a node committed this wave, judged against the
+        store as it now stands. Each defect is logged as ``CONFLICT_DETECTED`` so
+        it is on the record even if the operator declines the fix-up wave.
+        """
+        scope = frozenset(_file_of(str(n)) for n in self._wave_committed)
+        if not scope:
+            return []
+        defects = check_cross_module_api(self._file_sources(), scope)
+        for defect in defects:
+            self._log(
+                EventType.CONFLICT_DETECTED,
+                kind=defect.kind,
+                file=defect.file,
+                defining_file=defect.defining_file,
+                reasons=[defect.detail],
+            )
+        return defects
+
+    def _file_sources(self) -> dict[str, str]:
+        """Return the assembled current source of every file the store holds."""
+        sources: dict[str, str] = {}
+        paths = {_file_of(str(n)) for n in self._node_store.list_nodes()}
+        for file_path in sorted(paths):
+            fragments = self._node_store.get_committed_fragments(file_path)
+            if fragments:
+                sources[file_path] = assemble_fragments(fragments)
+        return sources
+
+    def _cross_module_fix_tasks(
+        self, defects: list[CrossModuleDefect]
+    ) -> list[SubTask]:
+        """One fix-up task per file whose cross-module references do not resolve."""
+        by_file: dict[str, list[CrossModuleDefect]] = {}
+        for defect in defects:
+            by_file.setdefault(defect.file, []).append(defect)
+        tasks: list[SubTask] = []
+        for file_path, found in sorted(by_file.items()):
+            listed = "; ".join(d.detail for d in found)
+            defining = sorted({d.defining_file for d in found})
+            tasks.append(SubTask(
+                task_id=re.sub(r"[^a-zA-Z0-9]", "_", f"api_fix_{file_path}"),
+                description=(
+                    f"Fix `{file_path}` so its use of "
+                    f"{', '.join(f'`{d}`' for d in defining)} matches what those "
+                    f"modules actually define: {listed}. Use the real names and "
+                    "signatures — do not add fallbacks or try/except around the "
+                    "imports."
+                ),
+                target_nodes=self._node_store.list_nodes(file_path),
+                context_nodes=[
+                    node
+                    for path in defining
+                    for node in self._node_store.list_nodes(path)
+                ],
+                depends_on=[],
+                agent_type=self._default_agent_type or "",
+            ))
         return tasks
 
     # -- helpers -----------------------------------------------------------
@@ -1720,6 +1996,50 @@ def _is_excluded(rel: str, exclude_patterns: tuple[str, ...]) -> bool:
         or (pattern.startswith("**/") and fnmatch.fnmatch(rel, pattern[3:]))
         for pattern in exclude_patterns
     )
+
+
+def _symbol_of(qualified_name: str) -> str:
+    """Short symbol name of a node id's name segment, without ingestion suffixes.
+
+    ``FruitManager.apple#2`` -> ``apple``. The ``#n`` disambiguation suffix has to
+    go: it is not a word character, so a regex built from it can never match.
+    """
+    return qualified_name.split("#", 1)[0].rsplit(".", 1)[-1]
+
+
+def _top_level_names(source: str) -> set[str]:
+    """Names a module's source defines at top level (functions, classes, assigns)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    names: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            names.add(stmt.name)
+        elif isinstance(stmt, ast.Assign):
+            names.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            names.add(stmt.target.id)
+    return names
+
+
+_CONTEXT_KEYS = ("write_source", "read_source", "read_api")
+
+
+def _context_has(context: dict[str, str], node_id: NodeId) -> bool:
+    """Whether a bundle's context already carries ``node_id`` under any key."""
+    return any(f"{prefix}:{node_id}" in context for prefix in _CONTEXT_KEYS)
+
+
+def _context_counts(context: dict[str, str]) -> dict[str, int]:
+    """Count a bundle's context entries per key prefix, for the dispatch event."""
+    counts = dict.fromkeys(_CONTEXT_KEYS, 0)
+    for key in context:
+        prefix = key.split(":", 1)[0]
+        if prefix in counts:
+            counts[prefix] += 1
+    return counts
 
 
 def _file_of(node_id: str) -> str:

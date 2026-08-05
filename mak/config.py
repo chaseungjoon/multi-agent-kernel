@@ -117,6 +117,13 @@ class SessionConfig:
     to gate an ``auto_push`` (and to report a pass/fail after a run). ``None``
     (the default) skips the test step entirely — nothing is run and teardown
     reports success. Set e.g. ``"pytest -q"`` to make the gate real.
+
+    ``dependency_context_bytes`` bounds the source a bundle carries from the tasks
+    it ``depends_on``. A dependent task must see what its dependencies built — that
+    is the whole point of the edge — but whole files are the most expensive thing a
+    bundle can hold. Past the budget an entry degrades to a public API digest
+    instead of being dropped, so the task is never blind: ``0`` disables the layer
+    entirely and ``-1`` makes it unbounded.
     """
 
     work_dir: str = "."
@@ -125,6 +132,7 @@ class SessionConfig:
     lock_timeout_s: float = 300.0
     deadlock_check_interval_s: float = 5.0
     test_command: str | None = None
+    dependency_context_bytes: int = 24000
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +235,7 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
         deadlock_check_interval_s=_as_float(
             raw, "deadlock_check_interval_s", 5.0),
         test_command=_opt_str(raw, "test_command"),
+        dependency_context_bytes=_as_int(raw, "dependency_context_bytes", 24000),
     )
 
 

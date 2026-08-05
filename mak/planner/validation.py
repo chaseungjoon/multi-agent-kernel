@@ -13,7 +13,21 @@ it deterministically:
 - **Spurious edges** are *flagged only, never removed* — the LLM may know a
   semantic ordering the AST cannot see.
 - **Unknown context nodes** are *dropped* — soft references must resolve to a real
-  node or be removed (keeping a phantom would read-lock a nonexistent node).
+  node or be removed — **unless another task in the same plan creates them**, in
+  which case they are kept and the reader is ordered after the creator.
+
+The context exception exists because dropping was starving greenfield work. In a
+wave that creates new files, a task's context ids name modules *sibling tasks will
+write*, so they are absent from the current inventory by construction; deleting
+them left the bundle with nothing at all and the agent guessing at APIs. Note the
+asymmetry the grounding policy already encoded: a *target* that is genuinely new is
+kept as legitimate, while a *context* node in the same position was deleted.
+
+The original objection — "keeping a phantom would read-lock a nonexistent node" —
+does not hold. ``Scheduler._lock_requests`` appends ``(node_id, READ)`` for every
+context node and the lock table never consults the node store, so locking an id
+with no committed fragment is legal; and with the ordering edge added below, the
+node has been committed by the time the reader dispatches.
 
 Every change is also reported as a :class:`PlanFinding` so the human-in-the-loop
 reviewer sees exactly what validation did and can override it via the edit flow.
@@ -135,17 +149,23 @@ def _tier_missing_class(
 
 def _ground_ids(
     ids: list[NodeId],
-    inv: set[NodeId],
+    known: set[NodeId],
     inventory: list[NodeId],
     task_id: str,
     *,
     is_context: bool,
 ) -> tuple[list[NodeId], list[PlanFinding]]:
-    """Ground one id list; correct/flag/drop per the target vs context policy."""
+    """Ground one id list; correct/flag/drop per the target vs context policy.
+
+    ``known`` is the set of ids that count as resolved — the inventory for targets,
+    the inventory *plus every task's targets* for context. ``inventory`` stays the
+    real one either way: it is the fuzzy-match candidate list, and correcting an id
+    toward a node that does not exist yet would invent one nobody declared.
+    """
     kept: list[NodeId] = []
     findings: list[PlanFinding] = []
     for node_id in ids:
-        if node_id in inv:
+        if node_id in known:
             kept.append(node_id)
             continue
         auto, suggestions = _match_candidates(str(node_id), inventory)
@@ -174,18 +194,35 @@ def _ground_ids(
 def _ground_plan(
     plan: list[SubTask], inventory: list[NodeId]
 ) -> tuple[list[SubTask], list[PlanFinding]]:
+    """Ground every task's targets, then its context against targets *and* inventory.
+
+    Two passes rather than one, because grounding context requires knowing what the
+    whole plan will create. Both the planner's original target ids and their
+    corrected forms count as creations: a correction can be reverted later by
+    ``_guard_whole_file``, and context naming either form refers to the same
+    forthcoming node.
+    """
     inv = set(inventory)
-    grounded: list[SubTask] = []
+    grounded_targets: list[list[NodeId]] = []
     findings: list[PlanFinding] = []
     for task in plan:
-        targets, tf = _ground_ids(
+        targets, target_findings = _ground_ids(
             task.target_nodes, inv, inventory, task.task_id, is_context=False
         )
-        context, cf = _ground_ids(
-            task.context_nodes, inv, inventory, task.task_id, is_context=True
+        grounded_targets.append(targets)
+        findings.extend(target_findings)
+
+    known = set(inv)
+    for task, targets in zip(plan, grounded_targets, strict=True):
+        known.update(task.target_nodes)
+        known.update(targets)
+
+    grounded: list[SubTask] = []
+    for task, targets in zip(plan, grounded_targets, strict=True):
+        context, context_findings = _ground_ids(
+            task.context_nodes, known, inventory, task.task_id, is_context=True
         )
-        findings.extend(tf)
-        findings.extend(cf)
+        findings.extend(context_findings)
         grounded.append(replace(task, target_nodes=targets, context_nodes=context))
     return grounded, findings
 
@@ -254,14 +291,48 @@ def _reachable(deps: dict[str, set[str]], start: str) -> set[str]:
     return seen
 
 
-def _add_missing_edges(
-    plan: list[SubTask], graph: DepGraph
-) -> tuple[list[SubTask], list[PlanFinding]]:
-    """Add dependency edges grounded in real references; flag unresolvable mutuals."""
+def _writers_of(plan: list[SubTask]) -> dict[NodeId, set[str]]:
+    """Map each targeted node to the ids of the tasks that will write it."""
     writers: dict[NodeId, set[str]] = {}
     for task in plan:
         for node in task.target_nodes:
             writers.setdefault(node, set()).add(task.task_id)
+    return writers
+
+
+def _try_add_edge(
+    deps: dict[str, set[str]],
+    mutual_seen: set[frozenset[str]],
+    task_id: str,
+    writer: str,
+    *,
+    reason: str,
+    mutual_reason: str,
+) -> PlanFinding | None:
+    """Add ``writer -> task_id`` when it is new and acyclic; report what happened.
+
+    Returns ``None`` when nothing needs saying: the edge is already implied
+    transitively, or the pair's mutual conflict has been reported once already.
+    Mutates ``deps`` and ``mutual_seen`` in place — both are the caller's
+    working state for a single augmentation pass.
+    """
+    if writer == task_id or writer in _reachable(deps, task_id):
+        return None
+    if task_id in _reachable(deps, writer):
+        pair = frozenset({task_id, writer})
+        if pair in mutual_seen:
+            return None
+        mutual_seen.add(pair)
+        return PlanFinding("missing_dep", task_id, mutual_reason)
+    deps[task_id].add(writer)
+    return PlanFinding("missing_dep", task_id, reason)
+
+
+def _add_missing_edges(
+    plan: list[SubTask], graph: DepGraph
+) -> tuple[list[SubTask], list[PlanFinding]]:
+    """Add dependency edges grounded in real references; flag unresolvable mutuals."""
+    writers = _writers_of(plan)
     deps: dict[str, set[str]] = {t.task_id: set(t.depends_on) for t in plan}
     findings: list[PlanFinding] = []
     mutual_seen: set[frozenset[str]] = set()
@@ -269,27 +340,62 @@ def _add_missing_edges(
         for target in task.target_nodes:
             for ref in sorted(graph.references.get(target, frozenset())):
                 for writer in sorted(writers.get(ref, set())):
-                    if writer == task.task_id:
-                        continue
-                    if writer in _reachable(deps, task.task_id):
-                        continue
-                    if task.task_id in _reachable(deps, writer):
-                        pair = frozenset({task.task_id, writer})
-                        if pair not in mutual_seen:
-                            mutual_seen.add(pair)
-                            findings.append(PlanFinding(
-                                "missing_dep", task.task_id,
-                                f"'{task.task_id}' and '{writer}' reference each "
-                                "other — mutual dependency, consider merging or "
-                                "ordering them manually",
-                            ))
-                        continue
-                    deps[task.task_id].add(writer)
-                    findings.append(PlanFinding(
-                        "missing_dep", task.task_id,
-                        f"added: '{writer}' -> '{task.task_id}' "
-                        f"(rewrites node referenced via {ref})",
-                    ))
+                    finding = _try_add_edge(
+                        deps, mutual_seen, task.task_id, writer,
+                        reason=(
+                            f"added: '{writer}' -> '{task.task_id}' "
+                            f"(rewrites node referenced via {ref})"
+                        ),
+                        mutual_reason=(
+                            f"'{task.task_id}' and '{writer}' reference each "
+                            "other — mutual dependency, consider merging or "
+                            "ordering them manually"
+                        ),
+                    )
+                    if finding is not None:
+                        findings.append(finding)
+    augmented = [replace(t, depends_on=sorted(deps[t.task_id])) for t in plan]
+    return augmented, findings
+
+
+def _add_forward_context_edges(
+    plan: list[SubTask], inventory: list[NodeId]
+) -> tuple[list[SubTask], list[PlanFinding]]:
+    """Order a task after whichever sibling task creates the context it reads.
+
+    A context node survives grounding without being in the inventory only because
+    another task in this plan targets it — so it does not exist yet. Without an
+    edge the reader can dispatch first and arrive with nothing, which is the exact
+    starvation keeping the context node was meant to prevent. Ids that *are* in the
+    inventory need no edge: they are readable at any point in the wave.
+
+    ``_add_missing_edges`` cannot cover this — it works off the ``DepGraph``, which
+    is built from committed code and therefore cannot see a file no one has written.
+    """
+    inv = set(inventory)
+    writers = _writers_of(plan)
+    deps: dict[str, set[str]] = {t.task_id: set(t.depends_on) for t in plan}
+    findings: list[PlanFinding] = []
+    mutual_seen: set[frozenset[str]] = set()
+    for task in plan:
+        for node in task.context_nodes:
+            if node in inv:
+                continue
+            for writer in sorted(writers.get(node, set())):
+                finding = _try_add_edge(
+                    deps, mutual_seen, task.task_id, writer,
+                    reason=(
+                        f"added: '{writer}' -> '{task.task_id}' (creates context "
+                        f"node '{node}', which does not exist yet)"
+                    ),
+                    mutual_reason=(
+                        f"'{task.task_id}' reads context '{node}' that '{writer}' "
+                        f"creates, but '{writer}' already depends on "
+                        f"'{task.task_id}' — order them manually"
+                    ),
+                )
+                if finding is not None:
+                    findings.append(finding)
     augmented = [replace(t, depends_on=sorted(deps[t.task_id])) for t in plan]
     return augmented, findings
 
@@ -346,5 +452,7 @@ def validate_plan(
     grounded, findings = _guard_whole_file(grounded, findings)
     augmented, edge_findings = _add_missing_edges(grounded, graph)
     findings.extend(edge_findings)
+    augmented, forward_findings = _add_forward_context_edges(augmented, inventory)
+    findings.extend(forward_findings)
     findings.extend(_flag_spurious(plan, augmented, graph))
     return ValidationResult(plan=augmented, findings=findings)

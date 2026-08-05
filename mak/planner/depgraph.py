@@ -269,6 +269,31 @@ def _collect_references(tree: ast.AST) -> tuple[set[str], set[tuple[str, str]]]:
     return bare, attrs
 
 
+def resolve_module_file(
+    dotted: str,
+    files: frozenset[str],
+    *,
+    from_file: str | None = None,
+    level: int = 0,
+) -> str | None:
+    """Resolve an import's module to a file in ``files``, or None if it is external.
+
+    ``level`` is ``ast.ImportFrom.level``: 0 for an absolute import, and ≥1 for a
+    relative one, which resolves against ``from_file``'s package directory.
+
+    Public because the post-wave cross-module check needs the same resolution this
+    module already does — one implementation, so the two cannot drift into
+    disagreeing about which file an import names.
+    """
+    parts = [p for p in dotted.split(".") if p]
+    if not level:
+        return _module_to_file(dotted, files) if parts else None
+    if from_file is None:
+        return None
+    base = _relative_dir(from_file, level)
+    return _dir_join([*base, *parts[:-1]], parts[-1], files) if parts else None
+
+
 def build_dep_graph(sources: Mapping[NodeId, str]) -> DepGraph:
     """Build a :class:`DepGraph` from a ``{node_id: source}`` mapping."""
     return _DepGraphBuilder(sources).build()
