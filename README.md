@@ -7,7 +7,6 @@
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
-
 ---
 
 </br>
@@ -25,7 +24,6 @@ arbitrates shared memory between threads.
 
 </br>
 
-
 ## Table of Contents
 
 - [The Idea](#the-idea)
@@ -38,7 +36,6 @@ arbitrates shared memory between threads.
 - [Benchmark](#benchmark)
 - [Contribute](#contribute)
 - [License](#license)
-
 
 ## The Idea
 
