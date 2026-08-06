@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.5.6 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.5.7 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -12,7 +12,7 @@
 
 </br>
 
-A kernel for **concurrent** multi-agent software development. 
+A kernel for **concurrent** multi-agent software development.
 
 Multiple agents edit one shared working directory at the same time.
 
