@@ -11,6 +11,10 @@ session:
   # Past the budget an entry degrades to a public API digest (signatures, no
   # bodies) rather than being dropped. 0 disables the layer; -1 is unbounded.
   # dependency_context_bytes: 24000
+  # Per-bundle budget for the cross-file caller layer. Past the budget an entry is
+  # dropped (a caller's value is its call site, so a digest would say nothing).
+  # 0 disables the layer; -1 is unbounded.
+  # cross_file_context_bytes: 32000
 
 planner:
   model: "claude-opus-5"

@@ -2201,3 +2201,230 @@ class TestPhantomContextIsLockable:
         assert result.ok, result.failure_reasons
         ctx = _bundle_for(runner, "check").context
         assert "def banner(width, height)" in ctx["read_source:home.py"]
+
+
+# --- wave 16: context budget -------------------------------------------------
+
+
+_HOMEART = (
+    "__all__ = ['pick_banner', 'Menu']\n"
+    "DEFAULT_WIDTH = 80\n\n\n"
+    "def pick_banner(width, height):\n"
+    "    return (str(width), str(height))\n\n\n"
+    "class Menu:\n"
+    "    def render_menu(self):\n"
+    "        return 'menu'\n"
+)
+# A module that shares nothing with homeart except the fact that it, like most
+# well-formed modules, declares __all__.
+_UNRELATED = (
+    "__all__ = ['zebra']\n"
+    "DEFAULT_WIDTH = 1\n\n\n"
+    "def zebra():\n"
+    "    return 'stripes'\n"
+)
+
+
+def _context_files(context: dict[str, str], prefix: str = "read_source:") -> set[str]:
+    """File paths carried under ``prefix``, ignoring the fragment part of the id."""
+    return {
+        k[len(prefix):].split("::", 1)[0]
+        for k in context
+        if k.startswith(prefix)
+    }
+
+
+class TestCrossFileSymbolQuality:
+    """A whole-file target contributes node names, not every name it binds."""
+
+    def _run_whole_file(
+        self, tmp_path: Path, *, config: MakConfig | None = None
+    ) -> tuple[GreenfieldRunner, SessionLogger]:
+        (tmp_path / "homeart.py").write_text(_HOMEART)
+        (tmp_path / "caller.py").write_text(
+            "from homeart import pick_banner\n\n\n"
+            "def draw():\n"
+            "    return pick_banner(80, 24)\n"
+        )
+        (tmp_path / "menu_user.py").write_text(
+            "from homeart import Menu\n\n\n"
+            "def show():\n"
+            "    return Menu().render_menu()\n"
+        )
+        for i in range(4):
+            (tmp_path / f"unrelated{i}.py").write_text(_UNRELATED)
+        store = _store(tmp_path)
+        runner = GreenfieldRunner(
+            {"whole": {"homeart.py": _HOMEART.replace("80", "100")}}
+        )
+        logger = SessionLogger(tmp_path / "session.log")
+        session = _session(
+            tmp_path, runner=runner, node_store=store, logger=logger, config=config
+        )
+        session.initialize()
+        session.install_plan([_task("whole", ["homeart.py"])])
+        session.run()
+        return runner, logger
+
+    def test_all_dunder_does_not_drag_in_every_module(self, tmp_path: Path) -> None:
+        # __all__ is not a node name. Treating it as one pulled in every module
+        # that declares one — 88% of the largest bundle in a real run.
+        runner, _logger = self._run_whole_file(tmp_path)
+        files = _context_files(_bundle_for(runner, "whole").context)
+        assert not any(f.startswith("unrelated") for f in files), files
+
+    def test_module_constants_are_not_symbols(self, tmp_path: Path) -> None:
+        # The unrelated modules also share DEFAULT_WIDTH; neither name counts.
+        runner, _logger = self._run_whole_file(tmp_path)
+        joined = " ".join(_bundle_for(runner, "whole").context)
+        assert "unrelated" not in joined
+
+    def test_real_function_caller_still_arrives(self, tmp_path: Path) -> None:
+        runner, _logger = self._run_whole_file(tmp_path)
+        assert "caller.py" in _context_files(
+            _bundle_for(runner, "whole").context
+        )
+
+    def test_method_caller_still_arrives(self, tmp_path: Path) -> None:
+        # Parity with a symbol-level target means methods count too: a fragmented
+        # file yields its `::method::` ids here, so the AST path must agree.
+        runner, _logger = self._run_whole_file(tmp_path)
+        assert "menu_user.py" in _context_files(
+            _bundle_for(runner, "whole").context
+        )
+
+    def test_short_symbols_are_not_evidence(self, tmp_path: Path) -> None:
+        # `run` matched six unrelated files in the observed run.
+        (tmp_path / "entry.py").write_text("def run():\n    return 1\n")
+        (tmp_path / "elsewhere.py").write_text(
+            "def other():\n    run = 1\n    return run\n"
+        )
+        store = _store(tmp_path)
+        runner = GreenfieldRunner({"e": {"entry.py": "def run():\n    return 2\n"}})
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("e", ["entry.py"])])
+        session.run()
+        assert "elsewhere.py" not in _context_files(
+            _bundle_for(runner, "e").context
+        )
+
+    def test_over_broad_symbol_is_discarded(self, tmp_path: Path) -> None:
+        # A symbol in more nodes than _MAX_SYMBOL_MATCHES says nothing about which
+        # of them is related, so it brings none of them in.
+        (tmp_path / "widget.py").write_text(
+            "def handle_event(e):\n    return e\n"
+        )
+        for i in range(10):
+            (tmp_path / f"user{i}.py").write_text(
+                f"def use{i}():\n    return handle_event({i})\n"
+            )
+        store = _store(tmp_path)
+        runner = GreenfieldRunner(
+            {"w": {"widget.py": "def handle_event(e):\n    return None\n"}}
+        )
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("w", ["widget.py"])])
+        session.run()
+        files = _context_files(_bundle_for(runner, "w").context)
+        assert not any(f.startswith("user") for f in files), files
+
+
+class TestCrossFileBudget:
+    """Layer 4 has a ceiling, and says when it hit one."""
+
+    def _config(self, tmp_path: Path, budget: int) -> MakConfig:
+        return MakConfig(
+            session=SessionConfig(
+                work_dir=str(tmp_path),
+                mak_dir=str(tmp_path / ".mak"),
+                cross_file_context_bytes=budget,
+            ),
+            git=GitConfig(auto_commit=False, auto_push=False),
+            node_store=NodeStoreConfig(),
+        )
+
+    def _run(
+        self, tmp_path: Path, budget: int
+    ) -> tuple[GreenfieldRunner, SessionLogger]:
+        (tmp_path / "widget.py").write_text("def handle_event(e):\n    return e\n")
+        for i in range(3):
+            (tmp_path / f"user{i}.py").write_text(
+                f"def use{i}():\n    return handle_event({i})  # padding padding\n"
+            )
+        store = _store(tmp_path)
+        runner = GreenfieldRunner(
+            {"w": {"widget.py": "def handle_event(e):\n    return None\n"}}
+        )
+        logger = SessionLogger(tmp_path / "session.log")
+        session = _session(
+            tmp_path,
+            runner=runner,
+            node_store=store,
+            logger=logger,
+            config=self._config(tmp_path, budget),
+        )
+        session.initialize()
+        session.install_plan([_task("w", ["widget.py"])])
+        session.run()
+        return runner, logger
+
+    def test_unbounded_budget_carries_every_caller(self, tmp_path: Path) -> None:
+        runner, _logger = self._run(tmp_path, -1)
+        files = _context_files(_bundle_for(runner, "w").context)
+        assert len([f for f in files if f.startswith("user")]) == 3
+
+    def test_budget_truncates_and_reports_the_drop(self, tmp_path: Path) -> None:
+        runner, logger = self._run(tmp_path, 60)
+        files = _context_files(_bundle_for(runner, "w").context)
+        carried = [f for f in files if f.startswith("user")]
+        assert 0 < len(carried) < 3, carried
+        event = next(
+            e for e in logger.read_log()
+            if e.event_type is EventType.TASK_DISPATCHED
+        )
+        assert int(str(event.payload["cross_file_dropped"])) > 0
+
+    def test_zero_budget_disables_the_layer(self, tmp_path: Path) -> None:
+        runner, _logger = self._run(tmp_path, 0)
+        files = _context_files(_bundle_for(runner, "w").context)
+        assert not any(f.startswith("user") for f in files)
+
+
+class TestDispatchLayerAttribution:
+    """Which layer put a node in the bundle is readable from the log alone."""
+
+    def test_layers_name_their_nodes(self, tmp_path: Path) -> None:
+        (tmp_path / "core.py").write_text("def build(name):\n    return name\n")
+        (tmp_path / "caller.py").write_text(
+            "from core import build\n\n\ndef go():\n    return build('x')\n"
+        )
+        store = _store(tmp_path)
+        runner = GreenfieldRunner(
+            {"c": {"core.py::function::build": "def build(name):\n    return 1\n"}}
+        )
+        logger = SessionLogger(tmp_path / "session.log")
+        session = _session(
+            tmp_path, runner=runner, node_store=store, logger=logger
+        )
+        session.initialize()
+        session.install_plan([_task("c", ["core.py::function::build"])])
+        session.run()
+
+        event = next(
+            e for e in logger.read_log()
+            if e.event_type is EventType.TASK_DISPATCHED
+        )
+        layers = event.payload["layers"]
+        assert isinstance(layers, dict)
+        assert set(layers) == {
+            "write_targets", "planner_context", "same_file",
+            "cross_file", "dependency_output",
+        }
+        assert layers["write_targets"]["nodes"] == ["core.py::function::build"]
+        assert any(
+            n.startswith("caller.py") for n in layers["cross_file"]["nodes"]
+        )
+        assert layers["cross_file"]["bytes"] > 0
+        assert layers["dependency_output"]["count"] == 0

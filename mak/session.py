@@ -45,6 +45,7 @@ import re
 import sys
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
@@ -1451,12 +1452,18 @@ class Session:
         4. ``read_source:<id>`` — nodes in *other* files whose source contains
            any target symbol name (word-boundary match).  Captures cross-file
            callers and callees so the agent is never blind to dependencies that
-           live outside its own file.
+           live outside its own file.  Bounded and quality-filtered — see
+           ``_add_cross_file_references``.
         5. ``read_source:<id>`` / ``read_api:<id>`` — the committed output of the
            tasks this one directly ``depends_on``.  Layers 1-4 all derive from
            code that already exists, so for a task whose targets are brand-new
            files they return *nothing*; this is the layer that carries what a
            dependency built.
+
+        Each layer reports the context keys it added, so ``TASK_DISPATCHED`` can
+        say *which layer* put a node in the bundle. Counts alone were not enough:
+        attributing one real run's 151 KB bundle meant re-deriving the layers by
+        hand from ``task_graph.json`` and the source tree.
 
         The result is logged (``TASK_DISPATCHED``) and, when it is empty for a
         task that declares dependencies, refused rather than sent — see
@@ -1464,68 +1471,164 @@ class Session:
         """
         task = self._dag_task(bundle.task_id)
         context = dict(bundle.context)
-        self._add_write_targets(bundle.target_nodes, context)
-        self._add_planner_context(task.context_nodes, context)
-        target_files = self._add_same_file_siblings(bundle.target_nodes, context)
-        self._add_cross_file_references(bundle.target_nodes, target_files, context)
-        self._add_dependency_outputs(task, context)
-        return self._gate_dispatch(task, replace(bundle, context=context))
+        target_files = {str(n).split("::", 1)[0] for n in bundle.target_nodes}
+        layers: dict[str, list[str]] = {}
+        layers["write_targets"] = self._add_write_targets(
+            bundle.target_nodes, context
+        )
+        layers["planner_context"] = self._add_planner_context(
+            task.context_nodes, context
+        )
+        layers["same_file"] = self._add_same_file_siblings(
+            bundle.target_nodes, context
+        )
+        layers["cross_file"], dropped = self._add_cross_file_references(
+            bundle.target_nodes, target_files, context
+        )
+        layers["dependency_output"] = self._add_dependency_outputs(task, context)
+        return self._gate_dispatch(
+            task,
+            replace(bundle, context=context),
+            layers,
+            cross_file_dropped=dropped,
+        )
 
     def _add_write_targets(
         self, target_nodes: list[NodeId], context: dict[str, str]
-    ) -> None:
+    ) -> list[str]:
         """Layer 1: the current source of every node the agent will modify."""
+        added: list[str] = []
         for node_id in target_nodes:
             source = self._node_source(node_id)
             if source is not None:
-                context[f"write_source:{node_id}"] = source
+                key = f"write_source:{node_id}"
+                context[key] = source
+                added.append(key)
+        return added
 
     def _add_planner_context(
         self, context_nodes: list[NodeId], context: dict[str, str]
-    ) -> None:
+    ) -> list[str]:
         """Layer 2: the nodes the planner explicitly listed as context."""
+        added: list[str] = []
         for node_id in context_nodes:
             source = self._node_source(node_id)
             if source is not None:
-                context[f"read_source:{node_id}"] = source
+                key = f"read_source:{node_id}"
+                context[key] = source
+                added.append(key)
+        return added
 
     def _add_same_file_siblings(
         self, target_nodes: list[NodeId], context: dict[str, str]
-    ) -> set[str]:
-        """Layer 3: every other node in a target's file; returns the target files."""
-        target_files: set[str] = set()
+    ) -> list[str]:
+        """Layer 3: every other committed node in a write target's own file."""
+        added: list[str] = []
         for node_id in target_nodes:
             file_path = str(node_id).split("::", 1)[0]
-            target_files.add(file_path)
             for sibling_id in self._node_store.list_nodes(file_path):
                 if _context_has(context, sibling_id):
                     continue
                 source = self._node_source(sibling_id)
                 if source is not None:
-                    context[f"read_source:{sibling_id}"] = source
-        return target_files
+                    key = f"read_source:{sibling_id}"
+                    context[key] = source
+                    added.append(key)
+        return added
 
     def _add_cross_file_references(
         self,
         target_nodes: list[NodeId],
         target_files: set[str],
         context: dict[str, str],
-    ) -> None:
-        """Layer 4: nodes in other files that mention a target symbol by name."""
-        symbols = self._target_symbols(target_nodes)
-        if not symbols:
-            return
-        symbol_re = re.compile(
+    ) -> tuple[list[str], int]:
+        """Layer 4: nodes in other files that mention a target symbol by name.
+
+        Returns ``(keys added, nodes dropped for budget)``.
+
+        This was the most expensive layer in a real bundle and had no ceiling at
+        all: one task carried 151 KB here (67,847 input tokens), of which 88%
+        matched on nothing but ``__all__``. Three things now keep it honest, in a
+        single pass over the store:
+
+        - a symbol shorter than ``_MIN_SYMBOL_LEN`` is a word, not evidence of a
+          relationship — ``run`` matched six unrelated files in that run;
+        - a symbol matching more than ``_MAX_SYMBOL_MATCHES`` nodes is not evidence
+          either, and is discarded wholesale rather than node by node;
+        - what survives is ranked by match count (most first, then smallest, then
+          id) and added until ``session.cross_file_context_bytes`` is spent.
+
+        Past the budget an entry is **dropped**, not degraded to a digest as layer 5
+        does: a caller's value *is* its call site, and a signature digest of a caller
+        says nothing about how it calls.
+        """
+        budget = self._config.session.cross_file_context_bytes
+        symbols = {
+            s for s in self._target_symbols(target_nodes)
+            if len(s) >= _MIN_SYMBOL_LEN
+        }
+        if not symbols or budget == 0:
+            return [], 0
+        pattern = re.compile(
             r"\b(?:" + "|".join(re.escape(s) for s in sorted(symbols)) + r")\b"
         )
+        candidates = self._scan_for_symbols(pattern, target_files, context)
+        return self._spend_cross_file_budget(candidates, context, budget)
+
+    def _scan_for_symbols(
+        self,
+        pattern: re.Pattern[str],
+        target_files: set[str],
+        context: dict[str, str],
+    ) -> list[tuple[NodeId, str, frozenset[str]]]:
+        """One pass over the store: each matching node with the symbols it hit.
+
+        ``findall`` rather than ``search`` because the symbols a node matched are
+        what decides both whether that symbol is over-broad and how the node ranks.
+        """
+        found: list[tuple[NodeId, str, frozenset[str]]] = []
         for xfile_id in self._node_store.list_nodes():
             if str(xfile_id).split("::", 1)[0] in target_files:
                 continue  # same-file already handled in layer 3
             if _context_has(context, xfile_id):
                 continue
             source = self._node_source(xfile_id)
-            if source and symbol_re.search(source):
-                context[f"read_source:{xfile_id}"] = source
+            if not source:
+                continue
+            hits = frozenset(pattern.findall(source))
+            if hits:
+                found.append((xfile_id, source, hits))
+        return found
+
+    @staticmethod
+    def _spend_cross_file_budget(
+        candidates: list[tuple[NodeId, str, frozenset[str]]],
+        context: dict[str, str],
+        budget: int,
+    ) -> tuple[list[str], int]:
+        """Discard over-broad symbols, rank what is left, and fill the budget."""
+        counts: Counter[str] = Counter()
+        for _node_id, _source, hits in candidates:
+            counts.update(hits)
+        broad = {s for s, n in counts.items() if n > _MAX_SYMBOL_MATCHES}
+        kept = [
+            (node_id, source, hits - broad)
+            for node_id, source, hits in candidates
+            if hits - broad
+        ]
+        kept.sort(key=lambda c: (-len(c[2]), len(c[1]), str(c[0])))
+        added: list[str] = []
+        dropped = 0
+        spent = 0
+        for node_id, source, _hits in kept:
+            if budget >= 0 and spent + len(source) > budget:
+                dropped += 1
+                continue  # a smaller node further down may still fit
+            key = f"read_source:{node_id}"
+            context[key] = source
+            added.append(key)
+            spent += len(source)
+        return added, dropped
 
     def _target_symbols(self, target_nodes: list[NodeId]) -> set[str]:
         """Return the symbol names a task's targets define, for the layer-4 scan.
@@ -1555,12 +1658,12 @@ class Session:
                 symbols.add(_symbol_of(parts[2]))
         source = self._node_source(NodeId(file_path))
         if source is not None:
-            symbols |= _top_level_names(source)
+            symbols |= _defined_symbol_names(source)
         return symbols
 
     def _add_dependency_outputs(
         self, task: SubTask, context: dict[str, str]
-    ) -> int:
+    ) -> list[str]:
         """Layer 5: the committed output of every task this one depends on.
 
         ``depends_on`` is MAK's own assertion that the earlier task's output
@@ -1574,11 +1677,12 @@ class Session:
         Spending is bounded by ``session.dependency_context_bytes`` — past the
         budget an entry degrades to a public API digest rather than being dropped,
         because a test-writing task needs its dependency's *contract*, not its
-        bodies, and "informed cheaply" beats "blind". Returns the bytes spent.
+        bodies, and "informed cheaply" beats "blind". Returns the keys it added.
         """
         budget = self._config.session.dependency_context_bytes
         if budget == 0:
-            return 0
+            return []
+        added: list[str] = []
         spent = 0
         for dep_id in sorted(task.depends_on):
             for node_id in self._dag_task(dep_id).target_nodes:
@@ -1588,14 +1692,18 @@ class Session:
                 if not source:
                     continue
                 if budget < 0 or spent + len(source) <= budget:
-                    context[f"read_source:{node_id}"] = source
+                    key = f"read_source:{node_id}"
+                    context[key] = source
+                    added.append(key)
                     spent += len(source)
                     continue
                 digest = public_api_digest(source)
                 if digest:
-                    context[f"read_api:{node_id}"] = digest
+                    key = f"read_api:{node_id}"
+                    context[key] = digest
+                    added.append(key)
                     spent += len(digest)
-        return spent
+        return added
 
     def _dependency_source(self, node_id: NodeId) -> str | None:
         """Return a dependency target's source, assembling a file when needed.
@@ -1611,12 +1719,24 @@ class Session:
         fragments = self._node_store.get_committed_fragments(str(node_id))
         return assemble_fragments(fragments) if fragments else None
 
-    def _gate_dispatch(self, task: SubTask, bundle: TaskBundle) -> _Dispatch:
-        """Log the bundle's context volume; refuse to dispatch a starved bundle.
+    def _gate_dispatch(
+        self,
+        task: SubTask,
+        bundle: TaskBundle,
+        layers: dict[str, list[str]],
+        *,
+        cross_file_dropped: int,
+    ) -> _Dispatch:
+        """Log what the bundle carries; refuse to dispatch a starved bundle.
 
         Nothing in the kernel used to notice an empty bundle — no event, no
         metric, no guard — so the only report of it came from the one agent that
         refused to work blind. The others guessed and were recorded as completed.
+
+        ``layers`` carries the per-layer attribution: which layer contributed which
+        nodes, and how many bytes each cost. Counts alone left the expensive layer
+        unidentifiable without re-deriving it by hand against the plan and the
+        source tree.
         """
         counts = _context_counts(bundle.context)
         total_bytes = sum(len(v) for v in bundle.context.values())
@@ -1637,6 +1757,8 @@ class Session:
             read_apis=counts["read_api"],
             context_bytes=total_bytes,
             starved=starved,
+            layers=_layer_report(layers, bundle.context),
+            cross_file_dropped=cross_file_dropped,
         )
         if not starved:
             return _Dispatch(bundle)
@@ -2007,24 +2129,65 @@ def _symbol_of(qualified_name: str) -> str:
     return qualified_name.split("#", 1)[0].rsplit(".", 1)[-1]
 
 
-def _top_level_names(source: str) -> set[str]:
-    """Names a module's source defines at top level (functions, classes, assigns)."""
+def _defined_symbol_names(source: str) -> set[str]:
+    """Names a module defines that could be node ids: functions, classes, methods.
+
+    Deliberately **not** module-level assignments. Ingestion only ever creates
+    ``function`` / ``class`` / ``method`` nodes, so those names are exactly what a
+    symbol-level target contributes to the cross-file scan, and a whole-file target
+    must contribute the same set or the two disagree about one file depending on
+    how it happens to be stored.
+
+    Including assignments made this the single most expensive line in a real run:
+    most well-formed modules declare ``__all__``, so a whole-file target on any one
+    of them dragged in every other module that declares one — 123.7 KB of 151 KB in
+    the worst observed bundle, matched on nothing but that name.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return set()
     names: set[str] = set()
-    for stmt in tree.body:
-        if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+    stack: list[ast.stmt] = list(tree.body)
+    while stack:
+        stmt = stack.pop()
+        if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef):
             names.add(stmt.name)
-        elif isinstance(stmt, ast.Assign):
-            names.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
-        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-            names.add(stmt.target.id)
+        elif isinstance(stmt, ast.ClassDef):
+            names.add(stmt.name)
+            stack.extend(stmt.body)  # methods are node ids too
     return names
 
 
+# Match-quality bounds for the cross-file layer. Both are about *evidence*, not
+# cost — the byte budget is the cost dial (``session.cross_file_context_bytes``).
+# A symbol shorter than this is a word, not a name a relationship can be inferred
+# from: ``run`` matched six unrelated files in one real run.
+_MIN_SYMBOL_LEN = 4
+# A symbol that appears in more than this many nodes says nothing about which of
+# them is related to the target, so it is discarded entirely rather than dragging
+# every match in behind it.
+_MAX_SYMBOL_MATCHES = 8
+
 _CONTEXT_KEYS = ("write_source", "read_source", "read_api")
+
+
+def _layer_report(
+    layers: dict[str, list[str]], context: dict[str, str]
+) -> dict[str, dict[str, object]]:
+    """Summarize each enrichment layer's contribution for the dispatch event.
+
+    Node ids, not just counts: the acceptance for this is that the layer which put
+    a node in a bundle is readable from the log *alone*.
+    """
+    return {
+        name: {
+            "count": len(keys),
+            "bytes": sum(len(context[k]) for k in keys),
+            "nodes": [k.split(":", 1)[1] for k in keys],
+        }
+        for name, keys in layers.items()
+    }
 
 
 def _context_has(context: dict[str, str], node_id: NodeId) -> bool:

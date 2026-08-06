@@ -207,7 +207,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **1067 tests pass**,
+The **kernel is functionally complete and well-tested**: **1100 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -238,6 +238,7 @@ The module-by-module state:
 | **Pipeline integrity** | **Complete (Wave 11)** — no false conflicts, no store self-pollution, no silent drops |
 | **Agent output budget / truncation safety** | **Complete (Wave 12)** — no truncated reply reads as success, no laundered no-op |
 | **Dependency context** | **Complete (Wave 13)** — a task receives what its dependencies built; an empty bundle is refused, not dispatched |
+| **Context budget** | **Complete (Wave 16)** — the caller layer is bounded and evidence-filtered; the cascade guard runs from both front ends |
 | `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
@@ -515,7 +516,9 @@ skip to the subsystem you're touching.
   `TASK_DISPATCHED` for the other direction — what the kernel *gave* the agent
   (context entry counts and bytes per attempt, plus `starved`), because a bundle's
   context is everything an agent knows about the codebase and MAK used to dispatch
-  an empty one without recording it anywhere (§3.2).
+  an empty one without recording it anywhere (§3.2). Wave 16 adds the per-layer
+  `layers` breakdown to that payload, so the log answers *which* layer bought the
+  tokens rather than only how many there were.
 
 ## 2. Node Store
 
@@ -680,15 +683,15 @@ context from five layers, in order:
 3. **Same-file siblings** — all other committed nodes in the same file(s) as the
    write targets, automatically included as read context — regardless of whether the
    planner listed them.
-4. **Cross-file callers** — any node in the entire repo whose stored source contains
-   a word-boundary match for any write-target symbol name (the session scans all
-   stored nodes with a regex). This ensures an agent editing `def apple` also receives
+4. **Cross-file callers** — nodes elsewhere in the repo whose stored source contains
+   a word-boundary match for a write-target symbol name (the session scans all stored
+   nodes with one regex). This ensures an agent editing `def apple` also receives
    context from `def dog` in a different file that calls `apple`, even if the planner
    did not enumerate that dependency. A **whole-file** target is a bare path with no
    `::kind::name` segment, so it contributes no symbol of its own; since Wave 13 its
    search symbols come from the file's committed nodes instead (Wave 11's folding
    made whole-file grants the normal shape, and deriving nothing from them silently
-   disabled this entire layer for them).
+   disabled this entire layer for them). Bounded and quality-filtered — see below.
 5. **Dependency outputs** (Wave 13) — the committed source of every `target_node` of
    every task this one **directly** `depends_on`, as `read_source:<id>`. Direct
    edges only: the transitive closure grows without bound.
@@ -708,6 +711,36 @@ gate MAK had, reported as a completed task. `depends_on` is MAK's own assertion 
 the earlier task's output matters to the later one, and by dispatch time the DAG
 guarantees that output is committed and readable; nothing was reading it.
 
+**What counts as a symbol** (layer 4, Wave 16). Only names that could be **node
+ids**: functions, classes, and methods. Not module-level assignments. Wave 13's first
+version took every top-level binding, which meant `__all__` — declared by most
+well-formed modules — counted as a symbol, so a whole-file target on any such module
+dragged in every *other* module that declared one. In the run that exposed it, one
+task's bundle was 151 KB (67,847 input tokens) of which **123.7 KB matched on nothing
+but `__all__`**. The rule is parity with a symbol-level target: `_file_symbols` yields
+a fragmented file's literal `::method::` ids, so the AST fallback for a whole-file
+node must yield the same names or the two disagree about one file depending on how it
+happens to be stored.
+
+**Layer 4's ceiling and filters** (Wave 16). The layer that spends the most had no
+ceiling at all. One pass over the store now decides three things at once — the scan
+uses `findall`, not `search`, because *which* symbols a node matched is what both
+filters and the ranking need:
+
+- a symbol shorter than `_MIN_SYMBOL_LEN` (4) is a word, not evidence — `run` matched
+  six unrelated files in the observed run;
+- a symbol matching more than `_MAX_SYMBOL_MATCHES` (8) nodes says nothing about which
+  of them is related, and is discarded wholesale rather than node by node;
+- survivors are ranked (most matches first, then smallest, then id) and added until
+  `session.cross_file_context_bytes` (default `32000`) is spent.
+
+Past that budget an entry is **dropped**, not digested as layer 5 does: a caller's
+value *is* its call site, and a signature digest of a caller says nothing about how it
+calls. The number dropped is reported as `cross_file_dropped` on the dispatch event,
+so a truncated caller layer is visible rather than inferred. The two filters are
+module constants and the budget is config, because the filters are claims about
+*evidence* while the budget is the operator's cost dial.
+
 **Budget and degradation.** Whole dependency files are the most expensive thing a
 bundle can carry, so layer 5 spends a per-bundle byte budget
 (`session.dependency_context_bytes`, default `24000`; `0` disables the layer, `-1`
@@ -718,12 +751,18 @@ its dependency's *contract*, not its implementation, and "informed cheaply" beat
 "blind". This budget is the same one Wave 7 (planner token efficiency) exists to
 control — coordinate changes to it rather than solving it twice.
 
-**Every dispatch is now on the record.** Enrichment ends by logging a
-`TASK_DISPATCHED` event per attempt: task id, attempt number, targets, `depends_on`,
-the count of `write_source` / `read_source` / `read_api` entries, total context
-bytes, and a `starved` flag. Nothing in the kernel used to notice an empty bundle —
-no event, no metric, no guard — so the only report of the defect above came from the
-one agent honest enough to refuse.
+**Every dispatch is on the record.** Enrichment ends by logging a `TASK_DISPATCHED`
+event per attempt: task id, attempt number, targets, `depends_on`, the count of
+`write_source` / `read_source` / `read_api` entries, total context bytes, and a
+`starved` flag. Nothing in the kernel used to notice an empty bundle — no event, no
+metric, no guard — so the only report of the defect above came from the one agent
+honest enough to refuse.
+
+Counts alone turned out to be half an answer. Each layer reports the context keys it
+added, and the event carries a `layers` object — `{count, bytes, nodes}` per layer —
+so **which layer put a node in the bundle is readable from the log alone** (Wave 16).
+Attributing the 151 KB bundle above without it meant re-deriving the layers by hand
+against `task_graph.json` and the source tree.
 
 **The starvation guard.** A bundle that comes out of enrichment with **zero** context
 entries while its task declares `depends_on` edges or `context_nodes` is a *kernel*
@@ -893,7 +932,13 @@ enforces Python's compile-time rules — including `from __future__` placement �
   precision-over-recall contract: a call is judged only when the definition it
   reaches is provable — resolvable in-repo import, no local shadow, not a method.
   A file that does not parse yields nothing (the parse gate owns that failure).
-  `Session.detect_cross_module_defects()` drives it; see §10.
+  Import resolution runs in **strict** mode here (Wave 16): the whole dotted tail
+  must match a repo path, so `pkg.mod` finds `pkg/mod.py` and `src/pkg/mod.py` but
+  never `other/mod.py`. Validation's looser unique-last-segment fallback resolved
+  `from PyInstaller.__main__ import run` onto a repo's own `editor/__main__.py` and
+  reported correct third-party code as a defect — tolerable for a finding a human
+  reviews, not for something that generates a task telling an agent to change
+  working code. `Session.detect_cross_module_defects()` drives it; see §10.
 
 ### 5.1 Precision over recall (Wave 11)
 
@@ -1529,6 +1574,14 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   offending file into an `api_fix_<file>` fix-up `SubTask` (targeting that file's
   committed nodes, with the defining modules as context) appended to the cascade
   list — so both classes of breakage share one review flow rather than needing two.
+- **the cascade loop itself** lives in `mak/cascade.py` (Wave 16), not in a front
+  end. `run_cascade_waves(session, approve, announce=...)` drives detect → announce
+  → approve → install → run until nothing remains, the approver declines, or
+  `max_waves` bounds a self-feeding loop. Both `mak/__main__.py` and `cli/app.py`
+  call it with their own presentation and approval; neither owns *when* a fix-up
+  wave runs. It was in one front end before: the CLI ran the guard and the
+  interactive app did not, so whether a defect the kernel could name got reported
+  depended on which entry point the operator happened to launch.
 - **teardown** — run the project's test suite and push if green (when `auto_push`).
   The suite is the `session.test_command` (e.g. `pytest -q`) run in the work dir by a
   `TestRunner` built in the composition root (`mak/test_runner.py`); it reports a real
@@ -1664,6 +1717,9 @@ session:
                                    # carries from the tasks it depends on (Wave
                                    # 13, §3.2); past it entries degrade to an API
                                    # digest. 0 disables the layer, -1 unbounded
+  cross_file_context_bytes: 32000  # per-bundle budget for the cross-file caller
+                                   # layer (Wave 16, §3.2); past it entries are
+                                   # dropped, not digested. Same 0 / -1 semantics
 
 planner:
   model: "claude-opus-5"
@@ -1907,6 +1963,13 @@ on `prompt_toolkit` + `rich`. It wraps MAK as a library (calling
 `session.initialize()`, `session._planner.decompose()`, `session.install_plan()`,
 `session.run()` directly, not via subprocess) so the full structured plan is
 available in-process and the spinner/progress bar stays in the normal scroll region.
+
+It runs the **same post-wave cascade loop** the command line does (`mak.cascade`,
+§10), between `run()` and `teardown()`, presenting fix-up tasks with the same
+`show_plan` + y/N prompt it uses for the first plan and honouring `/no-review`. Until
+Wave 16 it ran no cascade detection at all, so a wave launched from the app could
+leave a caller broken — or two new modules disagreeing about each other's API — with
+nothing said about it.
 
 ### Starting the app
 
@@ -2537,8 +2600,32 @@ dispatch a bundle with no context at all to a task that has dependencies — the
 lesson as `AGENT_RESULT` and `stop_reason`: the fact that would have made the defect
 obvious was never written down. A post-wave `cross_module_check` catches the
 consequence as well as the cause: two modules created in one wave that disagree about
-each other's API now surface as fix-up tasks instead of reporting clean. What remains
-is the open-problems list above.
+each other's API now surface as fix-up tasks instead of reporting clean.
+
+**Wave 16** is Wave 13 read back from the next real run, and it is the wave that says
+the most about why these get read at all. The run itself was clean — 9 completed, 0
+failed, zero `context_dropped` where the previous three runs of the same project had
+dropped 14, 21 and 34 — but the log it now emits showed what that cost: **261k input
+tokens**, of which one task spent 151 KB (67,847 tokens) on context. Attributing it
+found that Wave 13's own whole-file symbol derivation counted module-level
+assignments, so `__all__` — which most well-formed modules declare — behaved as a
+symbol and dragged in every module that declared one; 88% of that bundle matched on
+nothing else, and `package_entrypoint` spent 47,607 input tokens to answer "no
+changes required" in 87. Wave 13 had bounded layer 5 as instructed and left layer 4,
+the one actually spending, with no ceiling. Both are fixed here: a symbol is now a
+name that can be a *node id*, and the caller layer is ranked, evidence-filtered
+(minimum length, maximum match count) and budget-bounded, which takes that bundle's
+cross-file content from 151 KB to the 16.4 KB of genuine callers. The same read found
+two guards that never reached the code they were built for: the cross-module check
+ran only from `mak run`, so the interactive app skipped it entirely — including on a
+`python -m editor` `TypeError` that very wave had created — and its import resolution
+inherited validation's unique-last-segment fallback, which resolved
+`from PyInstaller.__main__ import run` onto the repo's own `editor/__main__.py` and
+would have generated a task telling an agent to break correct code. The loop moved to
+`mak/cascade.py` so both front ends drive one implementation, and the gate now
+resolves strictly. `TASK_DISPATCHED` also carries per-layer attribution now, because
+doing this analysis by hand against `task_graph.json` is exactly the cost the event
+exists to remove. What remains is the open-problems list above.
 
 ---
 

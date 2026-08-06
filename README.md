@@ -63,9 +63,14 @@ reassembles the file.
 - Around those write targets the kernel assembles the agent's `read context`
 automatically: same-file siblings, cross-file callers, and — for a task that depends
 on another — whatever that dependency just built, so an agent writing a brand-new
-module is never guessing at the API of the module beside it. A task that would arrive
-with *no* context at all is a kernel bug, and MAK fails it rather than shipping the
-guess.
+module is never guessing at the API of the module beside it. Each layer is
+budget-bounded, so context stays relevant rather than growing with the repo. A task
+that would arrive with *no* context at all is a kernel bug, and MAK fails it rather
+than shipping the guess.
+
+- After a wave, MAK re-checks what that wave left behind — callers a changed signature
+broke, and new modules that disagree about each other's API — and offers the fix-ups
+as another reviewable plan.
 
 - Before dispatch, the kernel cross-checks the planner's proposed plan against that
 same AST-derived dependency graph — grounding hallucinated node ids, adding missing

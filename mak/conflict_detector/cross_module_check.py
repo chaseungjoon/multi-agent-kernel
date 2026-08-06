@@ -25,6 +25,13 @@ It inherits :mod:`mak.conflict_detector.signature_check`'s precision-over-recall
 contract: a call is judged only when the definition it reaches is *provable* —
 resolvable import, no local shadow, not a method — because a false report here
 costs a whole extra wave.
+
+That contract is also why import resolution runs in **strict** mode here while
+plan validation uses the loose one. Validation's wrong guess is a finding a human
+reads; this check's wrong guess is a fix-up task that tells an agent to change
+working code. Loose resolution matches on a unique *last segment*, which sent
+``from PyInstaller.__main__ import run`` to a repo's own ``editor/__main__.py`` and
+reported the correct import as a defect.
 """
 
 from __future__ import annotations
@@ -105,7 +112,7 @@ def _resolve_from_imports(
             continue
         module = node.module or ""
         defining = resolve_module_file(
-            module, files, from_file=path, level=node.level
+            module, files, from_file=path, level=node.level, strict=True
         )
         if defining is None or defining == path:
             continue
@@ -117,6 +124,7 @@ def _resolve_from_imports(
                 files,
                 from_file=path,
                 level=node.level,
+                strict=True,
             )
             if submodule is not None:
                 continue  # the alias is a module, not a symbol in ``defining``
@@ -136,7 +144,7 @@ def _resolve_module_aliases(
             binding = alias.asname or alias.name
             if "." in binding:
                 continue  # ``import pkg.mod`` binds ``pkg``, not the module
-            resolved = resolve_module_file(alias.name, files)
+            resolved = resolve_module_file(alias.name, files, strict=True)
             if resolved is not None and resolved != path:
                 aliases[binding] = resolved
     return aliases

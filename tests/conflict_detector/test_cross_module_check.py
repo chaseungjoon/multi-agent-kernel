@@ -112,3 +112,50 @@ class TestScope:
         # send the operator to a check that is not the one that can explain it.
         sources = {"alpha.py": _ALPHA, "beta.py": "def (:\n"}
         assert _check(sources, "beta.py") == []
+
+
+class TestStrictModuleResolution:
+    """A gate may not guess which file an import names (Wave 16)."""
+
+    def test_third_party_tail_collision_is_not_judged(self) -> None:
+        # `from PyInstaller.__main__ import run` resolved to the repo's own
+        # editor/__main__.py under last-segment matching, and the correct import
+        # was reported as a defect.
+        sources = {
+            "editor/__main__.py": "from editor.main import main\n",
+            "editor/main.py": "def main():\n    return 0\n",
+            "tools/build_binary.py": (
+                "from PyInstaller.__main__ import run as pyinstaller_run\n\n\n"
+                "def build():\n    return pyinstaller_run([])\n"
+            ),
+        }
+        assert _check(sources, "tools/build_binary.py") == []
+
+    def test_in_repo_import_still_resolves(self) -> None:
+        sources = {
+            "editor/__main__.py": (
+                "from editor.main import main\n\n\n"
+                "def go():\n    return main(['x'])\n"
+            ),
+            "editor/main.py": "def main():\n    return 0\n",
+        }
+        assert _check(sources, "editor/__main__.py") == ["signature_mismatch"]
+
+    def test_src_layout_resolves_by_full_tail(self) -> None:
+        # `pkg.mod` must still find `src/pkg/mod.py` — strict means the whole
+        # dotted tail matches, not that the path is literally the dotted path.
+        sources = {
+            "src/pkg/alpha.py": _ALPHA,
+            "src/pkg/beta.py": (
+                "from pkg.alpha import f\n\n\ndef g():\n    return f(1)\n"
+            ),
+        }
+        assert _check(sources, "src/pkg/beta.py") == ["signature_mismatch"]
+
+    def test_same_tail_in_two_places_is_ambiguous_and_skipped(self) -> None:
+        sources = {
+            "a/pkg/mod.py": "def f(x):\n    return x\n",
+            "b/pkg/mod.py": "def f(x, y):\n    return x\n",
+            "caller.py": "from pkg.mod import f\n\n\ndef g():\n    return f()\n",
+        }
+        assert _check(sources, "caller.py") == []

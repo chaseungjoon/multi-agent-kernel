@@ -32,6 +32,7 @@ from mak.bootstrap import (
     healthy_agent_types,
     validate_config,
 )
+from mak.cascade import CascadeApproval, run_cascade_waves
 from mak.config import (
     MakConfig,
     discover_config_path,
@@ -46,6 +47,7 @@ from mak.core.exceptions import (
     PlanReviewAborted,
 )
 from mak.core.logging import SessionLogger
+from mak.core.types import SubTask
 from mak.git_integration.git import GitHelper
 from mak.lock_manager.lock_table import LockTable
 from mak.node_store.store import NodeStore
@@ -165,6 +167,47 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="increase logging verbosity (-v info, -vv debug)",
     )
     return parser.parse_args(argv)
+
+
+def _announce_cascade(tasks: list[SubTask]) -> None:
+    """Tell the operator a fix-up wave was detected, before asking to run it."""
+    print(
+        f"\nmak: {len(tasks)} cascade task(s) detected — the files below call "
+        "or import something that does not match what it now is.",
+        file=sys.stderr,
+    )
+
+
+def _cli_cascade_approval(*, no_review: bool) -> CascadeApproval:
+    """Review a cascade plan in the terminal, or decline it under --no-review."""
+    def approve(tasks: list[SubTask]) -> list[SubTask] | None:
+        if no_review:
+            print(
+                "mak: --no-review is set; skipping cascade wave. "
+                "Callers may be broken.",
+                file=sys.stderr,
+            )
+            return None
+        try:
+            return display_plan_for_review(
+                tasks,
+                header=(
+                    "\n=== CASCADE WAVE ===\n"
+                    "The previous wave left call sites or imports that do "
+                    "not resolve.\n"
+                    "The tasks below reconcile them.\n"
+                    "Approve, edit, or abort.\n"
+                    "==================="
+                ),
+            )
+        except PlanReviewAborted:
+            print(
+                "mak: cascade wave declined; callers may still be broken.",
+                file=sys.stderr,
+            )
+            return None
+
+    return approve
 
 
 def _planner_api_key(config: MakConfig) -> str | None:
@@ -347,45 +390,15 @@ def main(
         # a committed signature change that existing code still calls the old
         # way, or two modules the wave created that disagree about each other's
         # API.  If so, surface those as a new plan for the user to review (same
-        # UI as the initial plan), then run another wave.  Repeat until no
-        # cascades remain or the user declines.
-        while True:
-            cascade_tasks = session.detect_cascade_tasks()
-            if not cascade_tasks:
-                break
-            print(
-                f"\nmak: {len(cascade_tasks)} cascade task(s) detected — "
-                "the files below call or import something that does not match "
-                "what it now is.",
-                file=sys.stderr,
-            )
-            if args.no_review:
-                print(
-                    "mak: --no-review is set; skipping cascade wave. "
-                    "Callers may be broken.",
-                    file=sys.stderr,
-                )
-                break
-            try:
-                cascade_tasks = display_plan_for_review(
-                    cascade_tasks,
-                    header=(
-                        "\n=== CASCADE WAVE ===\n"
-                        "The previous wave left call sites or imports that do "
-                        "not resolve.\n"
-                        "The tasks below reconcile them.\n"
-                        "Approve, edit, or abort.\n"
-                        "==================="
-                    ),
-                )
-            except PlanReviewAborted:
-                print(
-                    "mak: cascade wave declined; callers may still be broken.",
-                    file=sys.stderr,
-                )
-                break
-            session.install_plan(cascade_tasks)
-            result = session.run()
+        # UI as the initial plan), then run another wave.  The loop itself lives
+        # in mak.cascade so the interactive app runs exactly the same one.
+        cascade_result = run_cascade_waves(
+            session,
+            _cli_cascade_approval(no_review=args.no_review),
+            announce=_announce_cascade,
+        )
+        if cascade_result is not None:
+            result = cascade_result
 
         tests_passed = session.teardown()
     except PlanReviewAborted:

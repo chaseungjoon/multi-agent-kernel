@@ -269,17 +269,42 @@ def _collect_references(tree: ast.AST) -> tuple[set[str], set[tuple[str, str]]]:
     return bare, attrs
 
 
+def _module_to_file_strict(dotted: str, files: frozenset[str]) -> str | None:
+    """Resolve an absolute dotted module by its **whole** path tail, or not at all.
+
+    ``pkg.mod`` resolves to ``pkg/mod.py`` and to ``src/pkg/mod.py``, but never to
+    ``other/mod.py``. Unlike :func:`_module_to_file` there is no last-segment
+    fallback, which is what keeps a third-party import from landing on a repo file
+    that merely ends the same way.
+    """
+    tail = dotted.replace(".", "/") + ".py"
+    if tail in files:
+        return tail
+    matches = [f for f in files if f.endswith(f"/{tail}")]
+    return matches[0] if len(matches) == 1 else None
+
+
 def resolve_module_file(
     dotted: str,
     files: frozenset[str],
     *,
     from_file: str | None = None,
     level: int = 0,
+    strict: bool = False,
 ) -> str | None:
     """Resolve an import's module to a file in ``files``, or None if it is external.
 
     ``level`` is ``ast.ImportFrom.level``: 0 for an absolute import, and ≥1 for a
     relative one, which resolves against ``from_file``'s package directory.
+
+    ``strict`` requires an absolute import's **whole** dotted tail to match the
+    file path. The loose default resolves by unique *last segment*, which is right
+    for plan validation — a wrong edge there is a soft finding a human reviews —
+    and wrong for anything that gates. Under the loose rule
+    ``from PyInstaller.__main__ import run`` resolved to a repo's own
+    ``editor/__main__.py``, and a defect check built on that would have told an
+    agent to "fix" a correct third-party import. Relative imports are already
+    exact and ``strict`` does not change them.
 
     Public because the post-wave cross-module check needs the same resolution this
     module already does — one implementation, so the two cannot drift into
@@ -287,7 +312,13 @@ def resolve_module_file(
     """
     parts = [p for p in dotted.split(".") if p]
     if not level:
-        return _module_to_file(dotted, files) if parts else None
+        if not parts:
+            return None
+        return (
+            _module_to_file_strict(dotted, files)
+            if strict
+            else _module_to_file(dotted, files)
+        )
     if from_file is None:
         return None
     base = _relative_dir(from_file, level)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from prompt_toolkit import PromptSession
@@ -36,6 +37,7 @@ from cli.runner import (
 )
 from cli.setup import run_setup
 from cli.ui import ACCENT, print_banner, show_diff, show_plan, show_results
+from mak.cascade import run_cascade_waves
 
 _STYLE = Style.from_dict({
     "prompt":                                  f"{ACCENT} bold",
@@ -215,6 +217,18 @@ class MakCli:
             console.print(f"  [red]✗[/red] Execution error: {run_error}")
             return
 
+        # ── 6b. Cascade waves ──────────────────────────────────────────────────
+        # The same loop `mak run` drives (mak.cascade): a wave can leave callers
+        # of a changed signature broken, or two new modules disagreeing about
+        # each other's API. This used to run only from the command line, so the
+        # same defect was reported or not depending on which front end you
+        # launched.
+        cascade_result = run_cascade_waves(
+            mak_session, self._cascade_approval(), announce=self._announce_cascade
+        )
+        if cascade_result is not None:
+            run_result = cascade_result
+
         # ── 7. Teardown ────────────────────────────────────────────────────────
         tests_passed = True
         with console.status("[dim]Running tests…[/dim]", spinner="dots"):
@@ -231,6 +245,35 @@ class MakCli:
         diff = get_git_diff(state.work_dir, pre_hash)
         if diff.strip():
             show_diff(console, diff)
+
+    def _announce_cascade(self, tasks: list[Any]) -> None:
+        """Say what the previous wave left behind, then show the fix-up plan."""
+        n = len(tasks)
+        self.console.print()
+        self.console.print(
+            f"  [yellow]⚠[/yellow] {n} cascade task{'s' if n != 1 else ''} — the "
+            "files below call or import something that no longer matches."
+        )
+        show_plan(self.console, tasks)
+
+    def _cascade_approval(self) -> Callable[[list[Any]], list[Any] | None]:
+        """Approve a cascade wave with the same y/N prompt the first plan uses."""
+        def approve(tasks: list[Any]) -> list[Any] | None:
+            if self.state.no_review:
+                self.console.print(
+                    "  [dim]no-review is on; skipping the cascade wave — "
+                    "callers may be broken.[/dim]"
+                )
+                return None
+            if not self._confirm_plan():
+                self.console.print(
+                    "  [dim]Cascade declined; callers may still be broken.[/dim]"
+                )
+                return None
+            self.console.print()
+            return tasks
+
+        return approve
 
     def _confirm_plan(self) -> bool:
         """Single-line plan approval: Enter/y runs, anything else cancels."""

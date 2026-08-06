@@ -124,6 +124,13 @@ class SessionConfig:
     bundle can hold. Past the budget an entry degrades to a public API digest
     instead of being dropped, so the task is never blind: ``0`` disables the layer
     entirely and ``-1`` makes it unbounded.
+
+    ``cross_file_context_bytes`` bounds the *caller* layer the same way, and needs
+    to: one observed bundle spent 151 KB (67,847 input tokens) on a single task
+    because that layer had no ceiling at all. Past this budget an entry is
+    **dropped** rather than digested — a caller's value is its call site, and a
+    signature digest of a caller says nothing. ``0`` disables the layer, ``-1``
+    makes it unbounded.
     """
 
     work_dir: str = "."
@@ -133,6 +140,7 @@ class SessionConfig:
     deadlock_check_interval_s: float = 5.0
     test_command: str | None = None
     dependency_context_bytes: int = 24000
+    cross_file_context_bytes: int = 32000
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +244,7 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
             raw, "deadlock_check_interval_s", 5.0),
         test_command=_opt_str(raw, "test_command"),
         dependency_context_bytes=_as_int(raw, "dependency_context_bytes", 24000),
+        cross_file_context_bytes=_as_int(raw, "cross_file_context_bytes", 32000),
     )
 
 

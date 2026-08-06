@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from mak.core.types import NodeId
-from mak.planner.depgraph import DepGraph, build_dep_graph
+from mak.planner.depgraph import (
+    DepGraph,
+    build_dep_graph,
+    resolve_module_file,
+)
 
 
 def _graph(sources: dict[str, str]) -> DepGraph:
@@ -141,3 +145,43 @@ class TestRobustness:
         graph = _graph({})
         assert graph.references == {}
         assert graph.definers == {}
+
+
+class TestResolveModuleFile:
+    """Loose resolution serves validation; strict resolution serves the gates."""
+
+    _FILES = frozenset({"editor/__main__.py", "editor/main.py", "src/pkg/mod.py"})
+
+    def test_loose_matches_a_unique_last_segment(self) -> None:
+        assert resolve_module_file(
+            "PyInstaller.__main__", self._FILES
+        ) == "editor/__main__.py"
+
+    def test_strict_rejects_a_last_segment_collision(self) -> None:
+        assert resolve_module_file(
+            "PyInstaller.__main__", self._FILES, strict=True
+        ) is None
+
+    def test_strict_accepts_an_exact_path(self) -> None:
+        assert resolve_module_file(
+            "editor.main", self._FILES, strict=True
+        ) == "editor/main.py"
+
+    def test_strict_accepts_a_full_tail_under_a_source_root(self) -> None:
+        assert resolve_module_file(
+            "pkg.mod", self._FILES, strict=True
+        ) == "src/pkg/mod.py"
+
+    def test_relative_import_is_unaffected_by_strict(self) -> None:
+        files = frozenset({"editor/homeart.py", "editor/homescreen.py"})
+        for strict in (False, True):
+            assert resolve_module_file(
+                "homeart",
+                files,
+                from_file="editor/homescreen.py",
+                level=1,
+                strict=strict,
+            ) == "editor/homeart.py"
+
+    def test_empty_module_resolves_to_nothing(self) -> None:
+        assert resolve_module_file("", self._FILES, strict=True) is None
