@@ -81,10 +81,12 @@ before it reaches the scheduler, not after a collision.
 > Prerequisites: **Python ≥ 3.11**, **[uv](https://docs.astral.sh/uv/) (or [pipx](https://github.com/pypa/pipx))**, **git**
 
 ```bash
-# Recommended 
+# With uv (Recommended)
 uv tool install git+https://github.com/chaseungjoon/multi-agent-kernel
+```
 
-# Or with pipx
+```bash
+# With pipx
 pipx install git+https://github.com/chaseungjoon/multi-agent-kernel
 ```
 
@@ -101,6 +103,7 @@ cd multi-agent-kernel
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
+# Run binary
 ./bin/mak
 ```
 
