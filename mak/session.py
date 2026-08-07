@@ -1394,15 +1394,34 @@ class Session:
     ) -> str | None:
         """Return the instruction to attach to the next attempt at this task.
 
-        A truncation gets a *compaction* instruction rather than the generic
-        "that failed, try again": re-sending an identical request produces an
-        identically-cut reply, which is exactly how one task burned three
-        attempts on three byte-identical failures.
+        A retry is only worth an attempt if it can differ from the one that
+        failed, and *what* to change depends on how it failed:
+
+        - a **truncation** gets a compaction instruction rather than the generic
+          "that failed, try again": re-sending an identical request produces an
+          identically-cut reply, which is exactly how one task burned three
+          attempts on three byte-identical failures;
+        - a **schema slip** gets the schema restated. The generic note says the
+          previous answer was unusable but never what shape was wanted, so a run
+          that returned ``modified_fragments`` as a string returned it as a
+          string three times — ~18k output tokens, one failed task, and twelve
+          dependents stranded behind it.
         """
         reason = self._failure_reasons.get(progress.task_id)
         truncated = result is not None and matches(
             result.stop_reason, TRUNCATION_STOP_REASONS
         )
+        if not truncated and result is not None and result.error_kind == "protocol":
+            return (
+                f"Your previous response did not match the result schema: {reason}. "
+                "'modified_fragments' must be a JSON array of objects, each "
+                '{"node_id": "<an id copied verbatim from target_nodes>", '
+                '"new_source": "<the node\'s complete new source>"}. Emit it as '
+                "structured tool input — not as a string, and not as a "
+                "JSON-encoded array inside a string. If you have nothing to "
+                "return, set no_changes_required instead of sending an empty or "
+                "differently-shaped field."
+            )
         if truncated:
             return (
                 "Your previous response was cut off at the model's output-token "

@@ -265,6 +265,35 @@ class TestApiFailureClasses:
         assert "'success'" in (result.error or "")
 
 
+class TestErrorKind:
+    """Which kind of failure it was, so the retry can be aimed at it.
+
+    ``retryable`` says another attempt is worth making; it does not say what to
+    change. One run re-sent the same malformed shape three times because the
+    feedback never named the schema.
+    """
+
+    def test_a_decode_failure_is_a_protocol_error(self) -> None:
+        adapter = UndecodableApiAdapter(TaskResult(task_id="t1", success=True))
+        assert AgentRunner().assign(adapter, _bundle("t1")).error_kind == "protocol"
+
+    def test_a_truncation_is_named_as_one(self) -> None:
+        adapter = TruncatedApiAdapter(TaskResult(task_id="t1", success=True))
+        assert AgentRunner().assign(adapter, _bundle("t1")).error_kind == "truncated"
+
+    def test_a_refusal_is_named_as_one(self) -> None:
+        adapter = RefusingApiAdapter(TaskResult(task_id="t1", success=True))
+        assert AgentRunner().assign(adapter, _bundle("t1")).error_kind == "refused"
+
+    def test_a_transport_failure_is_named_as_one(self) -> None:
+        adapter = ExplodingApiAdapter(TaskResult(task_id="t1", success=True))
+        assert AgentRunner().assign(adapter, _bundle("t1")).error_kind == "api"
+
+    def test_a_successful_result_has_no_error_kind(self) -> None:
+        adapter = StubApiAdapter(TaskResult(task_id="t1", success=True))
+        assert AgentRunner().assign(adapter, _bundle("t1")).error_kind is None
+
+
 # --- subprocess path tests ---------------------------------------------------
 
 

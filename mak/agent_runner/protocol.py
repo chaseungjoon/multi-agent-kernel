@@ -176,24 +176,70 @@ def _require_mapping(data: object, field_name: str) -> dict[str, Any]:
     return data
 
 
+_EXCERPT_LIMIT = 200
+
+
+def _excerpt(value: object, limit: int = _EXCERPT_LIMIT) -> str:
+    """Return a short, single-line, quoted sample of a rejected value.
+
+    A rejection that reports only the *type* it received cannot be diagnosed
+    afterwards. One real run failed three times on ``got string`` and the log
+    could not say whether the string was a JSON-encoded array (recoverable) or
+    raw source text (not), so the fix had to be chosen without the evidence.
+    Bounded and whitespace-collapsed, because this lands in an event payload.
+    """
+    text = value if isinstance(value, str) else repr(value)
+    flat = " ".join(text.split())
+    return repr(flat if len(flat) <= limit else f"{flat[:limit]}…")
+
+
+def _parse_fragment_string(raw: str) -> list[Any] | dict[str, Any]:
+    """Recover ``modified_fragments`` that arrived JSON-encoded inside a string.
+
+    Never returns a string, so the caller can recurse exactly once.
+    """
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError:
+        decoded = None
+    if isinstance(decoded, list | dict):
+        return decoded
+    raise AgentProtocolError(
+        "'modified_fragments' must be an array of {node_id, new_source} objects, "
+        f"got string: {_excerpt(raw)}"
+    )
+
+
 def _as_fragment_list(raw: object) -> list[dict[str, Any]]:
     """Normalize ``modified_fragments`` to a list of objects.
 
-    The documented shape is an array of ``{node_id, new_source}``. A model that
-    returns a **single object** instead is a common schema slip, and iterating it
-    yields its *keys* — strings — so indexing them raised
-    ``TypeError: string indices must be integers``, which the runner then
-    reported as "api call failed" and the retry could do nothing with. One object
-    is obviously one fragment, so coerce it; anything else is named and rejected.
+    The documented shape is an array of ``{node_id, new_source}``. Two schema
+    slips are recovered rather than rejected, because both are unambiguous about
+    what the model meant and each one cost a real run its whole task subtree:
+
+    - a **single object** instead of an array. Iterating it yields its *keys* —
+      strings — so indexing them raised ``TypeError: string indices must be
+      integers``, reported as "api call failed", which the retry could do nothing
+      with. One object is obviously one fragment.
+    - the array **JSON-encoded into a string**. A run lost 1 task and stranded 12
+      dependents on three identical ``got string`` rejections, ~18k output tokens
+      spent re-earning the same answer. The array is right there; parsing it is
+      not a guess.
+
+    A string that is *not* JSON stays a rejection. Reading it as "the source of
+    my one target" would mean inventing the node id it belongs to, and this
+    decoder does not guess — the retry note states the required shape instead.
     """
     if raw is None:
         return []
+    if isinstance(raw, str):
+        return _as_fragment_list(_parse_fragment_string(raw))
     if isinstance(raw, dict):
         return [raw]
     if not isinstance(raw, list):
         raise AgentProtocolError(
             "'modified_fragments' must be an array of {node_id, new_source} "
-            f"objects, got {_type_name(raw)}"
+            f"objects, got {_type_name(raw)}: {_excerpt(raw)}"
         )
     fragments: list[dict[str, Any]] = []
     for index, fragment in enumerate(raw):

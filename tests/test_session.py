@@ -2428,3 +2428,101 @@ class TestDispatchLayerAttribution:
         )
         assert layers["cross_file"]["bytes"] > 0
         assert layers["dependency_output"]["count"] == 0
+
+
+class TestSchemaSlipRetry:
+    """A retry after a shape error restates the shape (not "try again")."""
+
+    def test_the_retry_note_names_the_required_schema(self, tmp_path: Path) -> None:
+        # A real run returned `modified_fragments` as a string three times: the
+        # generic note said the answer was unusable but never what shape was
+        # wanted, so ~18k output tokens bought three identical rejections and
+        # twelve dependent tasks were stranded behind the failure.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        notes: list[str | None] = []
+
+        class SchemaSlipRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                notes.append(task.retry_note)
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=False,
+                    error=(
+                        "'modified_fragments' must be an array of "
+                        "{node_id, new_source} objects, got string: 'def a(): ...'"
+                    ),
+                    error_kind="protocol",
+                )
+
+        session = _session(
+            tmp_path, runner=SchemaSlipRunner(), node_store=store, max_attempts=3
+        )
+        session.initialize()
+        session.install_plan([_task("edit", ["m.py"])])
+        session.run()
+
+        assert notes[0] is None
+        assert notes[1] is not None
+        assert "modified_fragments" in notes[1]
+        assert "JSON array of objects" in notes[1]
+        assert "not as a string" in notes[1]
+
+    def test_a_truncation_still_gets_the_compaction_note(
+        self, tmp_path: Path
+    ) -> None:
+        # The shape branch must not swallow the truncation case: a cut reply
+        # needs a *smaller* answer, not a restated schema.
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        notes: list[str | None] = []
+
+        class TruncatedProtocolRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                notes.append(task.retry_note)
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=False,
+                    error="payload was cut off before 'success' arrived",
+                    stop_reason="max_tokens",
+                    error_kind="protocol",
+                )
+
+        session = _session(
+            tmp_path,
+            runner=TruncatedProtocolRunner(),
+            node_store=store,
+            max_attempts=3,
+        )
+        session.initialize()
+        session.install_plan([_task("edit", ["m.py"])])
+        session.run()
+        assert notes[1] is not None
+        assert "cut off" in notes[1]
+
+    def test_an_ordinary_failure_keeps_the_generic_note(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        notes: list[str | None] = []
+
+        class ApiFailureRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                notes.append(task.retry_note)
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=False,
+                    error="api call failed: connection reset",
+                    error_kind="api",
+                )
+
+        session = _session(
+            tmp_path, runner=ApiFailureRunner(), node_store=store, max_attempts=2
+        )
+        session.initialize()
+        session.install_plan([_task("edit", ["m.py"])])
+        session.run()
+        assert notes[1] is not None
+        assert "modified_fragments" not in notes[1]
+        assert "produced nothing usable" in notes[1]

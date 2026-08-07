@@ -58,9 +58,16 @@ class AgentResponseError(AgentError):
 
     ``retryable`` is False for a failure that repeats verbatim on an identical
     request (a refusal), so the session stops instead of burning its attempts.
+
+    ``kind`` is the stable slug the session matches on to decide *how* to retry.
+    A retry is only worth an attempt if it can differ from the one that failed,
+    and what makes it differ depends on which of these went wrong — a truncation
+    needs a smaller answer, a schema slip needs the schema restated. Matching on
+    the message text instead would tie that decision to prose.
     """
 
     retryable = True
+    kind = "response"
 
     def __init__(
         self,
@@ -82,11 +89,14 @@ class AgentTruncatedError(AgentResponseError):
     point where the provider's stop signal is still in hand.
     """
 
+    kind = "truncated"
+
 
 class AgentRefusedError(AgentResponseError):
     """Raised when the model declined to answer. Not retryable."""
 
     retryable = False
+    kind = "refused"
 
 
 class AgentProtocolError(AgentResponseError):
@@ -96,6 +106,8 @@ class AgentProtocolError(AgentResponseError):
     failed" blames the network for a malformed response body, and a bare
     ``TypeError``/``KeyError`` gives the retry nothing to act on.
     """
+
+    kind = "protocol"
 
 
 class ConfigError(MakError):

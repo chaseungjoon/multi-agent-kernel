@@ -207,7 +207,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **1100 tests pass**,
+The **kernel is functionally complete and well-tested**: **1116 tests pass**,
 `mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
@@ -486,7 +486,11 @@ skip to the subsystem you're touching.
     token counts, carried through for every attempt, good or bad), and
     `retryable` (False for a failure that repeats verbatim on an identical
     request — a refusal — so the session doesn't burn its whole attempt budget
-    re-asking it).
+    re-asking it). `error_kind` (`truncated` / `refused` / `protocol` / `api`)
+    carries *which* failure it was, from the exception class: `retryable` says
+    another attempt is worth making, not what to change, and a retry that cannot
+    differ from the attempt that failed spends the budget re-earning the same
+    answer (§10).
   - `SubTask` — a planned unit of work: `task_id`, `description`, `target_nodes`
     (what it will *write*), `context_nodes` (what it needs to *read*),
     `depends_on`, `agent_type`.
@@ -1199,6 +1203,19 @@ it cost that task a whole attempt. `decode_task_result` now:
 - coerces a lone `modified_fragments` object into a one-element list (an
   obviously-intended shape) and rejects anything else that isn't an array, naming
   the field and the type received;
+- coerces `modified_fragments` **JSON-encoded into a string** by parsing it once
+  and validating the result normally. This is the second occurrence of the same
+  class: a later run lost a task and stranded twelve dependents behind it on
+  three identical `got string` rejections, ~18k output tokens spent re-earning
+  the same answer, while the array sat inside the string. A string that is *not*
+  JSON stays a rejection — reading it as "the source of my one target" would mean
+  inventing the node id it belongs to, and the decoder does not guess; the retry
+  note states the required shape instead (§10);
+- includes a bounded, whitespace-collapsed **excerpt of the rejected value** in
+  the message, so the log says what arrived and not only its type. Reporting
+  `got string` alone made that run's failure undiagnosable after the fact: the
+  artifacts could not distinguish a JSON-encoded array (recoverable) from raw
+  source text (not);
 - validates every fragment is an object with a non-empty string `node_id` and
   (if present) a string `new_source`, and that `new_sources` is a mapping of
   string values — each violation raises `AgentProtocolError` naming exactly
@@ -1663,11 +1680,16 @@ Robustness properties worth knowing:
   `agent_result` events). It now:
     - computes a `retry_note` (`Session._retry_note`) and stashes it on
       `SubTaskProgress`, so `_submit_partials` attaches it to the re-dispatched
-      `TaskBundle` (§1, §7.4). A truncation gets a **compaction** instruction
-      ("return the same work in less output… if one node's full source
-      genuinely cannot fit, return `success=false`" rather than a partial
-      rewrite); any other failure gets the recorded reason plus an instruction
-      not to repeat it;
+      `TaskBundle` (§1, §7.4). What the note says is chosen by *how* the attempt
+      failed (`TaskResult.error_kind`, §1), because that is what decides what a
+      different answer would look like. A truncation gets a **compaction**
+      instruction ("return the same work in less output… if one node's full
+      source genuinely cannot fit, return `success=false`" rather than a partial
+      rewrite). A **schema slip** (`error_kind == "protocol"`) gets the schema
+      restated in full — the generic note said the previous answer was unusable
+      but never what shape was wanted, so one run returned `modified_fragments`
+      as a string three times running. Any other failure gets the recorded reason
+      plus an instruction not to repeat it;
     - fails the task **immediately**, without spending the remaining attempt
       budget, when the result is marked `retryable=False` (a refusal) — the
       same prompt would earn the same refusal on every remaining attempt, so

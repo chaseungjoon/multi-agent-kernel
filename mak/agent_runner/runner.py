@@ -42,6 +42,7 @@ def _response_failure(task_id: str, exc: AgentResponseError) -> TaskResult:
         stop_reason=exc.stop_reason,
         usage=exc.usage,
         retryable=exc.retryable,
+        error_kind=exc.kind,
     )
 
 
@@ -129,6 +130,7 @@ class AgentRunner:
                 task_id=task.task_id,
                 success=False,
                 error=f"api call failed: {exc}",
+                error_kind="api",
             )
         try:
             return adapter.parse_result(raw)
@@ -139,6 +141,7 @@ class AgentRunner:
                 task_id=task.task_id,
                 success=False,
                 error=f"could not decode agent result: {exc}",
+                error_kind="protocol",
             )
 
     # -- subprocess path ---------------------------------------------------

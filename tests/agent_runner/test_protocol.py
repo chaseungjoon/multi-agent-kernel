@@ -365,3 +365,106 @@ class TestMapReturnedSources:
             "input_tokens": 24000,
             "output_tokens": 21425,
         }
+
+
+class TestJsonEncodedFragments:
+    """A JSON-encoded array is a schema slip, not a different answer.
+
+    A real run lost one task and stranded twelve dependents on three identical
+    ``modified_fragments … got string`` rejections. The array was in the string.
+    """
+
+    def test_a_json_encoded_array_is_recovered(self) -> None:
+        fragments = [
+            {"node_id": "m.py::function::a", "new_source": "x = 1\n"},
+            {"node_id": "m.py::function::b", "new_source": "y = 2\n"},
+        ]
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_fragments": json.dumps(fragments),
+        }
+        result = decode_task_result(json.dumps(data))
+        assert result.new_sources == {
+            NodeId("m.py::function::a"): "x = 1\n",
+            NodeId("m.py::function::b"): "y = 2\n",
+        }
+        assert result.modified_nodes == [
+            NodeId("m.py::function::a"),
+            NodeId("m.py::function::b"),
+        ]
+
+    def test_a_json_encoded_lone_object_is_recovered(self) -> None:
+        # Both slips at once: stringified *and* not wrapped in an array.
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_fragments": json.dumps(
+                {"node_id": "m.py", "new_source": "x = 1\n"}
+            ),
+        }
+        result = decode_task_result(json.dumps(data))
+        assert result.new_sources == {NodeId("m.py"): "x = 1\n"}
+
+    def test_a_recovered_array_still_validates_its_entries(self) -> None:
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_fragments": json.dumps([{"new_source": "x = 1\n"}]),
+        }
+        with pytest.raises(AgentProtocolError, match="node_id"):
+            decode_task_result(json.dumps(data))
+
+    def test_raw_source_text_is_still_rejected(self) -> None:
+        # Reading this as "the source of my one target" would mean inventing the
+        # node id it belongs to. The decoder does not guess; the retry note says
+        # what shape was wanted instead.
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_fragments": "def a():\n    return 1\n",
+        }
+        with pytest.raises(AgentProtocolError, match="must be an array"):
+            decode_task_result(json.dumps(data))
+
+    def test_a_json_scalar_string_is_rejected(self) -> None:
+        # json.loads succeeds and yields a string; coercing that would recurse.
+        data = {"task_id": "t1", "success": True, "modified_fragments": '"nope"'}
+        with pytest.raises(AgentProtocolError, match="must be an array"):
+            decode_task_result(json.dumps(data))
+
+
+class TestRejectionExcerpts:
+    """A rejection reports the value, not only its type.
+
+    One run failed three times on ``got string`` and the log could not say
+    whether the string held a JSON array (recoverable) or raw source (not), so
+    the fix had to be chosen without the evidence.
+    """
+
+    def test_the_offending_string_is_quoted_in_the_message(self) -> None:
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_fragments": "def a(): pass",
+        }
+        with pytest.raises(AgentProtocolError, match="def a\\(\\): pass"):
+            decode_task_result(json.dumps(data))
+
+    def test_the_excerpt_is_bounded_and_single_line(self) -> None:
+        data = {
+            "task_id": "t1",
+            "success": True,
+            "modified_fragments": "line\n" * 500,
+        }
+        with pytest.raises(AgentProtocolError) as excinfo:
+            decode_task_result(json.dumps(data))
+        message = str(excinfo.value)
+        assert "\n" not in message
+        assert len(message) < 400
+        assert "…" in message
+
+    def test_a_non_string_value_is_also_sampled(self) -> None:
+        data = {"task_id": "t1", "success": True, "modified_fragments": 42}
+        with pytest.raises(AgentProtocolError, match="42"):
+            decode_task_result(json.dumps(data))

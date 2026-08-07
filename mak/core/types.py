@@ -96,6 +96,15 @@ class TaskResult:
     - ``retryable`` — False for a failure that repeats verbatim on an identical
       request (a refusal), so the session fails fast rather than spending its
       whole attempt budget on the same answer.
+    - ``error_kind`` — *which* kind of failure it was (``truncated`` /
+      ``refused`` / ``protocol`` / ``api``), carried from the exception class so
+      the retry can be aimed. "Retryable" only says another attempt is worth
+      making; it does not say what to change, and a retry that cannot differ
+      from the attempt that failed spends the budget re-earning the same answer.
+      One run rejected the same malformed shape three times because the feedback
+      never named the schema. Unlike ``retryable``, it is **never read off the
+      wire**: it is MAK's classification of why MAK could not use a reply, so an
+      agent setting it would be steering the feedback about its own output.
     """
 
     task_id: str
@@ -107,6 +116,7 @@ class TaskResult:
     stop_reason: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
     retryable: bool = True
+    error_kind: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
