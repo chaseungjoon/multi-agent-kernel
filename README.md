@@ -80,13 +80,13 @@ before it reaches the scheduler, not after a collision.
 
 > Prerequisites: **Python ≥ 3.11**, **[uv](https://docs.astral.sh/uv/) (or [pipx](https://github.com/pypa/pipx))**, **git**
 
+**With uv (Recommended)**
 ```bash
-# With uv (Recommended)
 uv tool install git+https://github.com/chaseungjoon/multi-agent-kernel
 ```
 
+**With pipx**
 ```bash
-# With pipx
 pipx install git+https://github.com/chaseungjoon/multi-agent-kernel
 ```
 
