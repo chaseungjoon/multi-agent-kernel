@@ -20,6 +20,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from mak.core.atomic import write_text_atomic
 from mak.core.types import LockEntry, LockMode, NodeId, ResourceKind, ResourceRef
 from mak.lock_manager.rwlock import RWLock
 
@@ -264,7 +265,6 @@ class LockTable:
     def _persist(self) -> None:
         if self._persist_path is None:
             return
-        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
         data: list[dict[str, object]] = [
             {
                 "node_id": str(node_id),
@@ -275,29 +275,50 @@ class LockTable:
             for node_id, entries in self._entries.items()
             for entry in entries
         ]
-        self._persist_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        # Atomic: this file is rewritten on every acquire, release, and heartbeat,
+        # so it is the state most likely to be mid-write when a run is killed.
+        write_text_atomic(self._persist_path, json.dumps(data, indent=2))
 
     def _load_from_disk(self) -> None:
         if self._persist_path is None or not self._persist_path.exists():
             return
+        # A lost lock table costs nothing but a re-acquire — every lease in it is
+        # reconstructible — so any unreadable or malformed state starts empty
+        # rather than taking the session down. The item loop is inside the guard
+        # for the same reason: one bad entry used to raise a bare KeyError past
+        # the JSON handler and abort startup.
         try:
             data = json.loads(self._persist_path.read_text("utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            _logger.warning(
-                "could not load lock table from %s: %s", self._persist_path, exc
-            )
-            return
-        for item in data:
-            node_id = NodeId(str(item["node_id"]))
-            mode = LockMode(str(item["mode"]))
-            holder = str(item["holder"])
-            self._get_rwlock(node_id).acquire(mode, holder)
-            self._record(
-                node_id,
-                LockEntry(
-                    resource=ResourceRef(kind=ResourceKind.SYMBOL, path=str(node_id)),
-                    mode=mode,
-                    holder=holder,
-                    acquired_at=float(item["acquired_at"]),
-                ),
-            )
+            if not isinstance(data, list):
+                raise ValueError(f"expected a JSON array, got {type(data).__name__}")
+            for item in data:
+                node_id = NodeId(str(item["node_id"]))
+                mode = LockMode(str(item["mode"]))
+                holder = str(item["holder"])
+                self._get_rwlock(node_id).acquire(mode, holder)
+                self._record(
+                    node_id,
+                    LockEntry(
+                        resource=ResourceRef(
+                            kind=ResourceKind.SYMBOL, path=str(node_id)
+                        ),
+                        mode=mode,
+                        holder=holder,
+                        acquired_at=float(item["acquired_at"]),
+                    ),
+                )
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+            self._reset_after_bad_load("could not read", exc)
+        except (KeyError, TypeError, ValueError) as exc:
+            self._reset_after_bad_load("could not parse", exc)
+
+    def _reset_after_bad_load(self, what: str, exc: Exception) -> None:
+        """Drop whatever partial state a failed load left and carry on empty."""
+        self._locks.clear()
+        self._entries.clear()
+        _logger.warning(
+            "%s the lock table at %s (%s); starting with no leases held.",
+            what,
+            self._persist_path,
+            exc,
+        )

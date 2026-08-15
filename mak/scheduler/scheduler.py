@@ -21,6 +21,8 @@ import json
 from pathlib import Path
 from typing import Protocol
 
+from mak.core.atomic import write_text_atomic
+from mak.core.exceptions import SchedulingError
 from mak.core.types import LockMode, NodeId, SubTask
 from mak.scheduler.dag import DAG
 
@@ -233,10 +235,9 @@ class Scheduler:
     def _save(self) -> None:
         if self._persist_path is None:
             return
-        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
-        self._persist_path.write_text(
-            json.dumps(self._state(), indent=2), encoding="utf-8"
-        )
+        # Atomic: this is the file --recover reads, so a truncation here breaks
+        # recovery on exactly the crash recovery exists to handle.
+        write_text_atomic(self._persist_path, json.dumps(self._state(), indent=2))
 
     def save(self) -> None:
         """Persist DAG execution state to ``.mak/task_graph.json``."""
@@ -257,18 +258,33 @@ class Scheduler:
         restored without being re-emitted as freshly unblocked. Tasks that were
         in flight at crash time are re-queued for another attempt.
         """
-        data = json.loads(persist_path.read_text("utf-8"))
-        tasks = [
-            SubTask(
-                task_id=str(t["task_id"]),
-                description=str(t["description"]),
-                target_nodes=[NodeId(n) for n in t.get("target_nodes", [])],
-                context_nodes=[NodeId(n) for n in t.get("context_nodes", [])],
-                depends_on=[str(d) for d in t.get("depends_on", [])],
-                agent_type=str(t.get("agent_type", "")),
-            )
-            for t in data.get("tasks", [])
-        ]
+        # A task graph that cannot be read is not recoverable state, and raising
+        # a bare JSONDecodeError out of here made `--recover` crash rather than
+        # report. SchedulingError is a MakError, so the caller can catch it and
+        # tell the operator there is nothing to resume.
+        try:
+            data = json.loads(persist_path.read_text("utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError(f"expected a JSON object, got {type(data).__name__}")
+            tasks = [
+                SubTask(
+                    task_id=str(t["task_id"]),
+                    description=str(t["description"]),
+                    target_nodes=[NodeId(n) for n in t.get("target_nodes", [])],
+                    context_nodes=[NodeId(n) for n in t.get("context_nodes", [])],
+                    depends_on=[str(d) for d in t.get("depends_on", [])],
+                    agent_type=str(t.get("agent_type", "")),
+                )
+                for t in data.get("tasks", [])
+            ]
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+            raise SchedulingError(
+                f"could not read the task graph at {persist_path}: {exc}"
+            ) from exc
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise SchedulingError(
+                f"the task graph at {persist_path} is malformed: {exc}"
+            ) from exc
         dag = DAG(tasks)
 
         completed = [str(c) for c in data.get("completed", [])]

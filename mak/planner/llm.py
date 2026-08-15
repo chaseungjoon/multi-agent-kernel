@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mak.agent_runner.stop_signals import extract_usage
 from mak.core.budget import resolve_output_budget
 from mak.core.exceptions import PlannerFailedError
 from mak.planner.planner import PlannerLLM
@@ -34,6 +35,11 @@ _DEFAULT_MAX_TOKENS = 16384
 # genuinely needs more than this is one the planner should be asked to compact.
 _MIN_MAX_TOKENS = 4096
 _MAX_MAX_TOKENS = 32000
+
+# Seconds. A plan spans a whole repo and legitimately takes minutes, so this
+# sits well above an agent call's budget — but it is bounded, because an
+# unbounded planner call hangs the run before a single lock is taken.
+_DEFAULT_TIMEOUT_S = 600.0
 
 
 def resolve_max_tokens(model: str) -> int:
@@ -61,11 +67,19 @@ class AnthropicPlannerLLM:
         client: Any | None = None,
         api_key: str | None = None,
         max_tokens: int | None = None,
+        timeout: float | None = _DEFAULT_TIMEOUT_S,
     ) -> None:
         self.model = model
         self.max_tokens = (
             max_tokens if max_tokens is not None else resolve_max_tokens(model)
         )
+        self.timeout = timeout
+        # Token usage of the most recent completion. Recorded here because the
+        # response object is the only place it exists, and the alternative in
+        # use — monkeypatching the SDK's own method — silently missed every
+        # streamed call. Reset per call, never accumulated: the caller owns
+        # totals.
+        self.last_usage: dict[str, int] = {}
         self._api_key = api_key
         self._client = client
 
@@ -77,11 +91,12 @@ class AnthropicPlannerLLM:
                 raise PlannerFailedError(
                     "anthropic SDK not installed; run `pip install anthropic`"
                 ) from exc
-            self._client = (
-                anthropic.Anthropic(api_key=self._api_key)
-                if self._api_key is not None
-                else anthropic.Anthropic()
-            )
+            options: dict[str, Any] = {}
+            if self._api_key is not None:
+                options["api_key"] = self._api_key
+            if self.timeout is not None:
+                options["timeout"] = self.timeout
+            self._client = anthropic.Anthropic(**options)
         return self._client
 
     def complete(self, prompt: str) -> str:
@@ -104,6 +119,7 @@ class AnthropicPlannerLLM:
             messages=[{"role": "user", "content": prompt}],
         ) as stream:
             response = stream.get_final_message()
+        self.last_usage = extract_usage(getattr(response, "usage", None))
         stop_reason = getattr(response, "stop_reason", None)
         if stop_reason == "max_tokens":
             raise TruncatedResponseError(
@@ -134,8 +150,16 @@ class OpenAiPlannerLLM:
         model: str,
         client: Any | None = None,
         api_key: str | None = None,
+        timeout: float | None = _DEFAULT_TIMEOUT_S,
     ) -> None:
         self.model = model
+        self.timeout = timeout
+        # Token usage of the most recent completion. Recorded here because the
+        # response object is the only place it exists, and the alternative in
+        # use — monkeypatching the SDK's own method — silently missed every
+        # streamed call. Reset per call, never accumulated: the caller owns
+        # totals.
+        self.last_usage: dict[str, int] = {}
         self._api_key = api_key
         self._client = client
 
@@ -147,11 +171,12 @@ class OpenAiPlannerLLM:
                 raise PlannerFailedError(
                     "openai SDK not installed; run `pip install openai`"
                 ) from exc
-            self._client = (
-                openai.OpenAI(api_key=self._api_key)
-                if self._api_key is not None
-                else openai.OpenAI()
-            )
+            options: dict[str, Any] = {}
+            if self._api_key is not None:
+                options["api_key"] = self._api_key
+            if self.timeout is not None:
+                options["timeout"] = self.timeout
+            self._client = openai.OpenAI(**options)
         return self._client
 
     def complete(self, prompt: str) -> str:
@@ -160,6 +185,7 @@ class OpenAiPlannerLLM:
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
         )
+        self.last_usage = extract_usage(getattr(response, "usage", None))
         choices = getattr(response, "choices", None) or []
         if not choices:
             return ""
@@ -181,8 +207,16 @@ class GeminiPlannerLLM:
         model: str,
         client: Any | None = None,
         api_key: str | None = None,
+        timeout: float | None = _DEFAULT_TIMEOUT_S,
     ) -> None:
         self.model = model
+        self.timeout = timeout
+        # Token usage of the most recent completion. Recorded here because the
+        # response object is the only place it exists, and the alternative in
+        # use — monkeypatching the SDK's own method — silently missed every
+        # streamed call. Reset per call, never accumulated: the caller owns
+        # totals.
+        self.last_usage: dict[str, int] = {}
         self._api_key = api_key
         self._client = client
 
@@ -194,11 +228,14 @@ class GeminiPlannerLLM:
                 raise PlannerFailedError(
                     "google-genai SDK not installed; run `pip install google-genai`"
                 ) from exc
-            self._client = (
-                genai.Client(api_key=self._api_key)
-                if self._api_key is not None
-                else genai.Client()
-            )
+            options: dict[str, Any] = {}
+            if self._api_key is not None:
+                options["api_key"] = self._api_key
+            if self.timeout is not None:
+                # google-genai counts this timeout in MILLISECONDS, unlike the
+                # other two SDKs; see the Gemini agent adapter.
+                options["http_options"] = {"timeout": int(self.timeout * 1000)}
+            self._client = genai.Client(**options)
         return self._client
 
     def complete(self, prompt: str) -> str:
@@ -207,6 +244,7 @@ class GeminiPlannerLLM:
             model=self.model,
             contents=prompt,
         )
+        self.last_usage = extract_usage(getattr(response, "usage_metadata", None))
         reason = _gemini_finish_reason(response)
         if "MAX_TOKENS" in reason:
             raise TruncatedResponseError(
@@ -234,7 +272,12 @@ def _gemini_finish_reason(response: Any) -> str:
     return "" if reason is None else str(reason)
 
 
-def build_planner_llm(model: str, *, api_key: str | None = None) -> PlannerLLM:
+def build_planner_llm(
+    model: str,
+    *,
+    api_key: str | None = None,
+    timeout: float | None = _DEFAULT_TIMEOUT_S,
+) -> PlannerLLM:
     """Pick a ``PlannerLLM`` for ``model`` by its id prefix.
 
     ``claude*`` → Anthropic, ``gemini*`` → Gemini, ``gpt*``/``o1``/``o3``/``o4`` →
@@ -242,11 +285,11 @@ def build_planner_llm(model: str, *, api_key: str | None = None) -> PlannerLLM:
     """
     lowered = model.lower()
     if lowered.startswith("claude"):
-        return AnthropicPlannerLLM(model=model, api_key=api_key)
+        return AnthropicPlannerLLM(model=model, api_key=api_key, timeout=timeout)
     if lowered.startswith("gemini"):
-        return GeminiPlannerLLM(model=model, api_key=api_key)
+        return GeminiPlannerLLM(model=model, api_key=api_key, timeout=timeout)
     if lowered.startswith(("gpt", "o1", "o3", "o4")):
-        return OpenAiPlannerLLM(model=model, api_key=api_key)
+        return OpenAiPlannerLLM(model=model, api_key=api_key, timeout=timeout)
     raise PlannerFailedError(
         f"cannot infer a planner backend for model '{model}'; "
         "use a claude-*, gpt-*, or gemini-* model"

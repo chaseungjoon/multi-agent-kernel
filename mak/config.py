@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -308,6 +308,51 @@ def model_caveat(model_id: str | None) -> str | None:
         if model_id.startswith(prefix):
             return caveat
     return None
+
+
+def anchor_mak_dir(config: MakConfig) -> MakConfig:
+    """Resolve ``session.mak_dir`` to an absolute path inside ``session.work_dir``.
+
+    A relative ``mak_dir`` (the default ``.mak``) used to be interpreted against
+    the *process* working directory while ``work_dir`` pointed somewhere else
+    entirely. Two projects driven from one shell therefore shared a single node
+    store — and because node ids are work-dir-relative, ``toolkit/registry.py``
+    in one project and the other were literally the same id. Re-ingestion is
+    skipped when a whole-file node already exists, so the second project
+    inherited the first's content and reconstruction wrote it to disk.
+
+    Anchoring removes the ambiguity: a project's state lives with the project. An
+    absolute ``mak_dir`` is honored as an explicit override and left alone.
+    """
+    mak_dir = Path(config.session.mak_dir)
+    if mak_dir.is_absolute():
+        return config
+    anchored = (Path(config.session.work_dir) / mak_dir).resolve()
+    return replace(
+        config, session=replace(config.session, mak_dir=str(anchored))
+    )
+
+
+def stale_mak_dir(config: MakConfig) -> Path | None:
+    """Return a CWD-relative ``.mak`` that this run will *not* use, if one exists.
+
+    Call **before** :func:`anchor_mak_dir`. A store left by an older MAK sits
+    where the old interpretation put it — beside the shell, not beside the
+    project — and after anchoring it is simply ignored, which is silent and
+    confusing when a run suddenly re-ingests everything.
+
+    Reported, never adopted: deciding that an orphaned store belongs to *this*
+    project means guessing, and guessing wrong reintroduces exactly the
+    cross-project contamination anchoring fixes.
+    """
+    mak_dir = Path(config.session.mak_dir)
+    if mak_dir.is_absolute():
+        return None
+    previous = (Path.cwd() / mak_dir).resolve()
+    anchored = (Path(config.session.work_dir) / mak_dir).resolve()
+    if previous == anchored or not previous.is_dir():
+        return None
+    return previous
 
 
 def user_config_dir() -> Path:

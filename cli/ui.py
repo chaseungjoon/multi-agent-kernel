@@ -8,7 +8,7 @@ Design language (benchmarked against Claude Code / Codex CLI):
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.box import ROUNDED
 from rich.console import Console
@@ -16,6 +16,9 @@ from rich.panel import Panel
 from rich.text import Text
 
 from cli.core.state import CliState
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from mak.session import SessionResult
 from mak._version import __version_display__
 
 ACCENT = "#bd93f9"
@@ -27,6 +30,7 @@ _TAGLINE = "A kernel for concurrent multi-agent software development"
 # ── Welcome ────────────────────────────────────────────────────────────────────
 
 def print_banner(console: Console, state: CliState) -> None:
+    """Print the startup banner with the current version and working directory."""
     body = Text()
     body.append("✻ ", style=f"bold {ACCENT}")
     body.append("MAK", style="bold")
@@ -63,6 +67,7 @@ def _catalog_status() -> str:
 
 
 def print_status(console: Console, state: CliState) -> None:
+    """Print the live session status block: models, planner, agents, workdir."""
     rows = [
         ("models", state.models_display()),
         ("planner", state.planner_model),
@@ -81,14 +86,17 @@ def print_status(console: Console, state: CliState) -> None:
 # ── One-line feedback for slash commands ──────────────────────────────────────
 
 def print_ok(console: Console, message: str) -> None:
+    """Print a one-line success confirmation for a slash command."""
     console.print(f"  [green]✓[/green] {message}")
 
 
 def print_warn(console: Console, message: str) -> None:
+    """Print a one-line warning for a slash command."""
     console.print(f"  [yellow]⚠[/yellow] {message}")
 
 
 def print_error(console: Console, message: str) -> None:
+    """Print a one-line error for a slash command."""
     console.print(f"  [red]✗[/red] {message}")
 
 
@@ -110,6 +118,7 @@ def _compute_waves(subtasks: list[Any]) -> list[list[Any]]:
 
 
 def show_plan(console: Console, subtasks: list[Any]) -> None:
+    """Render a planner plan as a numbered task list with targets and deps."""
     waves = _compute_waves(subtasks)
     n, w = len(subtasks), len(waves)
 
@@ -154,7 +163,10 @@ def show_plan(console: Console, subtasks: list[Any]) -> None:
 
 # ── Result summary ─────────────────────────────────────────────────────────────
 
-def show_results(console: Console, result: Any, tests_passed: bool) -> None:
+def show_results(
+    console: Console, result: SessionResult, tests_passed: bool
+) -> None:
+    """Print the completed/failed/skipped/blocked tallies for a finished run."""
     ok = len(result.completed)
     bad = len(result.failed)
     skp = len(result.skipped)
@@ -189,6 +201,7 @@ def show_results(console: Console, result: Any, tests_passed: bool) -> None:
 # ── Git diff — one summary line per file, git-stat style ──────────────────────
 
 def show_diff(console: Console, diff: str) -> None:
+    """Print a per-file summary of a unified diff, git-stat style."""
     files = _split_diff_by_file(diff)
     if not files:
         return

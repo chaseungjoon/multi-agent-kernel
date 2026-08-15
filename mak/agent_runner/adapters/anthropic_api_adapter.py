@@ -131,6 +131,7 @@ class AnthropicApiAdapter(AgentAdapter):
         model: str = _DEFAULT_MODEL,
         api_key: str | None = None,
         max_tokens: int | None = None,
+        timeout: float | None = None,
         agent_id: str = "anthropic-0",
     ) -> None:
         self.agent_id = agent_id
@@ -140,6 +141,10 @@ class AnthropicApiAdapter(AgentAdapter):
         self.max_tokens = (
             max_tokens if max_tokens is not None else resolve_agent_max_tokens(model)
         )
+        # Seconds. None leaves the SDK's own default in place. Without a bound a
+        # wedged call never returns, and the session's collect timeout cannot
+        # help: it stops waiting, then blocks forever shutting the pool down.
+        self.timeout = timeout
         self._api_key = api_key
         self._client = client
 
@@ -152,11 +157,12 @@ class AnthropicApiAdapter(AgentAdapter):
                 raise AgentError(
                     "anthropic SDK not installed; run `pip install anthropic`"
                 ) from exc
-            self._client = (
-                anthropic.Anthropic(api_key=self._api_key)
-                if self._api_key is not None
-                else anthropic.Anthropic()
-            )
+            options: dict[str, Any] = {}
+            if self._api_key is not None:
+                options["api_key"] = self._api_key
+            if self.timeout is not None:
+                options["timeout"] = self.timeout
+            self._client = anthropic.Anthropic(**options)
         return self._client
 
     def format_task(self, task_bundle: TaskBundle) -> str:

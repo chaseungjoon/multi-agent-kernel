@@ -12,14 +12,20 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import shutil
 import textwrap
 import threading
 from pathlib import Path
+from typing import Any
 
+from mak.core.atomic import write_text_atomic
 from mak.core.exceptions import NodeStoreError
+from mak.core.paths import check_node_id, safe_path_under
 from mak.core.types import NodeFragment, NodeId
 from mak.node_store.ingestion import parse_file_into_fragments
+
+_logger = logging.getLogger(__name__)
 
 
 def _extract_indent(source: str) -> tuple[str, str]:
@@ -53,13 +59,30 @@ class NodeStore:
         self._load_from_disk()
 
     def _fragment_dir(self, node_id: NodeId) -> Path:
-        return self._root / str(node_id).replace("::", "/")
+        """Return a node's on-disk version directory, refusing an escaping id.
+
+        The single choke point for every fragment read, write, and delete, which
+        is why containment is asserted *here* rather than in ``put_node``: an id
+        that must not be written must not be probed or removed either, and one
+        guard covers all three. ``_delete_fragment_dir`` already checked
+        containment before deleting; this extends the same rule to the write
+        path, which had none.
+
+        Containment **only** — ``mak_dir_name=None``. Whether an id names
+        legitimate project source is a question for the planner and the
+        reconstructor, not for the store: the Wave 11 prune exists precisely to
+        remove the ``.mak/…`` nodes an older MAK ingested, and it cannot delete
+        what it cannot address.
+        """
+        check_node_id(str(node_id), mak_dir_name=None)
+        relative = str(node_id).replace("::", "/")
+        return safe_path_under(self._root, relative, label="node id")
 
     def _load_from_disk(self) -> None:
         meta_path = self._root / "metadata.json"
         if not meta_path.exists():
             return
-        data = json.loads(meta_path.read_text("utf-8"))
+        data = self._read_metadata(meta_path)
         for nid_str, meta in data.items():
             nid = NodeId(nid_str)
             self._metadata[nid] = meta
@@ -73,10 +96,47 @@ class NodeStore:
                     version=version,
                 )
 
+    @staticmethod
+    def _read_metadata(meta_path: Path) -> dict[str, Any]:
+        """Load the metadata index, quarantining it if it cannot be read.
+
+        A truncated or malformed index used to raise straight out of the
+        constructor, which made the store *unopenable*: every subsequent run died
+        before it could do anything about it, and the only recovery was deleting
+        ``.mak/`` — i.e. discarding the work the store existed to protect. The
+        file is moved aside instead and the store starts clean, so the fragments
+        on disk survive and the operator has the bad index to inspect.
+        """
+        try:
+            data = json.loads(meta_path.read_text("utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+            quarantine = meta_path.with_suffix(".json.corrupt")
+            try:
+                meta_path.replace(quarantine)
+            except OSError:  # pragma: no cover - unwritable store dir
+                quarantine = meta_path
+            _logger.warning(
+                "node store metadata at %s is unreadable (%s); moved it to %s and "
+                "started with an empty index. Stored fragments are untouched.",
+                meta_path,
+                exc,
+                quarantine,
+            )
+            return {}
+        if not isinstance(data, dict):
+            _logger.warning(
+                "node store metadata at %s is not a JSON object; ignoring it.",
+                meta_path,
+            )
+            return {}
+        return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+
     def _save_metadata(self) -> None:
         meta_path = self._root / "metadata.json"
         data = {str(k): v for k, v in self._metadata.items()}
-        meta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        # Atomic: this file is rewritten after every commit, and a truncation
+        # here is what makes the whole store unreadable on the next run.
+        write_text_atomic(meta_path, json.dumps(data, indent=2))
 
     def _write_fragment_to_disk(self, fragment: NodeFragment) -> None:
         frag_dir = self._fragment_dir(fragment.node_id)
@@ -92,6 +152,18 @@ class NodeStore:
     def _order(self, node_id: NodeId) -> int:
         value = self._metadata.get(node_id, {}).get("order", 0)
         return value if isinstance(value, int) else 0
+
+    def node_order(self, node_id: NodeId) -> int | None:
+        """Return a node's source-order index, or ``None`` if the store has none.
+
+        ``None`` is a real answer, not a zero: an id the store has never seen has
+        no position, and callers ordering a mix of known and unknown ids
+        (``map_returned_sources`` folding an agent's fragments back into a
+        whole-file grant) must be able to tell "first" from "unplaced".
+        """
+        with self._lock:
+            value = self._metadata.get(node_id, {}).get("order")
+            return value if isinstance(value, int) else None
 
     def get_node(self, node_id: NodeId, version: int | None = None) -> NodeFragment:
         """Return the latest committed fragment, or a specific prior version."""

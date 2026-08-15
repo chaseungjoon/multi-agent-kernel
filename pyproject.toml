@@ -90,6 +90,10 @@ known-first-party = ["mak"]
 # The model-list fetchers wrap the same three untyped SDKs to read each
 # provider's catalog; the response objects are dynamic at that boundary.
 "mak/models/providers.py" = ["ANN401"]
+# prompt_toolkit's key-binding handlers receive an untyped event object; there is
+# no annotation to give it that is more honest than Any. Everything else in cli/
+# is typed, and `mypy --strict` covers the package.
+"cli/app.py" = ["ANN401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

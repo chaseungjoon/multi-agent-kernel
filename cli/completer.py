@@ -48,6 +48,7 @@ class MakCompleter(Completer):
     def get_completions(
         self, document: Document, complete_event: CompleteEvent
     ) -> list[Completion]:
+        """Yield completions for the current input (slash commands and their args)."""
         text = document.text_before_cursor
 
         # Non-slash input never triggers completions.

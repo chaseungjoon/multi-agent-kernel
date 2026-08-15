@@ -2169,7 +2169,12 @@ class TestCrossModuleDefects:
             tmp_path, "from alpha import f\n\n\ndef g():\n    return f(1)\n"
         )
         tasks = session.detect_cascade_tasks()
-        assert [t.task_id for t in tasks] == ["api_fix_beta_py"]
+        # The id keeps its readable prefix but carries a digest of the file it
+        # was generated for, so two paths that sanitize alike ("a/b.py" and
+        # "a-b.py" both become "a_b_py") cannot collide into one id and get the
+        # whole cascade wave rejected by the DAG's duplicate check.
+        assert len(tasks) == 1
+        assert tasks[0].task_id.startswith("api_fix_beta_py_")
         assert tasks[0].target_nodes == [NodeId("beta.py")]
         assert NodeId("alpha.py") in tasks[0].context_nodes
 

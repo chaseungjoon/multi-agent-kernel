@@ -131,6 +131,7 @@ class GeminiApiAdapter(AgentAdapter):
         model: str = _DEFAULT_MODEL,
         api_key: str | None = None,
         max_tokens: int | None = None,
+        timeout: float | None = None,
         agent_id: str = "gemini-0",
     ) -> None:
         self.agent_id = agent_id
@@ -138,6 +139,9 @@ class GeminiApiAdapter(AgentAdapter):
         # None = send no cap and inherit the model's own maximum (see the OpenAI
         # adapter for the same reasoning).
         self.max_tokens = max_tokens
+        # Seconds on MAK's side, like every other adapter — converted at the SDK
+        # boundary below.
+        self.timeout = timeout
         self._api_key = api_key
         self._client = client
 
@@ -150,11 +154,16 @@ class GeminiApiAdapter(AgentAdapter):
                 raise AgentError(
                     "google-genai SDK not installed; run `pip install google-genai`"
                 ) from exc
-            self._client = (
-                genai.Client(api_key=self._api_key)
-                if self._api_key is not None
-                else genai.Client()
-            )
+            options: dict[str, Any] = {}
+            if self._api_key is not None:
+                options["api_key"] = self._api_key
+            if self.timeout is not None:
+                # google-genai measures HttpOptions.timeout in MILLISECONDS,
+                # unlike the anthropic and openai clients which take seconds.
+                # Passing MAK's seconds straight through would set a timeout
+                # 1000x too short and fail every real call.
+                options["http_options"] = {"timeout": int(self.timeout * 1000)}
+            self._client = genai.Client(**options)
         return self._client
 
     def format_task(self, task_bundle: TaskBundle) -> str:

@@ -9,6 +9,7 @@ single canonical schema). ``decode_task_bundle`` rebuilds nested ``LockEntry`` /
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
@@ -58,8 +59,39 @@ RETRY_NOTE_CONTRACT = (
 )
 
 
+def _is_header_node(node_id: NodeId) -> bool:
+    """Whether an id names a ``module_header`` fragment (imports, ``__future__``)."""
+    parts = str(node_id).split("::")
+    return len(parts) >= 2 and parts[1] == "module_header"
+
+
+def _fold_order(
+    node_id: NodeId, index: int, order_key: Callable[[NodeId], int | None] | None
+) -> tuple[int, int, int]:
+    """Sort key placing a folded fragment where it belongs in the rebuilt file.
+
+    Three tiers, because the information available differs per fragment:
+
+    1. a ``module_header`` always leads. It carries the imports, and a
+       ``from __future__`` import is only legal as the first statement — so a
+       model that emitted its functions before its header produced a file that
+       could not compile at all;
+    2. otherwise the store's recorded source order, when it knows the id;
+    3. otherwise the order the model emitted it in, which is all that is left.
+    """
+    if _is_header_node(node_id):
+        return (0, 0, index)
+    known = order_key(node_id) if order_key is not None else None
+    if known is not None:
+        return (1, known, index)
+    return (2, 0, index)
+
+
 def map_returned_sources(
-    grant: list[NodeId], new_sources: dict[NodeId, str]
+    grant: list[NodeId],
+    new_sources: dict[NodeId, str],
+    *,
+    order_key: Callable[[NodeId], int | None] | None = None,
 ) -> tuple[dict[NodeId, str], list[tuple[NodeId, str]]]:
     """Map returned node ids onto nodes the task may write; report the rest.
 
@@ -84,15 +116,17 @@ def map_returned_sources(
     in_scope = set(grant)
     whole_file_grants = {str(n) for n in grant if "::" not in str(n)}
     accepted: dict[NodeId, str] = {}
-    folded: dict[NodeId, list[str]] = {}
+    folded: dict[NodeId, list[tuple[tuple[int, int, int], str]]] = {}
     dropped: list[tuple[NodeId, str]] = []
-    for node_id, source in new_sources.items():
+    for index, (node_id, source) in enumerate(new_sources.items()):
         if node_id in in_scope:
             accepted[node_id] = source
             continue
         file_path = str(node_id).split("::", 1)[0]
         if file_path in whole_file_grants:
-            folded.setdefault(NodeId(file_path), []).append(source)
+            folded.setdefault(NodeId(file_path), []).append(
+                (_fold_order(node_id, index, order_key), source)
+            )
             continue
         dropped.append(
             (node_id, "returned node id is outside the task's granted nodes")
@@ -100,7 +134,10 @@ def map_returned_sources(
     for whole_file_id, parts in folded.items():
         if whole_file_id in accepted:
             continue  # the agent also sent the whole file; that is authoritative
-        accepted[whole_file_id] = "\n\n".join(p.strip("\n") for p in parts) + "\n"
+        ordered = [source for _key, source in sorted(parts, key=lambda p: p[0])]
+        accepted[whole_file_id] = (
+            "\n\n".join(p.strip("\n") for p in ordered) + "\n"
+        )
     return accepted, dropped
 
 

@@ -35,9 +35,11 @@ from mak.bootstrap import (
 from mak.cascade import CascadeApproval, run_cascade_waves
 from mak.config import (
     MakConfig,
+    anchor_mak_dir,
     discover_config_path,
     load_config,
     model_caveat,
+    stale_mak_dir,
     user_config_dir,
 )
 from mak.core.exceptions import (
@@ -285,6 +287,7 @@ def build_session(
     agent_runner = AgentRunner(
         timeout_s=max((a.timeout for a in config.agents), default=300),
         pool_caps={a.type: a.max_instances for a in config.agents},
+        work_dir=str(work_dir),
     )
     planner = Planner(
         build_planner_llm(config.planner.model, api_key=_planner_api_key(config)),
@@ -331,6 +334,7 @@ def main(
         format="%(levelname)s %(name)s: %(message)s",
     )
 
+    orphan: Path | None = None
     try:
         config = load_config(args.config or discover_config_path())
         if args.work_dir is not None:
@@ -351,9 +355,23 @@ def main(
         if not args.recover and not args.task:
             raise ConfigError("--task is required (or use --recover to resume)")
         validate_config(config)
+        # Anchor last, once work_dir is final: a project's node store, task
+        # graph, and log belong with the project, not with whatever directory
+        # the operator happened to launch from. Checked for an orphan first,
+        # because after anchoring the old location is simply ignored.
+        orphan = stale_mak_dir(config)
+        config = anchor_mak_dir(config)
     except ConfigError as exc:
         print(f"mak: configuration error: {exc}", file=sys.stderr)
         return 2
+    if orphan is not None:
+        print(
+            f"mak: ignoring the MAK state directory at {orphan} — it was left by an "
+            "older version that stored state beside the shell rather than beside "
+            f"the project. This run uses {config.session.mak_dir}. Delete the old "
+            "one when you no longer need it.",
+            file=sys.stderr,
+        )
     warn_model_caveats(config)
 
     sandbox: SandboxConfig | None = None

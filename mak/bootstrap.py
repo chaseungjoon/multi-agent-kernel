@@ -132,6 +132,11 @@ def _api_factory(agent: AgentConfig) -> Callable[[], AgentAdapter]:
             options["model"] = agent.model
         if agent.max_tokens is not None:
             options["max_tokens"] = agent.max_tokens
+        # ``timeout`` was previously consumed only by the *subprocess* read loop,
+        # so an API agent had no bound at all: a wedged provider call never
+        # returned and the session hung shutting its pool down. The configured
+        # per-agent value now reaches the SDK client that actually makes the call.
+        options["timeout"] = float(agent.timeout)
         return cls(**options)
 
     return make

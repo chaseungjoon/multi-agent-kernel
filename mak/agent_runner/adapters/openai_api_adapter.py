@@ -66,6 +66,7 @@ class OpenAiApiAdapter(AgentAdapter):
         model: str = _DEFAULT_MODEL,
         api_key: str | None = None,
         max_tokens: int | None = None,
+        timeout: float | None = None,
         agent_id: str = "openai-0",
     ) -> None:
         self.agent_id = agent_id
@@ -74,6 +75,9 @@ class OpenAiApiAdapter(AgentAdapter):
         # configured value is forwarded, so a user on a small or metered model can
         # bound the spend without every other user being silently clipped.
         self.max_tokens = max_tokens
+        # Seconds; see the Anthropic adapter for why an unbounded call is worse
+        # than a slow one.
+        self.timeout = timeout
         self._api_key = api_key
         self._client = client
 
@@ -86,11 +90,12 @@ class OpenAiApiAdapter(AgentAdapter):
                 raise AgentError(
                     "openai SDK not installed; run `pip install openai`"
                 ) from exc
-            self._client = (
-                openai.OpenAI(api_key=self._api_key)
-                if self._api_key is not None
-                else openai.OpenAI()
-            )
+            options: dict[str, Any] = {}
+            if self._api_key is not None:
+                options["api_key"] = self._api_key
+            if self.timeout is not None:
+                options["timeout"] = self.timeout
+            self._client = openai.OpenAI(**options)
         return self._client
 
     def format_task(self, task_bundle: TaskBundle) -> str:

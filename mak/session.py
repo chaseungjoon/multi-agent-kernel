@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import hashlib
 import queue
 import re
 import sys
@@ -63,8 +64,21 @@ from mak.conflict_detector.cross_module_check import (
     check_cross_module_api,
 )
 from mak.conflict_detector.detector import ConflictDetector, EditRound
-from mak.core.exceptions import NodeStoreError, SessionError
+from mak.core.exceptions import (
+    NodeStoreError,
+    SchedulingError,
+    SessionError,
+    UnsafeNodeIdError,
+)
 from mak.core.logging import EventType, SessionLogger
+from mak.core.paths import (
+    DEFAULT_MAK_DIR_NAME as _MAK_DIR_NAME,
+)
+from mak.core.paths import (
+    check_node_id,
+    safe_path_under,
+    unsafe_node_id_reason,
+)
 from mak.core.types import (
     LockEntry,
     LockMode,
@@ -386,6 +400,16 @@ class Session:
         self._dispatches = 0
         self._context_bytes = 0
         self._starved_dispatches = 0
+        # Set when the run loop gives up on an unresponsive worker, so teardown
+        # cancels instead of joining it (see ``close``).
+        self._wedged = False
+        # Agent tokens spent, summed from what each provider reported on its own
+        # response. Read off ``TaskResult.usage`` rather than by patching the SDK:
+        # the patch-based counter hooked ``Messages.create`` while both the agent
+        # adapter and the planner call ``messages.stream``, so it reported zero
+        # for the default provider — and patching a vendor's internals is one
+        # refactor away from doing that again.
+        self._agent_usage: Counter[str] = Counter()
 
     # -- logging helper ----------------------------------------------------
 
@@ -416,12 +440,34 @@ class Session:
             )
         return self._concurrent_runner
 
-    def close(self) -> None:
-        """Shut down the worker pool. Safe to call repeatedly."""
+    def close(self, *, wait: bool = True) -> None:
+        """Shut down the worker pool and any agent subprocesses. Repeatable.
+
+        ``wait=False`` is for the abnormal exit. The collect timeout exists so a
+        wedged agent cannot stall a run forever — but the shutdown that followed
+        it blocked on that very call, so the run hung anyway and the timeout
+        bought nothing. Declining to join lets the session report what it has.
+
+        Note what ``cancel_futures`` does and does not do: it drops work still
+        *queued*, and cannot interrupt a call already in flight. What bounds that
+        one is the per-request SDK timeout threaded through from
+        ``AgentConfig.timeout`` — the two are a pair, and neither alone is
+        enough. Without the timeout the worker thread would still outlive the
+        run, and a pool worker is non-daemon, so the process would refuse to exit
+        until the provider gave up on its own.
+        """
         if self._executor is not None:
-            self._executor.shutdown(wait=True)
+            self._executor.shutdown(wait=wait, cancel_futures=not wait)
             self._executor = None
             self._concurrent_runner = None
+        # Pooled CLI agent subprocesses outlive the thread pool: AgentRunner owns
+        # them and its shutdown() had no caller at all, so every agent process a
+        # run spawned survived until the interpreter exited — for the whole
+        # session, in the long-lived TUI. Duck-typed because the injected
+        # _Assigner protocol does not (and need not) declare it.
+        shutdown = getattr(self._agent_runner, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
 
     # -- phase 1: initialize ----------------------------------------------
 
@@ -474,25 +520,20 @@ class Session:
                     continue
 
     def _mak_roots(self) -> tuple[Path, ...]:
-        """Absolute locations MAK's own persistence directory can resolve to.
+        """Return the absolute location of MAK's own persistence directory.
 
-        ``mak_dir`` is usually relative (``.mak``). The runtime resolves it
-        against the process's working directory, but a store written by an
-        earlier run launched *from inside* the project sits under the work dir,
-        so both readings are treated as MAK's own.
+        One root, not two. ``mak_dir`` used to be ambiguous — relative to the
+        process CWD by one reading and to the work dir by another — so this had
+        to treat *both* as MAK's own and hope. ``config.anchor_mak_dir`` now
+        settles it before a session is built (a relative ``mak_dir`` means
+        "inside the work dir"), which leaves exactly one directory to exclude.
         """
         mak_dir = self._mak_dir
-        if mak_dir.is_absolute():
-            candidates = [mak_dir]
-        else:
-            candidates = [Path.cwd() / mak_dir, self._work_dir / mak_dir]
-        roots: list[Path] = []
-        for candidate in candidates:
-            try:
-                roots.append(candidate.resolve())
-            except OSError:
-                continue
-        return tuple(roots)
+        candidate = mak_dir if mak_dir.is_absolute() else self._work_dir / mak_dir
+        try:
+            return (candidate.resolve(),)
+        except OSError:
+            return ()
 
     def _is_store_path(self, path: Path) -> bool:
         """Whether ``path`` lives inside MAK's own persistence directory.
@@ -626,6 +667,7 @@ class Session:
         # here — so the CLI's plan() path, the TUI's direct install, cascade waves,
         # and user-edited plans all get validation. Idempotent when plan() already
         # validated the same list.
+        self._reject_unsafe_targets(subtasks)
         subtasks, findings = self._validate_subtasks(subtasks)
         self.last_plan_findings = findings
         if findings:
@@ -645,6 +687,34 @@ class Session:
             for t in subtasks
         }
         self.state = SessionState.PLANNED
+
+    def _reject_unsafe_targets(self, subtasks: list[SubTask]) -> None:
+        """Refuse a plan whose targets would write outside the working directory.
+
+        ``parse_plan`` applies the same rule to planner output, but this is the
+        funnel every plan passes through — the interactive app installs a plan
+        directly, and each cascade wave builds one from scratch. Neither touches
+        the planner's parser, so without this check two of the three ways a plan
+        reaches the scheduler are ungated.
+
+        Raised rather than corrected: an escaping target is not a typo validation
+        can ground, and silently rewriting one would hide what was asked for.
+        """
+        mak_name = self._mak_dir.name or _MAK_DIR_NAME
+        offenders = [
+            (task.task_id, str(node), reason)
+            for task in subtasks
+            for node in task.target_nodes
+            if (reason := unsafe_node_id_reason(str(node), mak_dir_name=mak_name))
+            is not None
+        ]
+        if not offenders:
+            return
+        listed = "; ".join(f"{tid} -> {node} ({why})" for tid, node, why in offenders)
+        raise SessionError(
+            f"refusing to install a plan with {len(offenders)} target(s) outside "
+            f"the working directory: {listed}"
+        )
 
     def _apply_default_agent(self, subtasks: list[SubTask]) -> list[SubTask]:
         """Assign a valid agent type to every task before dispatch.
@@ -713,12 +783,15 @@ class Session:
             daemon=True,
         )
         heartbeat.start()
+        self._wedged = False
         try:
             self._run_loop(scheduler, max_iterations)
         finally:
             stop.set()
             heartbeat.join(timeout=self._heartbeat_interval + 1.0)
-            self.close()
+            # A wedged worker must not be waited on — that is the hang the
+            # collect timeout was supposed to prevent.
+            self.close(wait=not self._wedged)
 
         return self._finalize(scheduler)
 
@@ -746,6 +819,14 @@ class Session:
             batch = self._collect_batch()
             if not batch:
                 # Collection timed out with work in flight: a worker is wedged.
+                # Recorded so ``close`` does not then block joining it.
+                self._wedged = True
+                self._log(
+                    EventType.SESSION_ENDED,
+                    wedged=True,
+                    in_flight=sorted(scheduler.dispatched),
+                    collect_timeout_s=self._collect_timeout,
+                )
                 break
             self._process_batch(batch)
 
@@ -826,6 +907,37 @@ class Session:
             "mean_context_bytes": mean_bytes,
             "starved_dispatches": float(self._starved_dispatches),
         }
+
+    @property
+    def token_usage(self) -> dict[str, int]:
+        """Tokens spent this session: every agent call plus the planner's.
+
+        Sourced from what each provider reported on its own response, so a
+        streamed call counts exactly like a non-streamed one. The planner's share
+        is included because a run's cost is not only its agents — decomposition,
+        its retries, and the optional critique pass are all billed.
+        """
+        total = Counter(self._agent_usage)
+        planner_usage = getattr(self._planner, "token_usage", None)
+        if isinstance(planner_usage, dict):
+            total.update(
+                {k: v for k, v in planner_usage.items() if isinstance(v, int)}
+            )
+        return dict(total)
+
+    @property
+    def total_tokens(self) -> int:
+        """Input + output tokens across agents and planner.
+
+        Sums only the two directional counters, never a provider's own "total"
+        field, so a backend that reports both cannot be counted twice.
+        """
+        usage = self.token_usage
+        return sum(
+            value
+            for key, value in usage.items()
+            if key in ("input_tokens", "output_tokens")
+        )
 
     def _noop_task_ids(self) -> list[str]:
         """Completed tasks where *every* closed grant was an asserted no-op.
@@ -1036,6 +1148,9 @@ class Session:
         field whose absence made a truncation indistinguishable from a deliberate
         no-op — the provider's own stop reason and token usage.
         """
+        self._agent_usage.update(
+            {k: v for k, v in result.usage.items() if isinstance(v, int)}
+        )
         self._log(
             EventType.AGENT_RESULT,
             task_id=progress.task_id,
@@ -1128,9 +1243,11 @@ class Session:
         if not fragments:
             return False
         try:
-            reconstruct_file(fragments, output_path=self._work_dir / file_path)
+            reconstruct_file(
+                fragments, output_path=self._safe_output_path(file_path)
+            )
             return True
-        except (SyntaxError, OSError):
+        except (SyntaxError, OSError, UnsafeNodeIdError):
             return False
 
     def _validate_and_commit(
@@ -1179,7 +1296,7 @@ class Session:
                 self._wave_committed[node_id] = (old_source, new_source)
         try:
             self._reconstruct_affected(staged)
-        except (SyntaxError, OSError) as exc:
+        except (SyntaxError, OSError, UnsafeNodeIdError) as exc:
             # The store advanced but the file did not — undo the commits so disk
             # and store stay consistent, and fail the task.
             self._revert(committed)
@@ -1274,10 +1391,33 @@ class Session:
             symbol_edits=same_file,
         )
 
+    def _safe_output_path(self, file_path: str) -> Path:
+        """Resolve a file this wave may write, refusing anything outside the tree.
+
+        The last gate before content reaches the filesystem. ``parse_plan``
+        already refuses an escaping target, but it is not the only way a plan
+        arrives: ``install_plan`` is called directly by the interactive app and
+        by every cascade wave, and neither goes through the planner's parser. A
+        guard that only one of three entry points passes through is not a guard.
+
+        Resolution (not just the lexical check) because this is the layer that
+        can see the filesystem: a ``vendor/`` symlink pointing at ``/etc`` is
+        invisible to a string check and obvious to ``resolve()``.
+        """
+        check_node_id(file_path, mak_dir_name=self._mak_dir.name or _MAK_DIR_NAME)
+        resolved = safe_path_under(self._work_dir, file_path, label="output file")
+        if self._is_store_path(resolved):
+            raise UnsafeNodeIdError(
+                f"refusing output file '{file_path}': it resolves inside MAK's own "
+                f"{self._mak_dir} directory, which is never project source"
+            )
+        return resolved
+
     def _reconstruct_affected(self, nodes: list[NodeId]) -> list[str]:
         """Rewrite each file touched by ``nodes`` from its committed fragments."""
         files = sorted({str(n).split("::", 1)[0] for n in nodes})
         for file_path in files:
+            output_path = self._safe_output_path(file_path)
             fragments = self._node_store.get_committed_fragments(file_path)
             if not fragments:
                 # A committed node that yields no fragments would leave nothing on
@@ -1286,7 +1426,7 @@ class Session:
                 raise OSError(
                     f"no committed fragments for '{file_path}'; nothing to write"
                 )
-            reconstruct_file(fragments, output_path=self._work_dir / file_path)
+            reconstruct_file(fragments, output_path=output_path)
         return files
 
     def _audit_commit(self, task_id: str, nodes: list[NodeId]) -> None:
@@ -1804,7 +1944,14 @@ class Session:
         into three identical "staged no usable source" retries and a failed task
         whose real cause was unrecoverable from the log.
         """
-        accepted, dropped = map_returned_sources(grant, new_sources)
+        # order_key: when several fragments fold into one whole-file grant they
+        # are concatenated, and concatenating them in the order the model
+        # happened to emit puts imports after code. That still compiles, so every
+        # downstream gate passes it — the store's own source order is the
+        # authority, and the header leads regardless.
+        accepted, dropped = map_returned_sources(
+            grant, new_sources, order_key=self._node_store.node_order
+        )
         for node_id, source in accepted.items():
             self._node_store.put_node(
                 node_id, NodeFragment(node_id, self._node_kind(node_id), source, 1)
@@ -1939,17 +2086,37 @@ class Session:
         Returns the number of leases expired. Must be called before ``run`` when
         resuming a crashed session; rebuilds the scheduler from ``task_graph.json``
         if one is present.
+
+        A task graph that cannot be read leaves the session un-planned rather
+        than raising, so the caller reports "nothing to recover" and the operator
+        can start a fresh run. Raising instead would break ``--recover`` on
+        precisely the crash it exists to handle: a kill mid-write is what
+        truncates that file in the first place.
         """
         expired = self._lock_table.expire_stale()
         graph_path = self._mak_dir / "task_graph.json"
         if graph_path.exists():
-            scheduler = Scheduler.from_persisted(
-                graph_path,
-                self._lock_table,
-                self._runner(),
-                self._registry,
-                max_concurrent=self._max_concurrent,
-            )
+            try:
+                scheduler = Scheduler.from_persisted(
+                    graph_path,
+                    self._lock_table,
+                    self._runner(),
+                    self._registry,
+                    max_concurrent=self._max_concurrent,
+                )
+            except SchedulingError as exc:
+                self._log(
+                    EventType.SESSION_ENDED,
+                    recover_failed=True,
+                    task_graph=str(graph_path),
+                    reason=str(exc),
+                )
+                print(
+                    f"mak: the saved task graph at {graph_path} could not be read "
+                    f"({exc}); there is nothing to resume.",
+                    file=sys.stderr,
+                )
+                return len(expired)
             self._scheduler = scheduler
             self._progress = {
                 t.task_id: self._restore_progress(scheduler, t)
@@ -2020,7 +2187,7 @@ class Session:
                 if not (source and pat.search(source)):
                     continue
                 already_targeted.add(xfile_id)
-                safe_id = re.sub(r"[^a-zA-Z0-9]", "_", f"cascade_{symbol}_{xfile_id}")
+                safe_id = _fixup_task_id("cascade", f"{symbol}_{xfile_id}")
                 tasks.append(SubTask(
                     task_id=safe_id,
                     description=(
@@ -2085,7 +2252,7 @@ class Session:
             listed = "; ".join(d.detail for d in found)
             defining = sorted({d.defining_file for d in found})
             tasks.append(SubTask(
-                task_id=re.sub(r"[^a-zA-Z0-9]", "_", f"api_fix_{file_path}"),
+                task_id=_fixup_task_id("api_fix", file_path),
                 description=(
                     f"Fix `{file_path}` so its use of "
                     f"{', '.join(f'`{d}`' for d in defining)} matches what those "
@@ -2110,6 +2277,21 @@ class Session:
         if self._scheduler is None:
             raise SessionError("no plan installed; call plan() or install_plan() first")
         return self._scheduler
+
+
+def _fixup_task_id(prefix: str, subject: str) -> str:
+    """Build a collision-free task id for a generated fix-up task.
+
+    Sanitizing to ``[a-zA-Z0-9_]`` is lossy: ``a/b.py`` and ``a-b.py`` both
+    become ``a_b_py``. ``DAG`` rejects a duplicate task id outright, so two
+    unrelated files whose names happen to sanitize alike took down the whole
+    cascade wave — every fix-up lost to a naming coincidence. The digest is of
+    the *original* subject, so ids that differ before sanitizing still differ
+    after it.
+    """
+    slug = re.sub(r"[^a-zA-Z0-9]", "_", f"{prefix}_{subject}")
+    digest = hashlib.blake2s(subject.encode("utf-8"), digest_size=4).hexdigest()
+    return f"{slug}_{digest}"
 
 
 def _extract_sig(source: str) -> str | None:

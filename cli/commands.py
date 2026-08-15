@@ -30,6 +30,7 @@ _KEY_ENV = {
 
 
 def handle_command(text: str, state: CliState, console: Console) -> str | None:
+    """Execute a ``/command`` line and return whether the app should keep running."""
     parts = text.strip().split()
     if not parts:
         return None

@@ -119,6 +119,7 @@ def _update() -> int:
 
 
 def main() -> int:
+    """Dispatch the ``mak`` command line: TUI, ``run``, ``update``, or ``--version``."""
     argv = sys.argv[1:]
 
     if argv and argv[0] in ("--version", "-V"):

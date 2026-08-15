@@ -72,8 +72,16 @@ class AgentRunner:
         timeout_s: float = _DEFAULT_TIMEOUT_S,
         pool_caps: dict[str, int] | None = None,
         discard_on_failure: bool = True,
+        work_dir: str = ".",
     ) -> None:
         self._timeout_s = timeout_s
+        # The directory CLI agents are spawned in — and, under ``--sandbox``, the
+        # host directory bind-mounted into the container. Held here rather than
+        # passed per task because it is a per-session constant: ``assign``'s
+        # ``working_dir`` parameter defaulted to "." and every caller took the
+        # default, so CLI agents ran against the process CWD instead of the
+        # project and the sandbox mounted the wrong tree entirely.
+        self._work_dir = work_dir
         # Per-agent-type cap on retained *idle* subprocesses (from the config's
         # per-agent ``max_instances``). A freed process beyond the cap is
         # terminated instead of pooled, so a long session's idle pool can't grow
@@ -87,13 +95,19 @@ class AgentRunner:
         self,
         adapter: AgentAdapter,
         task: TaskBundle,
-        working_dir: str = ".",
+        working_dir: str | None = None,
     ) -> TaskResult:
-        """Dispatch ``task`` to ``adapter`` and return its structured result."""
+        """Dispatch ``task`` to ``adapter`` and return its structured result.
+
+        ``working_dir`` defaults to the runner's configured work dir rather than
+        to ``"."``; pass it only to override for one call.
+        """
         # Subprocess check first: a SubprocessAgentAdapter also satisfies the API
         # protocol's method names but must be driven over pipes, not ``send``.
         if isinstance(adapter, SubprocessAgentAdapter):
-            return self._assign_subprocess(adapter, task, working_dir)
+            return self._assign_subprocess(
+                adapter, task, working_dir or self._work_dir
+            )
         if isinstance(adapter, ApiAdapter):
             return self._assign_api(adapter, task)
         raise AgentError(
@@ -260,24 +274,36 @@ class AgentRunner:
         def reader() -> None:
             assert proc.stdout is not None
             buffer = ""
-            for line in proc.stdout:
-                if not line.strip():
-                    continue
-                single = _as_json_object(line)
-                if single is not None:
-                    box.append(single)
-                    return
-                buffer += line
-                accumulated = _as_json_object(buffer)
-                if accumulated is not None:
-                    box.append(accumulated)
-                    return
+            try:
+                for line in proc.stdout:
+                    if not line.strip():
+                        continue
+                    single = _as_json_object(line)
+                    if single is not None:
+                        box.append(single)
+                        return
+                    buffer += line
+                    accumulated = _as_json_object(buffer)
+                    if accumulated is not None:
+                        box.append(accumulated)
+                        return
+            except (ValueError, OSError):
+                # The pipe was closed under us by the timeout path below; that is
+                # how this thread is meant to end, not a failure to report.
+                return
             box.append("")  # EOF without a parseable result
 
         thread = threading.Thread(target=reader, daemon=True)
         thread.start()
         thread.join(timeout)
         if thread.is_alive():
+            # Deliberately *not* closing proc.stdout here. It looks like the way
+            # to unblock the reader, but io.BufferedReader.close() acquires the
+            # same buffer lock the blocked read already holds, so it stalls the
+            # caller until the child dies anyway — turning a 0.5s timeout into a
+            # 30s one. The reader needs no help: every timeout path below drops
+            # the process, and terminating the child closes the write end, which
+            # ends the read in EOF and lets the thread exit on its own.
             return None
         return box[0] if box else ""
 

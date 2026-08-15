@@ -7,6 +7,8 @@ from pathlib import Path
 
 @dataclass
 class CliState:
+    """Mutable per-session settings the TUI edits through its slash commands."""
+
     api_keys: dict[str, str] = field(default_factory=dict)
     selected_models: list[str] = field(default_factory=list)
     max_agents: int = 3
@@ -22,9 +24,11 @@ class CliState:
         return self.config_path or "auto"
 
     def models_display(self) -> str:
+        """Return the selected agent models for status displays."""
         return "  ".join(self.selected_models) if self.selected_models else "none"
 
     def work_dir_display(self) -> str:
+        """Return the working directory for status displays, abbreviating $HOME."""
         p = Path(self.work_dir).resolve()
         try:
             return "~/" + str(p.relative_to(Path.home()))

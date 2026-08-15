@@ -27,6 +27,23 @@ class NodeStoreError(MakError):
     """Raised when node store operations fail."""
 
 
+class UnsafeNodeIdError(MakError):
+    """Raised when a node id would resolve outside the tree it may write to.
+
+    A node id carries a file path, and every id MAK acts on originates with a
+    model — the planner names write targets, an agent names what it rewrote. An
+    id like ``/etc/cron.d/x.py`` or ``../../.ssh/authorized_keys.py`` is a
+    perfectly well-formed Python path that resolves outside the working
+    directory, and ``Path(work_dir) / "/etc/x.py"`` collapses to ``/etc/x.py``
+    outright. Nothing downstream re-checks it: the store writes fragments by
+    joining the id to its root, and reconstruction writes files by joining it to
+    the work dir.
+
+    So containment is asserted at every boundary that turns an id into a path,
+    and this is what refusing one looks like.
+    """
+
+
 class PlannerFailedError(MakError):
     """Raised when planner exhausts retries."""
 

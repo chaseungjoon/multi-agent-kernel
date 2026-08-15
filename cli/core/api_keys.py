@@ -33,6 +33,7 @@ def _read_env_file(path: Path, keys: dict[str, str]) -> None:
 
 
 def load_keys() -> dict[str, str]:
+    """Return every provider key, later sources winning over earlier ones."""
     keys: dict[str, str] = {k: "" for k in KEY_NAMES}
     _read_env_file(_LEGACY_ENV_PATH, keys)
     _read_env_file(_env_path(), keys)
@@ -43,6 +44,7 @@ def load_keys() -> dict[str, str]:
 
 
 def save_keys(keys: dict[str, str]) -> None:
+    """Persist keys to the user config dir and export them into this process."""
     path = _env_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -59,4 +61,5 @@ def save_keys(keys: dict[str, str]) -> None:
 
 
 def any_key_set(keys: dict[str, str]) -> bool:
+    """Return whether at least one provider key has a non-blank value."""
     return any(bool(v.strip()) for v in keys.values())

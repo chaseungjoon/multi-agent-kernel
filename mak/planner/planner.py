@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import json
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol, TypeVar
 
 from mak.core.exceptions import PlannerFailedError
+from mak.core.paths import unsafe_node_id_reason
 from mak.core.types import NodeId, SubTask
 from mak.planner.response import ResponseError, TruncatedResponseError, loads_json
 
@@ -240,6 +242,29 @@ def parse_plan(raw: str) -> list[SubTask]:
                 f"sub-task '{task.task_id}' depends on unknown task '{dep}'",
             )
 
+    # A target's file component becomes a real filesystem path twice over (the
+    # node store's fragment dir, the reconstructed file under the work dir), and
+    # both joins are unsafe for an absolute or ".."-bearing id. Checked before the
+    # ".py" rule below because containment is the more fundamental property: an
+    # id like "/etc/cron.d/payload.py" satisfies the extension rule perfectly.
+    #
+    # Raised as ValueError, deliberately: _complete_with_retries catches it and
+    # feeds the reason back to the model, so a hallucinated path is re-asked
+    # rather than taking the run down.
+    unsafe = [
+        (task.task_id, str(node), reason)
+        for task in subtasks
+        for node in task.target_nodes
+        if (reason := unsafe_node_id_reason(str(node))) is not None
+    ]
+    if unsafe:
+        listed = "; ".join(f"{tid} -> {node} ({why})" for tid, node, why in unsafe)
+        raise ValueError(
+            "every target_node must name a file inside the working directory, but "
+            f"these do not: {listed}. Use a project-relative path such as "
+            "'pkg/module.py' or 'pkg/module.py::kind::name'."
+        )
+
     # MAK can only represent Python AST nodes — a non-".py" target can never be
     # ingested, validated, or reconstructed, so reject it here with a clear reason
     # instead of failing cryptically deep in the parser at commit time.
@@ -445,6 +470,18 @@ class Planner:
         self._agent_types = list(agent_types or [])
         self._strategy = strategy
         self._self_critique = self_critique
+        # Tokens this planner has spent, summed across every call it makes —
+        # including the retries and the optional critique pass, which are real
+        # spend and were previously invisible.
+        self.token_usage: Counter[str] = Counter()
+
+    def _record_usage(self) -> None:
+        """Fold the backend's last-call usage into this planner's running total."""
+        usage = getattr(self._llm, "last_usage", None)
+        if isinstance(usage, dict):
+            self.token_usage.update(
+                {k: v for k, v in usage.items() if isinstance(v, int)}
+            )
 
     def _build_prompt(self, user_task: str, node_inventory: list[NodeId]) -> str:
         inventory = "\n".join(f"  - {nid}" for nid in node_inventory) or "  (empty)"
@@ -496,6 +533,7 @@ class Planner:
         # already-valid plan standing rather than take the run down.
         try:
             raw = self._llm.complete(prompt)
+            self._record_usage()
             data = loads_json(raw)
         except Exception:  # noqa: BLE001 - see comment above
             return plan
@@ -527,6 +565,7 @@ class Planner:
             )
             try:
                 raw = self._llm.complete(current)
+                self._record_usage()
             except PlannerFailedError:
                 # A setup failure (missing SDK, unknown backend) is not transient;
                 # retrying it just delays the same message.

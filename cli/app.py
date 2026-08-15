@@ -29,11 +29,9 @@ from cli.runner import (
     build_session,
     get_git_diff,
     get_pre_task_hash,
-    install_token_counter,
     plan_in_thread,
-    read_token_counter,
-    reset_token_counter,
     run_session_in_thread,
+    session_tokens,
 )
 from cli.setup import run_setup
 from cli.ui import ACCENT, print_banner, show_diff, show_plan, show_results
@@ -85,17 +83,19 @@ def _auto_refresh_enabled() -> bool:
 
 
 class MakCli:
+    """The interactive MAK terminal app: prompt, commands, and task runs."""
+
     def __init__(self) -> None:
         self.console         = Console(highlight=False)
         self.state           = self._init_state()
         self._history        = InMemoryHistory()
         self._session_tokens = 0
         self._prompt_session = self._build_session()
-        install_token_counter()
 
     # ── Entry point ────────────────────────────────────────────────────────────
 
     def run(self) -> None:
+        """Run the interactive loop until the user exits."""
         if not any_key_set(self.state.api_keys):
             ok = run_setup(self.state, self.console)
             if not ok:
@@ -139,7 +139,6 @@ class MakCli:
 
         # Capture pre-task HEAD so the diff covers every commit MAK makes.
         pre_hash = get_pre_task_hash(state.work_dir)
-        reset_token_counter()
 
         # ── 1. Build MAK session ───────────────────────────────────────────────
         try:
@@ -238,7 +237,7 @@ class MakCli:
                 console.print(f"  [yellow]⚠[/yellow] Teardown error: {exc}")
 
         # ── 8. Results + diff ──────────────────────────────────────────────────
-        self._session_tokens += read_token_counter()
+        self._session_tokens += session_tokens(mak_session)
 
         show_results(console, run_result, tests_passed)
 
