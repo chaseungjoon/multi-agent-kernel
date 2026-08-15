@@ -245,6 +245,14 @@ configure, and prunes any node left behind by an older version that did ingest i
 if you have a `.mak/` from before v0.5.3, the next run cleans it up (deleting the
 directory yourself is the blunt alternative).
 
+**Where `.mak/` lives.** MAK's node store, task graph, and session log always live
+under `--work-dir` (default `session.mak_dir` is `.mak`, relative to the project) —
+never relative to the directory you happened to launch `mak` from. This matters when
+you drive more than one project from the same shell: each project keeps its own
+state, so a run against `../other-project` can never read or write another
+project's `.mak/`. If a stale `.mak/` from before this was fixed sits next to your
+shell, MAK reports it on stderr and leaves it alone rather than adopting it — delete
+it by hand once you've confirmed you don't need it.
 
 ## Benchmark
 

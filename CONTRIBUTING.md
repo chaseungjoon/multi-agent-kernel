@@ -207,8 +207,9 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **1116 tests pass**,
-`mypy --strict mak` is clean, and `ruff check mak tests` is clean. The concurrent
+The **kernel is functionally complete and well-tested**: **1216 tests pass**,
+`mypy --strict mak cli` is clean, and `ruff check mak cli tests` is clean (the
+gate was extended to `cli/` in Wave 17 — see below). The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
 proven by an integration gate, and a real agent's rewritten source now reaches the
 node store over the wire. Primary development is done; the work now is the **open
@@ -239,6 +240,7 @@ The module-by-module state:
 | **Agent output budget / truncation safety** | **Complete (Wave 12)** — no truncated reply reads as success, no laundered no-op |
 | **Dependency context** | **Complete (Wave 13)** — a task receives what its dependencies built; an empty bundle is refused, not dispatched |
 | **Context budget** | **Complete (Wave 16)** — the caller layer is bounded and evidence-filtered; the cascade guard runs from both front ends |
+| **Write-path safety & state durability** | **Complete (Wave 17)** — every entry point that turns a node id into a path is containment-checked; all three persisted state files are crash-safe; `mypy --strict`/`ruff` now cover `cli/` too |
 | `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
@@ -505,7 +507,9 @@ skip to the subsystem you're touching.
   and `AgentProtocolError` (the HTTP call succeeded but the body could not be
   decoded into a `TaskResult` — a decode failure, never a transport one). All
   three carry `stop_reason` and `usage` so the runner can put them on the
-  failed `TaskResult` it returns.
+  failed `TaskResult` it returns. Wave 17 adds `UnsafeNodeIdError(MakError)` —
+  raised when a node id's file component would resolve outside the tree it may
+  write to (`mak/core/paths.py`, §2).
 - **`logging.py`** — `SessionLogger`: an append-only JSON-Lines event log. `EventType`
   is a `StrEnum`; `LogEntry` round-trips via `to_json()` / `from_json()`. Writes are
   serialized under a lock and flushed, so events never interleave or truncate.
@@ -648,6 +652,30 @@ next version. Prior versions are retained on disk, which is what makes
 Fragment order is preserved as `order` metadata so reconstruction emits source in
 its original order. **All mutations are guarded by a re-entrant lock.**
 
+**Containment, and crash-safe persistence (Wave 17).** A node id's file component
+becomes a real filesystem path in two places — `_fragment_dir` here, and
+`Session._reconstruct_affected` on the work-dir side (§10) — and neither used to
+check where it landed. `Path(root) / "/etc/x.py"` is `/etc/x.py`: an absolute
+component discards everything before it, and a `..` component walks out of any
+root. `_fragment_dir` is the store's single choke point for every fragment read,
+write, and delete, so `mak/core/paths.py::check_node_id` is asserted there —
+containment only (`mak_dir_name=None`), not the "is this project source?" question,
+because the Wave 11 prune has to be able to **address** the `.mak/…` nodes an older
+MAK ingested in order to delete them; a store that refused to name them could never
+clean them up. `safe_path_under` additionally *resolves* the path, catching what a
+string check cannot — a symlinked directory inside the tree pointing outside it.
+
+Separately, `metadata.json` — rewritten on every commit — now writes through
+`mak/core/atomic.py::write_text_atomic` (temp file in the same directory, `fsync`,
+`os.replace`), so a kill mid-write leaves either the whole old file or the whole
+new one, never a truncation. A metadata file that still can't be read (an older
+truncation, or corruption from any other cause) is quarantined to
+`metadata.json.corrupt` and the store starts with an empty index rather than
+raising out of its own constructor — the fragments on disk are the valuable part
+and are left untouched; only the index that pointed at them is rebuilt from
+nothing. `lock_table.json` and `task_graph.json` get the same atomic-write
+treatment and their own corrupt-read policies; see §4 and §10.
+
 ## 3. The AST pipeline
 
 This is the kernel's core mechanism — it replaces Git's diff/merge with a
@@ -784,7 +812,19 @@ When an agent returns a `TaskResult`:
    pass through, a symbol id inside a **whole-file** grant is folded into that
    grant, and anything else is refused *and logged* (`SOURCE_DROPPED`, with the id,
    the grant, and the reason). Whatever the agent returned is recorded first as an
-   `AGENT_RESULT` event.
+   `AGENT_RESULT` event. **Folded fragments are ordered, not concatenated in
+   emission order (Wave 17).** Several symbols returned under one whole-file grant
+   used to join in `dict` insertion order — whatever order the model happened to
+   emit them — which put imports after code whenever a model wrote its functions
+   first. That still `compile()`s (imports are legal anywhere), so every gate
+   downstream passed it silently; only a `from __future__` import would ever have
+   caught it. `map_returned_sources` now takes an optional `order_key`, and sorts
+   folded fragments three ways: a `module_header` fragment always leads (a
+   `from __future__` import is only legal as the first statement); otherwise the
+   node store's own recorded source `order` (`NodeStore.node_order`, wired by
+   `Session._stage_returned_sources`); otherwise the model's emission order as the
+   fallback when the store has no opinion (e.g. the CLI bridge, which calls this
+   with no `order_key` at all).
 1. `compile()` each modified fragment — reject on failure. `compile()` is used (not
    `ast.parse()`) because it enforces all Python compile-time rules, including the
    requirement that `from __future__` imports appear at the very beginning of a
@@ -1283,6 +1323,29 @@ Every path returns a `TaskResult`: backend failures become `success=False` (so t
 scheduler can re-queue); a genuinely misconfigured adapter raises `AgentError`.
 `shutdown()` drains the pool.
 
+**The runner owns the work dir, and every provider client is bounded (Wave
+17).** `assign(adapter, task, working_dir=None)` used to default `working_dir` to
+`"."`, and the *caller* inside `Session` (`_ConcurrentRunner._run`) called it with
+only two arguments — so a CLI adapter always spawned in the process's CWD, not the
+project, and `--sandbox` bind-mounted the wrong directory into the container
+entirely. `AgentRunner` now takes `work_dir` at construction (it's a per-session
+constant) and `assign`'s `working_dir` parameter is an override, not the only path
+in. Separately, none of the three API adapters set a request timeout — a wedged
+provider call never returned, and the session's collect timeout couldn't help: it
+would stop *waiting*, then `close()` blocked *joining* that very call anyway. Each
+adapter now accepts `timeout: float | None`, wired from the configured
+`AgentConfig.timeout` via `bootstrap._api_factory`. The SDKs disagree on units —
+Anthropic and OpenAI take seconds, `google-genai`'s `HttpOptions.timeout` is
+**milliseconds** — so the Gemini adapter converts (`int(timeout * 1000)`); passing
+seconds straight through would set a timeout 1000× too short and fail every real
+call. `Session.close()` now calls `agent_runner.shutdown()` (duck-typed — the
+injected `_Assigner` protocol doesn't declare it) so a pooled CLI subprocess no
+longer outlives the session that spawned it, and on a wedged worker it shuts the
+thread pool down with `cancel_futures=True` rather than joining — which drops
+*queued* work but cannot interrupt a call already in flight; the per-request
+timeout above is what bounds that one. Neither alone is sufficient; see the
+`Session.close` docstring for the pairing.
+
 **Three failure classes, not one (Wave 12).** `_assign_api` used to flatten
 every `send`/`parse_result` exception into `f"api call failed: {exc}"` — which
 blamed the transport for a truncated or malformed *response body*, and gave a
@@ -1326,9 +1389,22 @@ so it is unit-testable without Docker.
   plan must also include sub-tasks for every node that calls that function across all
   files. This minimises the need for post-wave cascade detection — it is better for
   the planner to address call sites upfront than to discover them as cascades after
-  the first wave. Four further **target-node rules** keep a plan inside what the
+  the first wave. Five further **target-node rules** keep a plan inside what the
   kernel can actually execute (each raises `ValueError`, so `decompose` retries with
   the reason fed back and the model self-corrects):
+    - **Containment (Wave 17), checked first.** A target's file component must
+      resolve *inside* the working directory — no absolute path, no `..`
+      component, nothing under the mak dir (`mak/core/paths.py::
+      unsafe_node_id_reason`, §2). This runs before the `.py` check below on
+      purpose: containment is the more fundamental property, and an id like
+      `/etc/cron.d/payload.py` satisfies the extension rule perfectly. The node
+      id becomes a real filesystem path twice downstream — the node store's
+      fragment dir, the reconstructed file under the work dir — and
+      `Path(work_dir) / "/etc/x.py"` collapses to `/etc/x.py`, discarding the
+      work dir entirely, so this is the first of three independent gates on the
+      same property (the node store and `Session.install_plan` are the other
+      two, §2 and §10 — `install_plan` needs its own because the interactive
+      app and every cascade wave call it directly, bypassing `parse_plan`).
     - **Python-only targets.** Every `target_node`'s file component must end in
       `.py` (`is_python_target`). A `.md`/`.json`/`README`/doc target is rejected —
       MAK has no AST node for it, so it could never be ingested or reconstructed
@@ -1534,7 +1610,14 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   `install_plan` **always** re-validates the incoming plan — this is the one wire-in
   point that covers every path into it: `Session.plan()`, the CLI/TUI's direct
   `_planner.decompose()` + `install_plan()` call, cascade waves, and a user's edited
-  plan from the review flow. When `planner.validate` (default on), `install_plan`
+  plan from the review flow. Because it is the one wire-in point, it is also where
+  `install_plan` runs its own containment check (`_reject_unsafe_targets`, Wave 17,
+  §2/§8) *before* validation touches the plan — `parse_plan`'s equivalent check
+  covers planner output, but two of the three ways a plan reaches the scheduler
+  (the interactive app, every cascade wave) never call `parse_plan` at all, so
+  `install_plan` needed its own gate rather than relying on the planner's. An
+  escaping target raises `SessionError` naming every offender, not just the first.
+  When `planner.validate` (default on), `install_plan`
   rebuilds the dependency graph from the node store's current committed state
   (`dep_graph_from_store`, §8) and runs `validate_plan` before normalizing agent
   types; the corrected plan is what actually gets installed, and
@@ -1580,7 +1663,12 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   `display_plan_for_review` with a banner header); if approved, `install_plan` is
   called and `run()` executes another wave. The loop repeats until no cascades
   remain or the user declines. If the planner's CASCADE PREVENTION worked, this
-  path fires zero times.
+  path fires zero times. Each generated fix-up task's id is a sanitized slug
+  **plus a digest of the pre-sanitization subject** (`_fixup_task_id`, Wave 17):
+  `[^a-zA-Z0-9]` sanitization is lossy — `a/b.py` and `a-b.py` both collapse to
+  `a_b_py` — and `DAG` rejects a duplicate task id outright, so two unrelated
+  files whose names happened to sanitize alike used to take down the *entire*
+  cascade wave over a naming coincidence, not a real conflict.
 - **cross-module defects** (`detect_cross_module_defects()`, Wave 13) — carried by
   the same call. A wave that creates two modules which disagree about each other's
   API changed no existing signature, so the comparison above sees nothing, yet the
@@ -1650,7 +1738,18 @@ Robustness properties worth knowing:
   `plan()` and resumes the persisted plan (so a fresh run's `initialize()` — which
   clears the lock table — never destroys the crash state). `--task` is optional when
   `--recover` is set; if there is no `task_graph.json` to resume, the CLI exits
-  non-zero with a message.
+  non-zero with a message. **A corrupt graph degrades the same way (Wave 17):**
+  `Scheduler.from_persisted` raises `SchedulingError` on a graph it cannot parse —
+  the exact failure mode a kill mid-write produces — and `recover()` catches it,
+  logs `SESSION_ENDED(recover_failed=True, …)`, prints the reason, and leaves the
+  session un-planned rather than propagating. Before this, `--recover` broke on
+  precisely the crash it exists to handle; now the operator sees "nothing to
+  resume" and starts a fresh run instead of an unhandled traceback. `lock_table.json`
+  and `NodeStore`'s `metadata.json` get analogous per-store policies — a lost lock
+  table just starts empty (every lease in it is reconstructible), and a corrupt
+  metadata index is quarantined to `metadata.json.corrupt` with the fragments left
+  untouched (§2) — because what a corrupt file costs differs per store, and only
+  the task graph's cost is "nothing to resume."
 - **Honest stall reporting** — a run is `COMPLETED` *only if* the scheduler is
   genuinely done; otherwise `SessionResult` splits the strays so the outcome is
   legible: `failed` (a task that exhausted `max_attempts`), `skipped` (a task with a
@@ -1718,6 +1817,18 @@ Robustness properties worth knowing:
   across every attempt from the `TASK_DISPATCHED` path (§3.2). A wave whose mean
   context is near zero produced its results without being shown the code, which is
   worth knowing before trusting them.
+- **Token accounting is the session's own, not scraped from an SDK (Wave 17).**
+  `Session.token_usage` / `Session.total_tokens` sum what each provider actually
+  reported on its own response: `_agent_usage` accumulates `TaskResult.usage` as
+  results are processed, and `Planner.token_usage` (recorded on `PlannerLLM` after
+  every `complete()` call, including retries and the optional critique pass) is
+  folded in. This replaced three SDK monkeypatches in `cli/runner.py` that hooked
+  `Messages.create` / `Completions.create` / `Models.generate_content` — wrong as
+  well as fragile, since the Anthropic agent adapter and planner both call
+  `messages.stream`, which never routes through `Messages.create`, so the old
+  counter reported a flat zero for MAK's default provider. `cli/runner.py`'s
+  `session_tokens(session)` is now a thin read of `session.total_tokens`; nothing
+  patches a vendor SDK internal any more (§12.2).
 
 All collaborators are injected behind `Protocol`s, so the session is testable with
 fakes.
@@ -1834,6 +1945,28 @@ Rules and behaviors:
   Every surface where a model is chosen prints it: the TUI's `/models`,
   `/planner`, and setup wizard, and `mak run` (`warn_model_caveats` in
   `mak/__main__.py`, once per distinct caveat on stderr).
+- **`session.mak_dir` is anchored to `work_dir`, not to the process CWD (Wave
+  17).** A relative `mak_dir` (the default `".mak"`) used to be interpreted
+  against wherever the operator happened to launch `mak` from — `mak run
+  --work-dir ~/projA` and `mak run --work-dir ~/projB` invoked from the same
+  shell shared `./.mak/node_store`, and since node ids are work-dir-relative,
+  `toolkit/registry.py` in project A and project B were literally the *same*
+  id: re-ingestion is skipped once a whole-file node exists, so B silently
+  inherited A's content and reconstruction wrote it to disk. The TUI already
+  anchored `mak_dir` correctly (§12.2); `mak run` did not. Both now call the
+  shared `config.anchor_mak_dir(config)` — a relative `mak_dir` resolves
+  against `work_dir`, an absolute one (an explicit override) is left alone —
+  and `Session._mak_roots` collapsed from two speculative roots (CWD-relative
+  *and* work-dir-relative, "hope one of them is right") to the one the config
+  now unambiguously names. `config.stale_mak_dir(config)` detects a leftover
+  `.mak` from before this fix at the old CWD-relative location and reports it
+  on stderr; it is **never adopted** — deciding an orphaned store belongs to
+  *this* project means guessing, and guessing wrong reintroduces the exact
+  cross-project contamination the fix removes. `mak/__main__.py::main` calls
+  `stale_mak_dir` *before* `anchor_mak_dir` — once the config is anchored,
+  the old CWD-relative location is simply the answer to a question nothing
+  asks any more, so the orphan check has to run on the pre-anchor config
+  to see it at all.
 - **`node_store.exclude_patterns` is a convenience, not the safety net.** Setting it
   *replaces* the defaults, so a config that omits `**/.mak/**` no longer excludes
   MAK's own store by pattern — which is exactly why `Session.initialize` skips the
@@ -1869,7 +2002,9 @@ shell over the composition root, split into testable functions:
   `TestRunner`, the default agent, and the healthy `agent_pool`). It runs the startup
   **health preflight** here (§7.2).
 - `main(argv, *, session_builder=build_session)` — loads env + config, applies the CLI
-  overrides (work-dir, roster, concurrency), validates, builds the session, drives
+  overrides (work-dir, roster, concurrency), validates, **anchors `mak_dir` under
+  `work_dir` and warns on stderr if a stale pre-anchor `.mak` sits next to the
+  shell** (`anchor_mak_dir`/`stale_mak_dir`, Wave 17, §11), builds the session, drives
   **initialize → plan → run → cascade loop → teardown**, and maps domain errors to
   friendly messages and exit codes: `0` success, `1` for an aborted review / planner
   failure / failed-or-blocked run / failing tests, `2` for a config error (including
@@ -2025,12 +2160,22 @@ dumps.
 - **Git diff** — `get_git_diff(work_dir, pre_hash)` diffs `{pre_hash}..HEAD`,
   covering all commits MAK made during the task (not just the last one). Displayed
   as `+N -N` bars per file under a dim `changes` label.
-- **Token counting** — `install_token_counter()` patches **all three** provider SDKs
-  at the class level once at startup — `anthropic …Messages.create`, `openai
-  …Completions.create`, and `google.genai …Models.generate_content` — so every call
-  (planner + agents, any provider) is counted, not just Anthropic. Each patch is
-  best-effort: a provider whose SDK isn't installed is skipped. On Ctrl+C/EOF the exit
-  message shows `Session ended.  N,NNN tokens used.`
+- **Token counting** — `cli/runner.py::session_tokens(session)` reads
+  `Session.total_tokens` after each run and accumulates it into `self._session_tokens`.
+  On Ctrl+C/EOF the exit message shows `Session ended.  N,NNN tokens used.` **This
+  replaced three SDK monkeypatches (Wave 17)** that hooked `anthropic
+  …Messages.create`, `openai …Completions.create`, and `google.genai
+  …Models.generate_content` at the class level. The patches were wrong, not just
+  fragile: MAK's Anthropic agent adapter and its Anthropic planner backend both call
+  `messages.stream` (a large output budget forces streaming — the SDK rejects a
+  non-streaming call above ~10 minutes), which never routes through `Messages.create`
+  at all — so the counter reported a flat **zero** for the default provider, and the
+  old test suite only ever exercised the pure per-provider helpers (`anthropic_tokens`
+  etc.), never asserted that the patched method was the one MAK actually calls. The
+  session now sums what each provider reported on its own response
+  (`TaskResult.usage`, plus the planner's own `token_usage`, §10), which is correct
+  for a streamed call exactly like a non-streamed one and needs no SDK internals at
+  all.
 
 ### Slash commands
 
@@ -2068,14 +2213,25 @@ in memory and are **never written back to `mak/config.yaml`** or any other file.
 1. **No config file reference passed to MAK.** `build_session()` builds an
    in-memory `MakConfig` from `CliState` overrides and passes only that object to
    `mak.__main__.build_session`. The config file path (`state.config_path`) is
-   **not** included in the `args` `SimpleNamespace` forwarded to MAK — removing any
-   pathway for a future MAK refactor to write back to `mak/config.yaml`.
+   **not** included in the `args` object forwarded to MAK — removing any pathway
+   for a future MAK refactor to write back to `mak/config.yaml`. That object is a
+   real `argparse.Namespace` (Wave 17), not a `SimpleNamespace` lookalike: the
+   latter satisfied `build_session` by duck-typing today, but `mypy --strict`
+   flagged it the moment the gate was extended to `cli/` (see "The quality gates"
+   above) — a `SimpleNamespace` gives no static guarantee that it carries every
+   attribute `build_session` reads, and would have broken silently the first time
+   it read a new one.
 
-2. **`mak_dir` is anchored to `work_dir`.** When `/work-dir` points to an external
-   project, `_apply_state_to_config` resolves the `mak_dir` (which defaults to the
-   relative `".mak"`) to an absolute path inside that `work_dir`. Without this, the
+2. **`mak_dir` is anchored to `work_dir`.** `_apply_state_to_config` calls the
+   shared `config.anchor_mak_dir` (§11, Wave 17) rather than its own inline
+   version — a relative `mak_dir` (the default `".mak"`) resolves to an absolute
+   path inside `work_dir`, an absolute override is left alone. Without this, the
    node store, lock table, and session log would be created inside the MAK kernel
-   repo (relative to process CWD) instead of the target project.
+   repo (relative to process CWD) instead of the target project. This invariant
+   used to hold only here: `mak run` had its own, separate bug where `mak_dir`
+   was interpreted against the process CWD regardless of `--work-dir`, so the two
+   front ends disagreed about where a project's state lives. They now share one
+   implementation and cannot drift apart again.
 
 If you add new CLI state fields that affect how MAK runs, apply them in
 `_apply_state_to_config` (in-memory only) and never persist them to the config file.
@@ -2310,10 +2466,19 @@ in `tests/models/` touches the network — every provider fetch is a fake `Model
 Three gates must be green for every change — locally, in pre-commit, and in CI:
 
 ```bash
-pytest -q                  # the full suite (currently 1029 tests)
-mypy --strict mak          # zero errors
-ruff check mak tests       # zero findings
+pytest -q                  # the full suite (currently 1216 tests)
+mypy --strict mak cli      # zero errors
+ruff check mak cli tests   # zero findings
 ```
+
+`mak cli` and `mak cli tests` — not just `mak` — since Wave 17 extended both gates to
+`cli/`. That extension found real defects on the first run: a `Session._planner`
+access with no `None` guard (latent — `build_session` always sets one today, but a
+bare `AttributeError` in a worker thread the day it doesn't) and a `SimpleNamespace`
+passed where `mak.__main__.build_session` expects a real `argparse.Namespace` (worked
+by duck-typing; would have broken silently the day `build_session` read a new
+attribute). Extending a gate is not free of cost, but it is exactly the kind of
+defect a gate exists to catch before a contributor does.
 
 CI (`.github/workflows/ci.yml`) runs all three on push and PR against `main`; the
 pre-commit hooks mirror them. A change that breaks any gate will not merge.
@@ -2494,6 +2659,19 @@ here so contributors don't mistake them for bugs:
   task holds no locks, so the wait graph is acyclic by construction. The
   `DeadlockDetector` runs each iteration as genuine defense-in-depth that, by design,
   finds nothing.
+- **A wedged worker's abandonment is cooperative, not preemptive (Wave 17).**
+  `Session.close(wait=False)` shuts the thread pool down with
+  `cancel_futures=True` on the abnormal-exit path, and that call cannot actually
+  interrupt a call already in flight — it only drops work still *queued*. What
+  bounds the in-flight call is the per-request SDK timeout threaded from
+  `AgentConfig.timeout` (§7.5); the two are a pair, and either one alone leaves a
+  gap (a timeout with no non-blocking shutdown still hangs the process joining the
+  worker thread when it eventually raises; a non-blocking shutdown with no timeout
+  never actually bounds how long the abandoned call runs, only how long the
+  *session* waits for it). This is accepted rather than fixed further because
+  Python offers no safe way to kill a thread mid-call; the alternative is running
+  every agent call in a subprocess, which is a materially bigger change than this
+  wave's scope.
 
 ## Good first contributions
 
@@ -2648,6 +2826,78 @@ would have generated a task telling an agent to break correct code. The loop mov
 resolves strictly. `TASK_DISPATCHED` also carries per-layer attribution now, because
 doing this analysis by hand against `task_graph.json` is exactly the cost the event
 exists to remove. What remains is the open-problems list above.
+
+**Wave 17** is a different kind of read from 11–16: not one real session's log, but
+a full security-and-robustness audit of the kernel (§2, §7.5, §10, §11), and it
+found two defects load-bearing enough to reorder the roadmap around them. First,
+**nothing checked where a node id was allowed to write.** A node id's file
+component becomes a real filesystem path twice — the node store's fragment
+directory, the reconstructed file under the work dir — and neither join was safe:
+`Path(work_dir) / "/etc/x.py"` is `/etc/x.py`, discarding the work dir outright,
+and `..` walked out of either root. The planner's existing `.py`-extension check
+passed both cleanly. Verified against the pre-fix tree: a plan naming
+`../../ESCAPED.py` and `/tmp/mak_abs_probe.py` as targets was accepted by
+`parse_plan` without complaint, and a direct `NodeStore.put_node` under that id
+wrote the file outside the store root. The planner is an LLM reading a node
+inventory derived from repo *contents*, so this was reachable from an untrusted
+repo, not just a malicious plan. Second, **`mak_dir` was interpreted against the
+process CWD, not `work_dir`**, in the `mak run` path (the TUI had already fixed
+this for itself and never shared the fix): two projects driven from one shell
+shared one node store, and because node ids are work-dir-relative, a file with the
+same relative path in each project was the *same id* — the second project silently
+inherited the first's content.
+
+Both are closed by containment checked at **every** boundary that turns an id into
+a path, independently, rather than once at the top: `parse_plan` (lexical — no
+work dir is in scope yet), the node store's `_fragment_dir` (resolving — catches a
+symlinked escape a string check cannot), and `Session._reconstruct_affected`/
+`install_plan`. That last one was not in the original plan — `install_plan` is
+called directly by the interactive app and by every cascade wave, neither of which
+goes through `parse_plan`, so without its own gate two of the three ways a plan
+reaches the scheduler were ungated. `mak_dir` is now anchored under `work_dir`
+(`config.anchor_mak_dir`, shared by both front ends) with a stale pre-anchor `.mak`
+reported on stderr and never adopted — guessing that an orphaned store belongs to
+*this* project would reintroduce the exact corruption the fix removes. Alongside
+containment: all three persisted state files (`lock_table.json`, `task_graph.json`,
+`NodeStore`'s `metadata.json`) now write atomically and degrade per a policy
+chosen for what losing each one actually costs, rather than raising out of a
+constructor — a corrupt task graph used to break `--recover` on exactly the crash
+it exists to handle. Per-request SDK timeouts closed a matching gap on the agent
+side: no API adapter bounded its own call, so a wedged provider call defeated the
+session's collect timeout (it stopped *waiting*, then `close()` blocked *joining*
+that same call anyway); `AgentRunner` also gained the work dir it should have had
+from the start, fixing CLI agents spawning in the process CWD and `--sandbox`
+mounting the wrong tree into the container.
+
+One correction happened *during* the wave, not after it, which is worth recording
+because the process is the point. The first cut of the node-store gate rejected
+any id containing `.mak/`, full stop — and broke the Wave 11 prune's own regression
+test. It was right to: that prune exists to *delete* the `.mak/…` nodes an older
+MAK ingested, and a store that refuses to **address** an id can never evict it.
+Containment ("does this resolve outside the root?") and source policy ("is this
+legitimate project source?") are different questions, and the store must only ever
+answer the first — the fix split them into two parameters
+(`mak_dir_name=None` opts out of the second) rather than one. A second correction
+was a full withdrawal: the audit's claim that `AgentRunner._read_result` leaked a
+reader thread on an agent timeout **does not hold** — every timeout path already
+terminates the child, which closes the pipe and ends the blocked read in EOF, and a
+thread-count probe confirmed the count returns to baseline. The attempted fix
+(closing the pipe from the caller) was worse than the non-bug: `io.BufferedReader.
+close()` contends for the same buffer lock the blocked reader holds, so it stalled
+until the child died anyway — a 0.5s test timeout became 30s, and the full suite's
+wall clock went from 8s to 38s before the regression was traced and reverted, with
+a comment at the site recording why the pipe is deliberately left alone. Extending
+`mypy --strict`/`ruff` to `cli/` (closing the gap that let the token-counter bug
+below hide) found two more defects for free on the first run: a `Session._planner`
+access with no `None` guard, and a `SimpleNamespace` passed where `build_session`
+is typed to expect a real `argparse.Namespace` — both latent, both fixed. Finally,
+the TUI's token counter was rewritten off three SDK monkeypatches: they hooked
+`Messages.create` while both the Anthropic agent adapter and the Anthropic planner
+call `messages.stream` (forced by the output budget), so the counter had been
+reporting a flat zero for MAK's default provider, undetected because the old test
+suite exercised only the pure per-provider helpers and never the patch point
+itself. The gates closed the wave at 1216 tests, `mypy --strict` and `ruff` clean
+over `mak` **and** `cli`.
 
 ---
 
