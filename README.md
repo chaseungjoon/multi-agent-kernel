@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.5.8 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.5.9 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -42,7 +42,7 @@ arbitrates shared memory between threads.
 Most multi-agent coding systems give each agent a Git branch and merge at the end. A **message-passing** model where conflicts surface late, after the dependency
 information needed to resolve them is gone.
 
-The Multi Agent Kernel takes the **shared-memory** approach. 
+The Multi Agent Kernel takes the **shared-memory** approach.
 
 - The codebase is decomposed into
 independently lockable `AST nodes` (functions, methods, classes, headers). 
@@ -215,7 +215,6 @@ update. Run `/refresh-models` to fetch immediately instead of waiting.
 > orgs get a 400 on every request), it can decline requests with a `refusal` stop reason
 > (which MAK treats as a failed task), and it is priced above Opus tier ($10/$50 per MTok).
 > MAK prints this warning whenever you select it as a planner or agent model.
-
 
 ## Configuration & API Keys
 
