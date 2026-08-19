@@ -10,6 +10,11 @@ from typing import Any
 import yaml
 
 from mak.core.exceptions import ConfigError
+from mak.node_store.store import (
+    DEFAULT_VERSION_RETENTION,
+    MIN_VERSION_RETENTION,
+    UNBOUNDED_VERSION_RETENTION,
+)
 
 _DEFAULT_INCLUDE: list[str] = ["**/*.py"]
 # Directories that are never project source. ``.mak`` heads the list: the node
@@ -131,6 +136,14 @@ class SessionConfig:
     **dropped** rather than digested — a caller's value is its call site, and a
     signature digest of a caller says nothing. ``0`` disables the layer, ``-1``
     makes it unbounded.
+
+    ``max_total_tokens`` is the run's spend ceiling: input plus output, agents
+    plus planner, counted from what each provider reported on its own response.
+    Nothing else bounds a run's cost — ``max_attempts`` × ``max_iterations`` ×
+    cascade waves × per-agent output multiply out to no ceiling at all — so this
+    is the only way to cap it up front. ``None`` (the default) is unbounded. On a
+    breach the run stops dispatching, finishes what is already in flight, and
+    reports failure naming the budget; it never interrupts a commit.
     """
 
     work_dir: str = "."
@@ -141,6 +154,7 @@ class SessionConfig:
     test_command: str | None = None
     dependency_context_bytes: int = 24000
     cross_file_context_bytes: int = 32000
+    max_total_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,10 +212,19 @@ class GitConfig:
 
 @dataclass(frozen=True, slots=True)
 class NodeStoreConfig:
-    """Node store file-matching configuration."""
+    """Node store file-matching and retention configuration.
+
+    ``version_retention`` bounds how many on-disk versions of a node survive.
+    Every commit writes a ``v{n}.py`` and nothing used to remove one, so
+    ``.mak/node_store/`` grew monotonically for the life of a project. The
+    committed version plus ``N-1`` prior are kept; the floor is 2 because
+    ``revert_node`` needs a prior version to roll back to, and ``-1`` restores
+    the old unbounded behaviour.
+    """
 
     include_patterns: tuple[str, ...] = tuple(_DEFAULT_INCLUDE)
     exclude_patterns: tuple[str, ...] = tuple(_DEFAULT_EXCLUDE)
+    version_retention: int = DEFAULT_VERSION_RETENTION
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +268,7 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
         test_command=_opt_str(raw, "test_command"),
         dependency_context_bytes=_as_int(raw, "dependency_context_bytes", 24000),
         cross_file_context_bytes=_as_int(raw, "cross_file_context_bytes", 32000),
+        max_total_tokens=_opt_positive_int(raw, "max_total_tokens"),
     )
 
 
@@ -281,9 +305,16 @@ def _parse_git(raw: dict[str, Any]) -> GitConfig:
 def _parse_node_store(raw: dict[str, Any]) -> NodeStoreConfig:
     include = raw.get("include_patterns", _DEFAULT_INCLUDE)
     exclude = raw.get("exclude_patterns", _DEFAULT_EXCLUDE)
+    retention = _as_int(raw, "version_retention", DEFAULT_VERSION_RETENTION)
+    if retention != UNBOUNDED_VERSION_RETENTION and retention < MIN_VERSION_RETENTION:
+        raise ConfigError(
+            f"'version_retention' must be at least {MIN_VERSION_RETENTION} "
+            f"(or {UNBOUNDED_VERSION_RETENTION} for unbounded), got {retention}"
+        )
     return NodeStoreConfig(
         include_patterns=tuple(str(p) for p in include),
         exclude_patterns=tuple(str(p) for p in exclude),
+        version_retention=retention,
     )
 
 

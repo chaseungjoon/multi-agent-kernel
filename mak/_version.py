@@ -11,5 +11,5 @@ keep it in step with ``__version__``.
 
 from __future__ import annotations
 
-__version__ = "0.5.9b0"
-__version_display__ = "0.5.9 Beta"
+__version__ = "0.5.10b0"
+__version_display__ = "0.5.10 Beta"

@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from mak.node_store.ingestion import parse_file_into_fragments, walk_and_parse
+from mak.node_store.ingestion import (
+    _is_excluded,
+    iter_source_files,
+    parse_file_into_fragments,
+    walk_and_parse,
+)
 
 SAMPLE_SOURCE = textwrap.dedent("""\
     import os
@@ -110,3 +115,121 @@ class TestWalkAndParse:
         result = walk_and_parse(tmp_path)
         assert "bad.py" not in result
         assert "good.py" in result
+
+
+def _tree(root: Path) -> None:
+    """Build a tree that distinguishes anchored globs from recursive ones."""
+    (root / "top.py").write_text("x = 1\n")
+    (root / "notes.md").write_text("# notes\n")
+    (root / "src").mkdir()
+    (root / "src" / "mod.py").write_text("y = 1\n")
+    (root / "src" / "deep").mkdir()
+    (root / "src" / "deep" / "inner.py").write_text("z = 1\n")
+    (root / "src" / "test_a.py").write_text("a = 1\n")
+    (root / "src" / "text_b.py").write_text("b = 1\n")
+    (root / "vendor").mkdir()
+    (root / "vendor" / "lib.py").write_text("c = 1\n")
+
+
+def _by_glob(
+    root: Path, includes: tuple[str, ...], excludes: tuple[str, ...]
+) -> list[Path]:
+    """Reproduce the pre-Wave-18 path: glob all, then discard the excluded."""
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in includes:
+        for path in sorted(root.glob(pattern)):
+            rel = str(path.relative_to(root))
+            if not path.is_file() or _is_excluded(rel, excludes) or path in seen:
+                continue
+            seen.add(path)
+            out.append(path)
+    return out
+
+
+class TestIterSourceFiles:
+    """The pruning walk must resolve a glob exactly as ``Path.glob`` does.
+
+    It is the only place in MAK that reimplements glob matching, and it decides
+    what gets ingested — a divergence here is a file silently missing from the
+    node store, which no later stage can detect.
+    """
+
+    @pytest.mark.parametrize(
+        "includes",
+        [
+            ("**/*.py",),
+            ("*.py",),
+            ("src/*.py",),
+            ("src/**/*.py",),
+            ("**/*.py", "**/*.md"),
+            ("**/te[sx]t_*.py",),
+            ("**/?op.py",),
+            ("src/**",),
+            ("nothing/**/*.py",),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "excludes",
+        [(), ("**/vendor/**",), ("**/deep/**", "**/*_b.py")],
+    )
+    def test_matches_the_glob_it_replaces(
+        self, tmp_path: Path, includes: tuple[str, ...], excludes: tuple[str, ...]
+    ) -> None:
+        _tree(tmp_path)
+        assert iter_source_files(tmp_path, includes, excludes) == _by_glob(
+            tmp_path, includes, excludes
+        )
+
+    def test_a_wildcard_does_not_cross_a_separator(self, tmp_path: Path) -> None:
+        # The reason fnmatch.translate is unusable here: its '*' spans '/'.
+        _tree(tmp_path)
+        found = iter_source_files(tmp_path, ("src/*.py",), ())
+        assert {p.relative_to(tmp_path).as_posix() for p in found} == {
+            "src/mod.py",
+            "src/test_a.py",
+            "src/text_b.py",
+        }
+
+    def test_an_excluded_directory_is_not_descended_into(
+        self, tmp_path: Path
+    ) -> None:
+        _tree(tmp_path)
+        visited: list[str] = []
+        original = Path.iterdir
+
+        def spy(self: Path) -> object:
+            visited.append(self.name)
+            return original(self)
+
+        Path.iterdir = spy  # type: ignore[method-assign,assignment]
+        try:
+            iter_source_files(tmp_path, ("**/*.py",), ("**/vendor/**",))
+        finally:
+            Path.iterdir = original  # type: ignore[method-assign]
+        assert "vendor" not in visited
+        assert "src" in visited
+
+    def test_the_skip_predicate_prunes_a_directory(self, tmp_path: Path) -> None:
+        _tree(tmp_path)
+        found = iter_source_files(
+            tmp_path, ("**/*.py",), (), skip=lambda p: p.name == "src"
+        )
+        assert {p.relative_to(tmp_path).as_posix() for p in found} == {
+            "top.py",
+            "vendor/lib.py",
+        }
+
+    def test_an_unreadable_directory_is_skipped_not_fatal(
+        self, tmp_path: Path
+    ) -> None:
+        _tree(tmp_path)
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        (locked / "hidden.py").write_text("q = 1\n")
+        locked.chmod(0o000)
+        try:
+            found = iter_source_files(tmp_path, ("**/*.py",), ())
+        finally:
+            locked.chmod(0o755)
+        assert any(p.name == "top.py" for p in found)

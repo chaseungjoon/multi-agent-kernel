@@ -64,15 +64,22 @@ SessionBuilder = Callable[
 ]
 
 
-def _load_one_env_file(env_path: Path) -> None:
+def _legacy_env_path() -> Path:
+    """Return the deprecated in-package ``.env`` location (``mak/.env``)."""
+    return Path(__file__).resolve().parent / ".env"
+
+
+def _load_one_env_file(env_path: Path) -> bool:
+    """Load one ``KEY=VALUE`` file into the environment; report if it existed."""
     if not env_path.exists():
-        return
+        return False
     for raw in env_path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
         os.environ.setdefault(key.strip(), value.strip())
+    return True
 
 
 def load_env_file(path: Path | None = None) -> None:
@@ -84,13 +91,25 @@ def load_env_file(path: Path | None = None) -> None:
 
     1. ``<user config dir>/.env`` (e.g. ``~/.config/mak/.env``) — where an
        installed MAK's ``/apikey`` setup stores keys.
-    2. ``mak/.env`` next to this module — the legacy source-checkout location.
+    2. ``mak/.env`` next to this module — the legacy source-checkout location,
+       **deprecated**: it sits inside the package directory and nothing enforces
+       its mode, so a working copy is routinely left world-readable with live
+       keys in it. Using it warns and names the replacement; the next release
+       stops reading it.
     """
     if path is not None:
         _load_one_env_file(path)
         return
     _load_one_env_file(user_config_dir() / ".env")
-    _load_one_env_file(Path(__file__).resolve().parent / ".env")
+    legacy = _legacy_env_path()
+    if _load_one_env_file(legacy):
+        print(
+            f"mak: warning: read API keys from the legacy {legacy} (inside the "
+            f"package directory). Move them to {user_config_dir() / '.env'} — "
+            "MAK writes there with owner-only permissions. The legacy location "
+            "is removed in the next release.",
+            file=sys.stderr,
+        )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -257,7 +276,10 @@ def build_session(
     work_dir = Path(config.session.work_dir)
     mak_dir = Path(config.session.mak_dir)
 
-    node_store = NodeStore(mak_dir / "node_store")
+    node_store = NodeStore(
+        mak_dir / "node_store",
+        version_retention=config.node_store.version_retention,
+    )
     lock_table = LockTable(
         persist_path=mak_dir / "lock_table.json",
         default_timeout=config.session.lock_timeout_s,
@@ -444,6 +466,8 @@ def main(
             f"{', '.join(result.noop)}"
         )
     if not result.ok:
+        if result.stopped_reason:
+            print(f"mak: run stopped — {result.stopped_reason}.", file=sys.stderr)
         if result.failed:
             print(f"mak: failed tasks: {', '.join(result.failed)}", file=sys.stderr)
             for task_id in result.failed:

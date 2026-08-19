@@ -15,6 +15,11 @@ session:
   # dropped (a caller's value is its call site, so a digest would say nothing).
   # 0 disables the layer; -1 is unbounded.
   # cross_file_context_bytes: 32000
+  # Spend ceiling for one run: input + output tokens across every agent call and
+  # the planner's, counted from what each provider reported. Unset (the default)
+  # is unbounded. On a breach the run stops dispatching, finishes what is in
+  # flight, and fails naming the budget — it never interrupts a commit.
+  # max_total_tokens: 2000000
 
 planner:
   model: "claude-opus-5"
@@ -74,6 +79,11 @@ git:
 node_store:
   include_patterns:
     - "**/*.py"
+  # How many on-disk versions of a node to keep: the committed one plus N-1
+  # prior. Every commit writes a new version, so without a ceiling
+  # .mak/node_store/ grows for the life of the project. The floor is 2 (revert
+  # needs one prior version); -1 keeps every version forever.
+  # version_retention: 5
   # Directories that are never project source. Keep "**/.mak/**" first: the node
   # store writes its fragments as .py files under .mak/node_store/, so ingesting
   # it would feed MAK its own output back as source on every run. (MAK skips its

@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.5.9 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.5.10 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -29,6 +29,7 @@ arbitrates shared memory between threads.
 - [The Idea](#the-idea)
 - [Install](#install)
 - [Update](#update)
+- [Housekeeping](#housekeeping)
 - [Run](#run)
   - [CLI App](#cli-app)
   - [CLI Command](#cli-command)
@@ -114,6 +115,26 @@ pip install -e .
 ```bash
 mak update
 ```
+
+`mak update` moves to the newest **published release tag**, prints the version it
+is moving to before installing, and reports honestly when you are already current.
+It only ever updates a `uv tool` install; a source checkout is left alone (use
+`git pull`). Until this repo publishes its first tag, `mak update` falls back to
+the tip of `main` and says so.
+
+## Housekeeping
+
+```bash
+mak gc              # prune this project's node store
+mak gc /path/to/project
+```
+
+Every edit MAK commits writes a new version of the node into `.mak/node_store/`.
+Recent versions are kept so a bad edit can be rolled back — five by default,
+tunable with `node_store.version_retention` (minimum 2, or `-1` to keep every
+version forever) — and anything older is pruned as the commit lands. `mak gc`
+applies that policy to a store written by an older MAK, which kept everything,
+and removes fragment directories that no node addresses any more.
 
 ## Run
 
@@ -222,8 +243,14 @@ update. Run `/refresh-models` to fetch immediately instead of waiting.
 and Google Gemini**. Keys are read from the environment
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or from
 `~/.config/mak/.env` — the TUI's `/apikey` command (and its first-run setup)
-writes them there for you. Exported environment variables always win.
-In a source checkout, a legacy `mak/.env` is also read.
+writes them there for you, creating the file readable only by you (`0600`).
+Exported environment variables always win.
+
+> **Deprecated:** a source checkout's `mak/.env` is still read, but it lives
+> inside the package directory and nothing enforces its permissions — a working
+> copy is routinely left world-readable with live keys in it. MAK now warns when
+> it reads one; move your keys to `~/.config/mak/.env` (or just run `/apikey`).
+> The next release stops reading the legacy location.
 
 **Config file.** When `--config` (or `/config`) is not given, MAK auto-discovers
 its configuration, first match wins:
@@ -243,6 +270,19 @@ MAK's own `.mak/` store. MAK skips its own `.mak/` directory regardless of what 
 configure, and prunes any node left behind by an older version that did ingest it —
 if you have a `.mak/` from before v0.5.3, the next run cleans it up (deleting the
 directory yourself is the blunt alternative).
+
+**Capping what a run costs.** Nothing bounds a run's spend by default: retries,
+iterations, and cascade waves multiply out. Set `session.max_total_tokens` to cap
+it — input plus output, every agent call plus the planner's, counted from what
+each provider reported on its own response. On a breach MAK stops dispatching,
+lets what is already in flight finish and commit, and reports the run as failed
+naming the budget. It never interrupts a commit, so the working tree is never
+left half-written.
+
+```yaml
+session:
+  max_total_tokens: 2000000   # unset (the default) is unbounded
+```
 
 **Where `.mak/` lives.** MAK's node store, task graph, and session log always live
 under `--work-dir` (default `session.mak_dir` is `.mak`, relative to the project) —

@@ -15,6 +15,16 @@ class EventType(StrEnum):
 
     TASK_STARTED = "task_started"
     TASK_COMPLETED = "task_completed"
+    # A task that ran out of attempts (or hit an unretryable result). Previously
+    # logged as TASK_COMPLETED with ``failed=True``, which is only legible to a
+    # reader who knows to check that flag: anything counting completions by event
+    # type — including a human skimming the log — counted every failure as a
+    # success. The two outcomes now have two names.
+    TASK_FAILED = "task_failed"
+    # The planner named an agent type that is not registered and the session
+    # substituted a configured one. Also once logged as TASK_COMPLETED, on a task
+    # that had not started, let alone completed.
+    AGENT_REMAPPED = "agent_remapped"
     LOCK_ACQUIRED = "lock_acquired"
     LOCK_RELEASED = "lock_released"
     CONFLICT_DETECTED = "conflict_detected"

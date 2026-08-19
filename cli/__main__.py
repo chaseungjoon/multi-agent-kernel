@@ -1,9 +1,10 @@
 """Entry point: ``python -m cli`` or the ``mak`` console script.
 
 ``mak`` with no arguments opens the interactive TUI. ``mak run --task "..."``
-forwards to the one-shot kernel CLI (``python -m mak``). ``mak update``
-re-runs the uv install command so the tool moves to the latest revision —
-updating is always explicit; launching mak never touches the network.
+forwards to the one-shot kernel CLI (``python -m mak``). ``mak gc`` prunes this
+project's node store. ``mak update`` re-runs the uv install command so the tool
+moves to the newest **release** — updating is always explicit; launching mak
+never touches the network.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 _REPO_URL = "https://github.com/chaseungjoon/multi-agent-kernel"
@@ -46,28 +48,114 @@ def _installed_commit() -> str | None:
     return commit if isinstance(commit, str) and commit else None
 
 
-def _remote_commit() -> str | None:
-    """Return the repo's current HEAD commit, or None if it can't be fetched."""
+def _ls_remote(*args: str) -> str | None:
+    """Run ``git ls-remote`` against the repo; return stdout, or None on failure."""
     git = shutil.which("git")
     if git is None:
         return None
     try:
         result = subprocess.run(
-            [git, "ls-remote", _REPO_URL, "HEAD"],
+            [git, "ls-remote", *args, _REPO_URL],
             capture_output=True,
             text=True,
             timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    if result.returncode != 0:
+    return result.stdout if result.returncode == 0 else None
+
+
+def _remote_commit() -> str | None:
+    """Return the repo's current HEAD commit, or None if it can't be fetched."""
+    out = _ls_remote("HEAD")
+    if out is None:
         return None
-    head = result.stdout.split()
+    head = out.split()
     return head[0] if head and re.fullmatch(r"[0-9a-f]{40}", head[0]) else None
 
 
+_TAG_VERSION = re.compile(r"^v?(\d+(?:\.\d+)*)(.*)$")
+
+
+def _version_key(tag: str) -> tuple[tuple[int, ...], int, str] | None:
+    """Sort key for a release tag, or None if it does not look like a version.
+
+    Deliberately tolerant rather than a full PEP 440 parser: ``packaging`` is not
+    a declared dependency, and the only ordering this has to get right is between
+    this project's own tags. A plain release sorts above any pre-release of the
+    same number (``0.5.10`` > ``0.5.10b0``), and pre-release suffixes compare
+    lexically, which puts ``a`` before ``b`` before ``rc``.
+    """
+    match = _TAG_VERSION.match(tag)
+    if match is None:
+        return None
+    numbers = tuple(int(part) for part in match.group(1).split("."))
+    suffix = match.group(2)
+    return (numbers, 0 if suffix else 1, suffix)
+
+
+def _latest_release_tag() -> tuple[str, str] | None:
+    """Return the newest ``(tag, commit)`` the remote publishes, or None.
+
+    Annotated tags appear twice in ``ls-remote`` output: ``refs/tags/x`` (the tag
+    object) and ``refs/tags/x^{}`` (the commit it points at). The peeled entry is
+    the one to keep — it is what an install of that tag actually builds from, so
+    it is what the PEP 610 commit comparison can be checked against.
+    """
+    out = _ls_remote("--tags")
+    if not out:
+        return None
+    commits: dict[str, str] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) != 2 or not parts[1].startswith("refs/tags/"):
+            continue
+        commit, ref = parts
+        tag = ref[len("refs/tags/") :]
+        peeled = tag.endswith("^{}")
+        tag = tag[:-3] if peeled else tag
+        if _version_key(tag) is None:
+            continue
+        if peeled or tag not in commits:
+            commits[tag] = commit
+    if not commits:
+        return None
+    newest = max(commits, key=lambda t: _version_key(t) or ((), 0, ""))
+    return newest, commits[newest]
+
+
+@dataclass(frozen=True, slots=True)
+class _UpdateTarget:
+    """What ``mak update`` would move to: an install spec and its label/commit."""
+
+    spec: str
+    label: str
+    commit: str | None
+
+
+def _resolve_update_target() -> _UpdateTarget:
+    """Resolve the revision ``mak update`` installs.
+
+    A release tag, when the remote publishes one. Installing an unpinned
+    ``git+<url>`` meant every user who ran ``update`` adopted whatever had last
+    been pushed to ``main`` — including a half-finished branch merge — with no
+    tag, no pin, and nothing naming what they were moving to. Falls back to
+    ``HEAD`` only when the repo has no version tags at all, which is the honest
+    answer for a project that has not cut a release yet.
+    """
+    tag = _latest_release_tag()
+    if tag is not None:
+        name, commit = tag
+        return _UpdateTarget(f"{_REPO_SPEC}@{name}", name, commit)
+    return _UpdateTarget(
+        _REPO_SPEC,
+        "the latest commit on main (no release tag is published)",
+        _remote_commit(),
+    )
+
+
 def _update() -> int:
-    """Update mak to the newest revision (``mak update``).
+    """Update mak to the newest published release (``mak update``).
 
     ``uv tool install`` with a git spec reinstalls even when the resolved
     commit is unchanged, so uv's own "Installed …" output does not mean an
@@ -88,15 +176,16 @@ def _update() -> int:
         print("mak: `uv` was not found on PATH; cannot update.", file=sys.stderr)
         return 1
 
+    target = _resolve_update_target()
     installed = _installed_commit()
-    if installed is not None and installed == _remote_commit():
-        print("mak: already up to date.")
+    if installed is not None and installed == target.commit:
+        print(f"mak: already up to date ({target.label}).")
         return 0
 
-    print("mak: updating to the newest version…")
+    print(f"mak: updating to {target.label}…")
     try:
         result = subprocess.run(
-            [uv, "tool", "install", _REPO_SPEC], capture_output=True, text=True
+            [uv, "tool", "install", target.spec], capture_output=True, text=True
         )
     except OSError as exc:
         print(f"mak: update failed: {exc}", file=sys.stderr)
@@ -108,18 +197,57 @@ def _update() -> int:
 
     after = _installed_commit()
     if installed is not None and after == installed:
-        print("mak: already up to date.")
+        print(f"mak: already up to date ({target.label}).")
     elif after is not None:
         print(
-            f"mak: updated to {after[:8]} — restart mak to use the newest version."
+            f"mak: updated to {target.label} ({after[:8]}) — restart mak to use it."
         )
     else:
-        print("mak: update complete — restart mak to use the newest version.")
+        print(f"mak: updated to {target.label} — restart mak to use it.")
+    return 0
+
+
+def _gc(argv: list[str]) -> int:
+    """Prune this project's node store (``mak gc``).
+
+    Every commit writes a new ``v{n}.py`` and, before Wave 18, nothing ever
+    removed one — so a store written by an older MAK carries versions and
+    superseded fragment directories that no run will ever read again. A fresh
+    store stays bounded on its own; this is the one-time sweep for the rest.
+    """
+    from mak.config import anchor_mak_dir, discover_config_path, load_config
+    from mak.core.exceptions import MakError
+    from mak.node_store.store import NodeStore
+
+    work_dir = argv[0] if argv and not argv[0].startswith("-") else None
+    try:
+        config = load_config(discover_config_path())
+        if work_dir is not None:
+            config = replace(
+                config, session=replace(config.session, work_dir=work_dir)
+            )
+        config = anchor_mak_dir(config)
+        store_root = Path(config.session.mak_dir) / "node_store"
+        if not store_root.is_dir():
+            print(f"mak: no node store at {store_root} — nothing to collect.")
+            return 0
+        store = NodeStore(
+            store_root, version_retention=config.node_store.version_retention
+        )
+        removed = store.gc()
+    except MakError as exc:
+        print(f"mak: gc failed: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"mak: pruned {removed['versions']} stale version file(s) and "
+        f"{removed['directories']} orphaned fragment director"
+        f"{'y' if removed['directories'] == 1 else 'ies'} from {store_root}."
+    )
     return 0
 
 
 def main() -> int:
-    """Dispatch the ``mak`` command line: TUI, ``run``, ``update``, or ``--version``."""
+    """Dispatch ``mak``: TUI, ``run``, ``gc``, ``update``, or ``--version``."""
     argv = sys.argv[1:]
 
     if argv and argv[0] in ("--version", "-V"):
@@ -132,13 +260,17 @@ def main() -> int:
             "usage: mak                 launch the interactive TUI\n"
             "       mak run --task ...  run one task non-interactively "
             "(see: mak run --help)\n"
-            "       mak update          update mak to the newest version\n"
+            "       mak gc [work_dir]   prune this project's node store\n"
+            "       mak update          update mak to the newest release\n"
             "       mak --version       print the version"
         )
         return 0
 
     if argv and argv[0] == "update":
         return _update()
+
+    if argv and argv[0] == "gc":
+        return _gc(argv[1:])
 
     if argv and argv[0] == "run":
         from mak.__main__ import main as run_main

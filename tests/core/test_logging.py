@@ -31,6 +31,8 @@ def test_all_event_type_values_exist() -> None:
     expected = {
         "task_started",
         "task_completed",
+        "task_failed",
+        "agent_remapped",
         "lock_acquired",
         "lock_released",
         "conflict_detected",

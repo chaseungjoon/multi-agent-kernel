@@ -91,6 +91,7 @@ from mak.core.types import (
 from mak.git_integration.git import GitHelper
 from mak.lock_manager.deadlock_detector import DeadlockDetector
 from mak.node_store.api_digest import public_api_digest
+from mak.node_store.ingestion import iter_source_files
 from mak.node_store.reconstruction import assemble_fragments, reconstruct_file
 from mak.node_store.store import NodeStore
 from mak.planner.depgraph import dep_graph_from_store
@@ -219,6 +220,11 @@ class SessionResult:
     # Plan-quality metrics for this run (realized parallelism, conflict/redispatch
     # rate). Empty for a session that never ran. See ``Session._finalize``.
     metrics: dict[str, float] = field(default_factory=dict)
+    # Why the run stopped before the DAG was done, when the cause was the run
+    # itself rather than any one task — today only the token budget. Reported
+    # separately because the tasks it strands have no failure of their own to
+    # explain them, and "3 blocked" with no reason is not an answer.
+    stopped_reason: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -228,6 +234,7 @@ class SessionResult:
             and not self.failed
             and not self.blocked
             and not self.skipped
+            and self.stopped_reason is None
         )
 
 
@@ -410,6 +417,17 @@ class Session:
         # for the default provider — and patching a vendor's internals is one
         # refactor away from doing that again.
         self._agent_usage: Counter[str] = Counter()
+        # ``symbol -> node ids`` for the cross-file enrichment layer, and the
+        # store generation it was built from. See ``_symbol_index``.
+        self._symbol_index_cache: dict[str, list[NodeId]] = {}
+        self._symbol_index_at: int = -1
+        # Files that already had committed nodes when this wave's plan was
+        # installed. A no-op assertion about anything else is an assertion about
+        # code that did not exist to be inspected — see ``_noop_refusal``.
+        self._preexisting_files: set[str] = set()
+        # Set when the token ceiling stopped the run, so ``_finalize`` can name
+        # the budget instead of reporting an unexplained set of stranded tasks.
+        self._budget_stop: str | None = None
 
     # -- logging helper ----------------------------------------------------
 
@@ -501,23 +519,29 @@ class Session:
         return inventory
 
     def _ingest_work_dir(self) -> None:
-        """Parse every included, non-excluded Python file under the work dir."""
+        """Parse every included, non-excluded Python file under the work dir.
+
+        The file list comes from a walk that refuses to *descend* into an
+        excluded directory. The previous ``glob(pattern)`` produced the same set
+        — the exclusion was always applied — but only after enumerating every
+        path under ``.venv``, ``node_modules``, ``site-packages`` and
+        ``__pycache__``, which on a repo with a populated virtualenv is the bulk
+        of ``initialize()``'s cost and every one of those paths is discarded.
+        """
         ns_cfg = self._config.node_store
-        for pattern in ns_cfg.include_patterns:
-            for path in sorted(self._work_dir.glob(pattern)):
-                if not path.is_file():
-                    continue
-                rel = str(path.relative_to(self._work_dir))
-                if self._is_store_path(path) or _is_excluded(
-                    rel, ns_cfg.exclude_patterns
-                ):
-                    continue
-                try:
-                    self._node_store.parse_file_into_nodes(
-                        rel, path.read_text(encoding="utf-8")
-                    )
-                except SyntaxError:
-                    continue
+        for path in iter_source_files(
+            self._work_dir,
+            ns_cfg.include_patterns,
+            ns_cfg.exclude_patterns,
+            skip=self._is_store_path,
+        ):
+            rel = str(path.relative_to(self._work_dir))
+            try:
+                self._node_store.parse_file_into_nodes(
+                    rel, path.read_text(encoding="utf-8")
+                )
+            except (SyntaxError, OSError):
+                continue
 
     def _mak_roots(self) -> tuple[Path, ...]:
         """Return the absolute location of MAK's own persistence directory.
@@ -663,6 +687,14 @@ class Session:
         self._dispatches = 0
         self._context_bytes = 0
         self._starved_dispatches = 0
+        self._budget_stop = None
+        # The wave's starting inventory, captured before anything runs: a target
+        # whose file is not in here cannot be the subject of a credible "nothing
+        # needed changing", because there was nothing there to look at.
+        self._preexisting_files = {
+            str(node_id).split("::", 1)[0]
+            for node_id in self._node_store.list_nodes()
+        }
         # Validate/augment against the code graph (grounds ids, adds missing edges)
         # here — so the CLI's plan() path, the TUI's direct install, cascade waves,
         # and user-edited plans all get validation. Idempotent when plan() already
@@ -749,7 +781,7 @@ class Session:
                 rr += 1
             elif known and agent_type not in known:
                 self._log(
-                    EventType.TASK_COMPLETED,
+                    EventType.AGENT_REMAPPED,
                     task_id=task.task_id,
                     remapped_agent_type=agent_type,
                     to=pool[0],
@@ -799,6 +831,9 @@ class Session:
         """Dispatch concurrently, collect batches, and process them to completion."""
         last_deadlock_scan = time.monotonic()
         for _iteration in range(max_iterations):
+            if self._budget_breach() is not None:
+                self._stop_on_budget(scheduler)
+                break
             scheduler.tick()
             self._submit_partials()
             # Sample realized parallelism: how many tasks are in flight this tick.
@@ -830,6 +865,58 @@ class Session:
                 break
             self._process_batch(batch)
 
+    def _budget_breach(self) -> str | None:
+        """Describe the spend ceiling this run has passed, or None if it has not.
+
+        Checked between iterations, never inside result processing: a run that
+        has overspent must stop *dispatching*, not abandon a commit half-applied.
+        The number compared is :attr:`total_tokens` — agents and planner, from
+        what each provider reported — so it is the same figure the TUI counter
+        and the final report show, and the three cannot disagree.
+        """
+        ceiling = self._config.session.max_total_tokens
+        if ceiling is None:
+            return None
+        spent = self.total_tokens
+        if spent < ceiling:
+            return None
+        return (
+            f"token budget exhausted: {spent} tokens spent against a "
+            f"session.max_total_tokens of {ceiling}"
+        )
+
+    def _stop_on_budget(self, scheduler: Scheduler) -> None:
+        """Stop dispatching, collect what is already in flight, and record why."""
+        self._budget_stop = self._budget_breach()
+        self._log(
+            EventType.SESSION_ENDED,
+            budget_exhausted=True,
+            max_total_tokens=self._config.session.max_total_tokens,
+            total_tokens=self.total_tokens,
+            in_flight=sorted(scheduler.dispatched),
+        )
+        self._finish_in_flight(scheduler)
+
+    def _finish_in_flight(self, scheduler: Scheduler) -> None:
+        """Process the results of already-dispatched tasks, dispatching nothing.
+
+        Bounded by the number in flight when it starts rather than by
+        ``scheduler.dispatched`` emptying: a partially-completed task re-queues
+        itself for a narrower re-dispatch, and this loop deliberately never makes
+        that dispatch, so waiting for the set to drain would wait forever. Those
+        re-queued partials are dropped and surface as stranded tasks in the
+        result, which is what they are.
+        """
+        pending = len(scheduler.dispatched)
+        while pending > 0:
+            batch = self._collect_batch()
+            if not batch:
+                self._wedged = True
+                break
+            pending -= len(batch)
+            self._process_batch(batch)
+        self._partial_queue.clear()
+
     def _finalize(self, scheduler: Scheduler) -> SessionResult:
         """Compute the terminal state and result after the loop exits."""
         # A task that is neither completed nor explicitly failed was stranded. It
@@ -844,7 +931,13 @@ class Session:
         skipped = [tid for tid in unaccounted if tid in tainted]
         blocked = [tid for tid in unaccounted if tid not in tainted]
 
-        if scheduler.is_done() and not self._failed and not blocked and not skipped:
+        if (
+            scheduler.is_done()
+            and not self._failed
+            and not blocked
+            and not skipped
+            and self._budget_stop is None
+        ):
             self.state = SessionState.COMPLETED
         else:
             self.state = SessionState.FAILED
@@ -870,6 +963,7 @@ class Session:
                 if t in self._failure_reasons
             },
             metrics=metrics,
+            stopped_reason=self._budget_stop,
         )
 
     def _plan_metrics(self) -> dict[str, float]:
@@ -1066,15 +1160,16 @@ class Session:
             if source is not None:
                 committed_sources[str(node_id)] = source
 
+        refusals: list[str] = []
         if self._is_asserted_noop(result):
-            self._accept_noop(progress, result)
+            refusals = self._accept_noop(progress, result)
 
         # Nothing was stageable and the task is still open: say *why*, now, while
         # the returned ids are still in hand. Left to _handle_incomplete this
         # becomes a catch-all string that names no suspect.
         if result.success and not staged and not progress.is_complete:
             self._record_failure(
-                task_id, self._describe_empty_result(progress, result)
+                task_id, self._describe_empty_result(progress, result, refusals)
             )
 
         if progress.is_complete:
@@ -1101,19 +1196,31 @@ class Session:
             and not result.new_sources
         )
 
-    def _accept_noop(self, progress: SubTaskProgress, result: TaskResult) -> None:
+    def _accept_noop(
+        self, progress: SubTaskProgress, result: TaskResult
+    ) -> list[str]:
         """Close the grants of a task the agent asserted needed no change.
 
-        Still gated on the target existing and its file parsing: an assertion that
+        Returns the reasons any grant was **refused**, for the caller to record.
+
+        Gated on the target existing and its file parsing — an assertion that
         nothing needs changing is not evidence about a file that is missing, or
-        one whose syntax error is the very bug the task was sent to fix.
+        one whose syntax error is the very bug the task was sent to fix — and,
+        since Wave 18, on the target having been there to inspect at all. See
+        :meth:`_noop_refusal`. Everything outside those two cases keeps the
+        acceptance path it has always had: this is a narrowing, not a redesign.
         """
+        refusals: list[str] = []
         for node_id in progress.target_nodes:
-            if (
-                node_id in progress.completed_nodes
-                or not self._target_exists(node_id)
-                or not self._file_is_syntactically_valid(node_id)
-            ):
+            if node_id in progress.completed_nodes:
+                continue
+            refusal = self._noop_refusal(progress, node_id)
+            if refusal is not None:
+                refusals.append(refusal)
+                continue
+            if not self._target_exists(
+                node_id
+            ) or not self._file_is_syntactically_valid(node_id):
                 continue
             # Sync committed node store content to disk. The on-disk file may
             # pre-date the committed version (e.g. an earlier MAK run wrote a
@@ -1134,6 +1241,75 @@ class Session:
                 nodes=[str(n) for n in sorted(progress.noop_nodes)],
                 reason=result.error or "agent asserted no changes were required",
             )
+        return refusals
+
+    def _noop_refusal(
+        self, progress: SubTaskProgress, node_id: NodeId
+    ) -> str | None:
+        """Why this grant may not be closed by assertion, or None if it may.
+
+        ``no_changes_required`` is the one completion an agent awards itself, and
+        the guard around it was an *existence* check rather than a *work* check:
+        an agent that found a task hard could close it by setting one boolean, as
+        long as the target file happened to be there and to parse. Two cases where
+        the assertion cannot be true whatever the agent believes, both of them
+        read off this wave's own plan rather than off the agent's answer:
+
+        - a **dependency created the target**. MAK's own ``depends_on`` edge says
+          the file did not exist until an earlier task in this wave wrote it, so
+          "I looked and nothing needed changing" describes an inspection that
+          could not have happened when the plan was written.
+        - a **greenfield whole-file grant on the first attempt**. Same reasoning
+          without the edge: the wave itself is what created the file. Only the
+          first attempt is refused — a second attempt has seen the retry note and
+          the file's real contents, so its assertion is about something.
+
+        Everything else — a target that predates the wave, a later attempt — is
+        accepted exactly as before.
+        """
+        file_path = str(node_id).split("::", 1)[0]
+        if file_path in self._preexisting_files:
+            return None
+        creator = self._dependency_creating(progress.task_id, file_path)
+        if creator is not None:
+            return (
+                f"'{node_id}' did not exist when this wave was planned — task "
+                f"'{creator}', which this task depends on, is what created it. "
+                "'no changes required' cannot describe code you inspected before "
+                "it existed: read the file as it stands now and make the change "
+                "this task asks for."
+            )
+        if "::" not in str(node_id) and progress.attempts <= 1:
+            return (
+                f"'{node_id}' did not exist when this wave was planned, so there "
+                "was nothing to inspect; a first-attempt 'no changes required' on "
+                "a whole file this wave itself creates is not an assessment. "
+                "Return the file's complete source."
+            )
+        return None
+
+    def _dependency_creating(self, task_id: str, file_path: str) -> str | None:
+        """Return the depended-on task that targets ``file_path``, if any.
+
+        Direct edges only. A transitive ancestor's output has been visible to
+        everything downstream of it for at least one commit, so the "nothing
+        existed to inspect" argument does not hold there.
+        """
+        try:
+            task = self._dag_task(task_id)
+        except (SessionError, SchedulingError, KeyError):
+            return None
+        for dep_id in task.depends_on:
+            try:
+                dep = self._dag_task(dep_id)
+            except (SessionError, SchedulingError, KeyError):
+                continue
+            if any(
+                str(target).split("::", 1)[0] == file_path
+                for target in dep.target_nodes
+            ):
+                return dep_id
+        return None
 
     def _log_agent_result(
         self,
@@ -1169,14 +1345,24 @@ class Session:
         )
 
     def _describe_empty_result(
-        self, progress: SubTaskProgress, result: TaskResult
+        self,
+        progress: SubTaskProgress,
+        result: TaskResult,
+        noop_refusals: list[str] | None = None,
     ) -> str:
         """Explain why a *successful* agent result left nothing to commit.
 
         The single catch-all this replaces ("agent reported success but staged no
         usable source") described a symptom shared by four distinct causes, so a
         failed run could not be diagnosed without re-running it.
+
+        A refused no-op is reported first and verbatim: it is the most specific
+        answer there is, and it is phrased as the instruction the retry needs.
+        Without it the generic tail would tell an agent that *did* assert a no-op
+        that it had not — advice that describes no defect it can act on.
         """
+        if noop_refusals:
+            return "; ".join(noop_refusals)
         granted = ", ".join(str(n) for n in progress.target_nodes)
         reported = dict.fromkeys([*result.modified_nodes, *result.new_sources])
         returned = [str(n) for n in reported]
@@ -1479,7 +1665,7 @@ class Session:
                 )
                 self._failure_reasons[progress.task_id] = reason
             self._log(
-                EventType.TASK_COMPLETED,
+                EventType.TASK_FAILED,
                 task_id=progress.task_id,
                 failed=True,
                 reason=reason,
@@ -1728,36 +1914,82 @@ class Session:
         }
         if not symbols or budget == 0:
             return [], 0
-        pattern = re.compile(
-            r"\b(?:" + "|".join(re.escape(s) for s in sorted(symbols)) + r")\b"
-        )
-        candidates = self._scan_for_symbols(pattern, target_files, context)
+        candidates = self._scan_for_symbols(symbols, target_files, context)
         return self._spend_cross_file_budget(candidates, context, budget)
 
     def _scan_for_symbols(
         self,
-        pattern: re.Pattern[str],
+        symbols: set[str],
         target_files: set[str],
         context: dict[str, str],
     ) -> list[tuple[NodeId, str, frozenset[str]]]:
-        """One pass over the store: each matching node with the symbols it hit.
+        r"""Each node mentioning one of ``symbols``, with the symbols it hit.
 
-        ``findall`` rather than ``search`` because the symbols a node matched are
-        what decides both whether that symbol is over-broad and how the node ranks.
+        Looked up in the per-wave inverted index rather than by regex-scanning
+        every node's source. The old pass walked the whole store and ran a
+        findall over each node on **every dispatch and every retry** — the byte
+        budget caps what is *sent*, not what is scanned, so on a large repo with
+        a wide plan this was the dominant cost of enrichment.
+
+        The result is unchanged, node for node and byte for byte: the index keys
+        a node under exactly the maximal ``\w+`` runs in its source, which is the
+        same condition ``\bsymbol\b`` tests. A symbol that is not a plain
+        identifier cannot be answered that way and falls back to the scan.
         """
+        exotic = {s for s in symbols if not _WORD.fullmatch(s)}
+        hits_by_node: dict[NodeId, set[str]] = {}
+        if exotic:
+            pattern = re.compile(
+                r"\b(?:" + "|".join(re.escape(s) for s in sorted(exotic)) + r")\b"
+            )
+        index = self._symbol_index()
+        for symbol in symbols - exotic:
+            for node_id in index.get(symbol, ()):
+                hits_by_node.setdefault(node_id, set()).add(symbol)
+
         found: list[tuple[NodeId, str, frozenset[str]]] = []
         for xfile_id in self._node_store.list_nodes():
             if str(xfile_id).split("::", 1)[0] in target_files:
                 continue  # same-file already handled in layer 3
             if _context_has(context, xfile_id):
                 continue
+            hits = set(hits_by_node.get(xfile_id, ()))
+            if exotic:
+                source = self._node_source(xfile_id)
+                if source:
+                    hits |= set(pattern.findall(source))
+            if not hits:
+                continue
             source = self._node_source(xfile_id)
             if not source:
                 continue
-            hits = frozenset(pattern.findall(source))
-            if hits:
-                found.append((xfile_id, source, hits))
+            found.append((xfile_id, source, frozenset(hits)))
         return found
+
+    def _symbol_index(self) -> dict[str, list[NodeId]]:
+        """Return the ``symbol -> node ids`` index, rebuilt when the store moves.
+
+        Keyed on ``NodeStore.generation``, which changes exactly when the
+        committed set does — so one build serves every dispatch and retry of a
+        wave, and a commit mid-wave invalidates it without the session having to
+        know which nodes moved.
+        """
+        generation = self._node_store.generation
+        if self._symbol_index_at != generation:
+            self._symbol_index_cache = self._build_symbol_index()
+            self._symbol_index_at = generation
+        return self._symbol_index_cache
+
+    def _build_symbol_index(self) -> dict[str, list[NodeId]]:
+        """Index every committed node under each identifier its source contains."""
+        index: dict[str, list[NodeId]] = {}
+        for node_id in self._node_store.list_nodes():
+            source = self._node_source(node_id)
+            if not source:
+                continue
+            for token in set(_WORD.findall(source)):
+                index.setdefault(token, []).append(node_id)
+        return index
 
     @staticmethod
     def _spend_cross_file_budget(
@@ -2122,6 +2354,13 @@ class Session:
                 t.task_id: self._restore_progress(scheduler, t)
                 for t in scheduler.dag.tasks.values()
             }
+            # A resumed wave inherits whatever the crashed one had already
+            # written, which is the correct starting inventory for it: those
+            # files do exist now, and a no-op about them is answerable.
+            self._preexisting_files = {
+                str(node_id).split("::", 1)[0]
+                for node_id in self._node_store.list_nodes()
+            }
             self.state = SessionState.PLANNED
         return len(expired)
 
@@ -2369,6 +2608,14 @@ _MIN_SYMBOL_LEN = 4
 # them is related to the target, so it is discarded entirely rather than dragging
 # every match in behind it.
 _MAX_SYMBOL_MATCHES = 8
+
+# Maximal word runs, which is both what the symbol index is keyed on and the
+# test for whether a symbol *can* be: ``\bfoo\b`` matches exactly where ``foo``
+# is one such run, so indexing the runs answers the same question. Node ids yield
+# Python identifiers, so every symbol qualifies in practice — the ``fullmatch``
+# check exists so an id that somehow carries punctuation is scanned by the old
+# regex path rather than silently missed by the index.
+_WORD = re.compile(r"\w+")
 
 _CONTEXT_KEYS = ("write_source", "read_source", "read_api")
 

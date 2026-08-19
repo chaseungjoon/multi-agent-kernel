@@ -192,6 +192,11 @@ def show_results(
 
     if not tests_passed:
         console.print("  [yellow]⚠ Test suite did not pass after changes.[/yellow]")
+    # A run the kernel itself halted (today: the token budget) strands tasks that
+    # have no failure of their own, so nothing below would explain them.
+    stopped = getattr(result, "stopped_reason", None)
+    if stopped:
+        console.print(f"  [yellow]⚠ Run stopped — {stopped}.[/yellow]")
     for task_id in result.failed:
         reason = result.failure_reasons.get(task_id, "")
         console.print(f"    [red]✗ {task_id}[/red]  [dim]{reason}[/dim]")

@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import subprocess
 import threading
-import time
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -152,7 +151,14 @@ def plan_in_thread(
 
 
 def run_session_in_thread(session: Session) -> tuple[Any, Exception | None]:
-    """Run ``session.run()`` in a background thread; return (result, error)."""
+    """Run ``session.run()`` in a background thread; return (result, error).
+
+    The join is the whole wait. A ``while t.is_alive(): sleep(0.05)`` spin used to
+    precede it, which changed nothing about when this function returned — the
+    ``join()`` after it did all the waiting — and burned a core for the length of
+    every run. Progress reporting, if it is ever wanted here, belongs on the
+    session's log events, not on a polling loop.
+    """
     holder: dict[str, Any] = {}
 
     def _target() -> None:
@@ -163,8 +169,6 @@ def run_session_in_thread(session: Session) -> tuple[Any, Exception | None]:
 
     t = threading.Thread(target=_target, daemon=True)
     t.start()
-    while t.is_alive():
-        time.sleep(0.05)
     t.join()
     return holder.get("result"), holder.get("error")
 

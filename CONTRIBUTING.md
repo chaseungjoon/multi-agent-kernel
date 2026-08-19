@@ -207,7 +207,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **1216 tests pass**,
+The **kernel is functionally complete and well-tested**: **1289 tests pass**,
 `mypy --strict mak cli` is clean, and `ruff check mak cli tests` is clean (the
 gate was extended to `cli/` in Wave 17 — see below). The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
@@ -241,6 +241,7 @@ The module-by-module state:
 | **Dependency context** | **Complete (Wave 13)** — a task receives what its dependencies built; an empty bundle is refused, not dispatched |
 | **Context budget** | **Complete (Wave 16)** — the caller layer is bounded and evidence-filtered; the cascade guard runs from both front ends |
 | **Write-path safety & state durability** | **Complete (Wave 17)** — every entry point that turns a node id into a path is containment-checked; all three persisted state files are crash-safe; `mypy --strict`/`ruff` now cover `cli/` too |
+| **Cost & disk bounds, log fidelity** | **Complete (Wave 18)** — a run has a token ceiling and the store a retention policy; a no-op cannot be asserted about code that never existed; enrichment and ingestion stop paying for what they discard |
 | `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
@@ -526,7 +527,13 @@ skip to the subsystem you're touching.
   context is everything an agent knows about the codebase and MAK used to dispatch
   an empty one without recording it anywhere (§3.2). Wave 16 adds the per-layer
   `layers` breakdown to that payload, so the log answers *which* layer bought the
-  tokens rather than only how many there were.
+  tokens rather than only how many there were. Wave 18 adds `TASK_FAILED` and
+  `AGENT_REMAPPED`, both of which were previously logged as `TASK_COMPLETED` —
+  the first with a `failed=True` flag a reader had to know to check, the second
+  on a task that had not started, let alone completed. Anything counting
+  completions by event type, a human skimming the log included, over-reported.
+  The rule the two encode: **an event names the thing that happened**, and a flag
+  inside a payload is not a substitute for the right name.
 
 ## 2. Node Store
 
@@ -652,6 +659,39 @@ next version. Prior versions are retained on disk, which is what makes
 Fragment order is preserved as `order` metadata so reconstruction emits source in
 its original order. **All mutations are guarded by a re-entrant lock.**
 
+**Retention, ordering, and the generation counter (Wave 18).** Three changes to
+the above, all of them about a store that has to survive months of use rather than
+one run:
+
+- *Retention.* "Prior versions are retained" used to mean **all** of them —
+  every commit wrote a `v{n}.py` and nothing ever removed one, so
+  `.mak/node_store/` grew monotonically for the life of a project. A commit now
+  prunes back to `version_retention` versions of the node it committed (default
+  5; the floor is **2** because `revert_node` needs one prior version to roll
+  back to; `-1` restores the old unbounded behaviour). `_supersede_fragments`
+  also deletes the superseded fragments' on-disk directories, which it never did:
+  it dropped them from `_nodes`/`_pending`/`_metadata` and left directories on
+  disk that no id in the store could ever address again. `NodeStore.gc()` applies
+  both policies to a whole store — that is what `mak gc` calls — and additionally
+  removes orphan directories by *forward*-mapping every live id to its directory
+  and deleting what is left over. Never by parsing a path back into an id: `::`
+  becomes `/` on disk, so `a/b.py` and `a/b.py::function::f` nest inside one
+  another and the reverse mapping is ambiguous.
+- *Ordering.* `order` is assigned `0..n` **per file**, so a global sort on
+  `order` alone grouped every file's node 0 together, then every file's node 1.
+  Harmless for reconstruction, which filters by file first — but the planner's
+  inventory prompt was presented in an order no file actually has, which is
+  exactly the input Wave 7 wants to make cheaper. Listings now sort by
+  `(file_path, order)`.
+- *Memoization + `generation`.* The sort is O(n log n) over the whole store and
+  `list_nodes()` is called once per enrichment layer per dispatch **and** per
+  retry. The ordering is memoized behind the existing `RLock` and invalidated
+  whenever the *committed* set changes — staging and rollback deliberately do
+  not invalidate, because they leave `_nodes` alone. The same invalidation is
+  published as `NodeStore.generation`, a monotonic counter that lets a caller
+  cache state derived from the store without having to learn what changed;
+  `Session`'s cross-file symbol index is the first such caller (§10).
+
 **Containment, and crash-safe persistence (Wave 17).** A node id's file component
 becomes a real filesystem path in two places — `_fragment_dir` here, and
 `Session._reconstruct_affected` on the work-dir side (§10) — and neither used to
@@ -702,6 +742,32 @@ Mechanics:
   what gives **method-level lock granularity**.
 - `parse_file_into_fragments(path, source=None)` returns fragments in source order;
   `walk_and_parse(root, include, exclude)` runs it over a directory tree.
+
+**The walk prunes before it descends (Wave 18).** Both entry points into a tree —
+`walk_and_parse` and `Session._ingest_work_dir` — used to `glob("**/*.py")` the
+whole thing and *then* drop the excluded paths. The exclusion was correct; the walk
+was not. It descended into `.venv`, `node_modules`, `site-packages` and
+`__pycache__`, enumerating tens of thousands of paths it discarded immediately, and
+on a repo with a populated virtualenv that was the slowest part of `initialize()`.
+`iter_source_files(root, include, exclude, skip=…)` replaces both: an excluded
+*directory* is skipped before it is entered, everything else is preserved. On this
+repo — 217 ingested files, a populated `.venv` — the walk went from **496 ms to
+12 ms** for a byte-identical file list.
+
+"Identical" is load-bearing here, because a divergence means a file silently missing
+from the node store and nothing downstream can detect that. Two details make it so.
+The include patterns are matched by a small glob→regex translator
+(`_include_regex`/`_segment_regex`) rather than `fnmatch.translate`, whose `*`
+becomes `.*` and happily spans `/` — `src/*.py` would match `src/deep/x.py`; `**/`
+compiles to "zero or more whole segments", which is what makes `**/*.py` match a
+root-level file as well as a nested one, and a *trailing* bare `**` compiles to a
+never-matching pattern because `Path.glob` resolves that to directories only. And
+symlinked directories are not descended, matching `glob`'s `**`, which also protects
+the walk from a symlink cycle. A directory is pruned only by a pattern ending in
+`/**` — the shape that excludes a whole subtree — so a pruned directory is always
+one whose every descendant the per-file check would have rejected anyway. The tests
+are differential against the old glob-then-filter across nine pattern shapes and
+three exclusion sets, plus the repo itself.
 
 ### 3.2 Fragment dispatch (node store → agent)
 
@@ -772,6 +838,26 @@ calls. The number dropped is reported as `cross_file_dropped` on the dispatch ev
 so a truncated caller layer is visible rather than inferred. The two filters are
 module constants and the budget is config, because the filters are claims about
 *evidence* while the budget is the operator's cost dial.
+
+**Layer 4's lookup cost** (Wave 18). The filters and the budget bound what layer 4
+*sends*; nothing bounded what it *scanned*. `_scan_for_symbols` walked the entire
+node store and ran a `findall` over every node's source on **every dispatch and
+every retry**, so on a large repo with a wide plan it was the dominant cost of
+enrichment — paid in full even when the budget then dropped almost everything it
+found. It is now an inverted `symbol -> [node_id]` index built once and reused,
+keyed on `NodeStore.generation` (§2) so a commit mid-wave invalidates it without
+the session having to know which nodes moved.
+
+The equivalence that makes this safe: `\bfoo\b` matches exactly where `foo` is a
+maximal `\w+` run, so keying nodes by their `\w+` runs answers the same question
+the regex did. Node ids yield Python identifiers, so every symbol qualifies in
+practice; a symbol that is *not* a plain identifier falls back to the old scan
+rather than being silently missed. **The bundle contents do not move** — same
+filters, same ranking, same budget, same bytes — and the tests assert that
+differentially against the implementation this replaces, because "identical, only
+cheaper" is the whole claim. Measured on this repo's own 892-node store: ~8x per
+dispatch, and the gap widens with store size, since the scan is O(all node bytes)
+per dispatch while the lookup is O(matches).
 
 **Budget and degradation.** Whole dependency files are the most expensive thing a
 bundle can carry, so layer 5 spends a per-bundle byte budget
@@ -1731,6 +1817,29 @@ Robustness properties worth knowing:
   does *not* exist and returns nothing, which correctly still fails; and now
   from an **unasserted** empty success, which also correctly fails — the
   contract the old code lacked.
+
+  **The remaining gap, and its narrowing (Wave 18).** Even hardened, that guard
+  was an *existence* check, not a *work* check: an agent that found a task hard
+  could still close it by setting one boolean, as long as the target file
+  happened to be there and to parse. `Session._noop_refusal` adds the two cases
+  where the assertion cannot be true whatever the agent believes — both read off
+  **the wave's own plan**, never off the agent's answer, which is what makes them
+  checkable at all. `install_plan` (and `recover`) snapshot the files that had
+  committed nodes when the wave was installed; a target outside that snapshot is
+  refused when either (a) a task this one directly `depends_on` targets the same
+  file — MAK's own edge asserting the dependency is what created it, so there was
+  nothing to inspect when the plan was written — or (b) it is a **whole-file**
+  grant on the **first** attempt, the same argument without the edge. Only the
+  first attempt, because a second has seen the retry note and the file's real
+  contents, so its assertion is about something. Direct edges only: a transitive
+  ancestor's output has been visible for at least one commit.
+
+  A refused grant stays open and goes through the ordinary retry/fail path, and
+  the refusal text is written to be the retry instruction — `_describe_empty_result`
+  returns it verbatim and in preference to its own generic tail, which would
+  otherwise tell an agent that *did* assert a no-op that it had not. Everything
+  outside those two cases keeps the acceptance path it has always had; this is a
+  narrowing, not a redesign.
 - **Crash recovery** — `recover()` expires stale leases and rebuilds the scheduler
   from `task_graph.json` via `from_persisted` (which also restores each task's
   `context_nodes`, so recovered tasks re-acquire their read locks). It is reachable
@@ -1795,6 +1904,21 @@ Robustness properties worth knowing:
       `_handle_incomplete` treats an unretryable result the same as an
       exhausted attempt count, and the reason names why ("not retryable — the
       remaining N attempt(s) would repeat it verbatim").
+- **The spend ceiling** (Wave 18) — `_run_loop` checks `_budget_breach()` at the
+  top of every iteration, before `tick()`. On a breach it calls
+  `_stop_on_budget`: log a `SESSION_ENDED` carrying `budget_exhausted`, the
+  ceiling and the spend; `_finish_in_flight` collects and processes the results
+  of everything already dispatched, so work in progress commits normally; then
+  the loop breaks. `_finish_in_flight` is bounded by the in-flight *count* rather
+  than by `scheduler.dispatched` emptying, because a partially-completed task
+  re-queues itself for a narrower re-dispatch this loop deliberately never makes
+  — waiting for the set to drain would wait forever. `_finalize` forces `FAILED`
+  and reports `SessionResult.stopped_reason`, which both front ends print, so
+  the stranded tasks are explained rather than showing up as an unattributed
+  "3 blocked". The gate is checked *between* iterations and never inside
+  `_process_one`: a run that has overspent stops dispatching, it does not abandon
+  a commit half-applied. See §11 for the config knob and why `total_tokens` is
+  the number compared.
 - **Plan-quality metrics** (Wave 10) — `_run_loop` samples `len(scheduler.dispatched)`
   after every `tick()` into `_concurrency_samples`; `_reject` increments
   `_conflict_rejections` and `_handle_incomplete` increments `_redispatches` on a
@@ -1853,6 +1977,9 @@ session:
   cross_file_context_bytes: 32000  # per-bundle budget for the cross-file caller
                                    # layer (Wave 16, §3.2); past it entries are
                                    # dropped, not digested. Same 0 / -1 semantics
+  # max_total_tokens: 2000000      # spend ceiling for one run (Wave 18): input +
+                                   # output, every agent call plus the planner's.
+                                   # Unset (the default) is unbounded
 
 planner:
   model: "claude-opus-5"
@@ -1890,6 +2017,9 @@ models:
 
 node_store:
   include_patterns: ["**/*.py"]
+  # version_retention: 5          # on-disk versions kept per node (Wave 18, §2);
+                                  # floor 2 (revert needs a prior version),
+                                  # -1 keeps every version forever
   exclude_patterns:               # keep "**/.mak/**" — see below
     - "**/.mak/**"
     - "**/node_modules/**"
@@ -1935,6 +2065,39 @@ Rules and behaviors:
   `mak/.env` (gitignored); both are auto-loaded at startup (`load_env_file`, §12)
   and `mak/.env.example` lists the expected variable names. Exported environment
   variables take precedence.
+
+  Two hygiene fixes in Wave 18. `save_keys` creates `~/.config/mak/.env` with
+  `os.open(..., O_WRONLY|O_CREAT|O_TRUNC, 0o600)` instead of writing it at the
+  process umask and `chmod`-ing afterwards — the old order left the file at `0644`
+  on a default account, with the keys already in it, for the window between the
+  two calls. The `chmod` stays, now as a repair for a file an older MAK left
+  behind. And the legacy `mak/.env` is **deprecated**: it lives inside the package
+  directory, nothing enforces its mode (the working copy that prompted the audit
+  was `0644` with live keys), and it only survives an upgrade by accident. It is
+  still read for one release, both `load_keys` and `load_env_file` warn and name
+  `~/.config/mak/.env` when they use it, and the next release drops it. It is
+  gitignored and excluded from `package-data`, so it never shipped in a wheel.
+  `tests/conftest.py` points both lookups at an empty temp dir for every test, so
+  a developer's real keys can no longer change what the suite asserts.
+- **`session.max_total_tokens` is the only cost ceiling there is (Wave 18).**
+  `max_attempts` (3) × `max_iterations` (1000) × `max_waves` (10) × unbounded
+  per-agent output multiply out to no bound at all; the per-wave cascade approval
+  prompt is a human gate, not a budget. Parsed by `_opt_positive_int`, so `0` or a
+  negative value raises `ConfigError` rather than silently disabling every
+  dispatch. The number compared is `Session.total_tokens` — agents **and** planner,
+  read off what each provider reported on its own response — which is the same
+  figure the TUI counter and the final report show, so the three cannot disagree.
+  The check sits between run-loop iterations, never inside result processing: a
+  run that has overspent stops *dispatching*, lets what is already in flight
+  finish and commit (`_finish_in_flight`), and reports `SessionResult.stopped_reason`
+  naming the budget. It never interrupts a commit, so the working tree is never
+  left half-written. Re-queued partial redispatches are dropped and surface as
+  stranded tasks, which is what they are.
+- **`node_store.version_retention` bounds the store on disk (Wave 18, §2).**
+  Parsed by `_parse_node_store`; must be `-1` (unbounded) or at least `2`, because
+  `revert_node` needs one prior version — anything else raises `ConfigError`
+  rather than producing a store that cannot roll back. `mak gc` applies the same
+  policy to a store an older MAK wrote (§12).
 - **Config discovery** — when `--config` is omitted, `discover_config_path()`
   picks the first of: `./mak.yaml`, `~/.config/mak/config.yaml` (respects
   `$XDG_CONFIG_HOME`), then the packaged default `mak/config.yaml`. This is what
@@ -1988,7 +2151,8 @@ shell over the composition root, split into testable functions:
   `setdefault`, so the **documented key convention actually takes effect** and an
   explicitly `export`ed variable still wins. Called first in `main`; the
   agent/planner adapters then read keys from the environment at composition time.
-  No `python-dotenv` dependency — it's a dozen lines.
+  No `python-dotenv` dependency — it's a dozen lines. Since Wave 18 the legacy
+  path warns on stderr when it supplies anything (§11).
 - `parse_args(argv)` — flags: `--task` (optional; **required unless `--recover`**,
   enforced in `main`), `--config` (default: auto-discover via `discover_config_path()`,
   §11), `--work-dir`, `--models` (roster override, see below), `--max-agents`
@@ -2113,6 +2277,34 @@ CLI agents are the **secondary** path — the API adapters are more robust becau
 force structured output. Caveat: `gh copilot` is oriented toward shell-command
 suggestions, so it's the weakest fit for MAK's node-rewrite protocol.
 
+### 12.1.2 `mak update` and `mak gc` (`cli/__main__.py`)
+
+`cli/__main__.py` is the `mak` console script: it dispatches the bare TUI, `run`
+(forwarding to `mak.__main__.main`), `gc`, `update`, and `--version`/`--help`.
+
+**`mak update` installs a release tag, not `HEAD` (Wave 18).** It used to run
+`uv tool install git+https://github.com/…` with no tag, no pin, and no signature
+check, so **any** push to `main` was auto-adopted by every user who ran `update` —
+including a half-finished branch merge — and nothing told them what they were
+moving to. `_resolve_update_target()` now resolves the newest release tag via
+`git ls-remote --tags`, installs `git+<url>@<tag>`, and prints the version before
+installing. Annotated tags appear twice in `ls-remote` output (`refs/tags/x` and
+the peeled `refs/tags/x^{}`); the peeled entry wins, because it names the commit an
+install of that tag actually builds from, which is what the existing PEP 610
+`direct_url.json` comparison checks against. Ordering is a deliberately tolerant
+`_version_key` rather than a PEP 440 parser — `packaging` is not a dependency and
+the only tags it must order are this project's — with a plain release sorting above
+any pre-release of the same number. When the repo publishes no tags at all it falls
+back to `HEAD` **and says so** in the label, which is the honest answer for a
+project that has not cut a release yet. The `ls-remote` pre-check that skips a
+reinstall when already current is unchanged; it now compares against the tag.
+
+**`mak gc [work_dir]`** discovers the config the same way a run does, anchors
+`mak_dir`, and calls `NodeStore.gc()` (§2), reporting how many stale version files
+and orphaned fragment directories it removed. A store written by a current MAK
+stays bounded on its own — every commit prunes its own node — so this is the
+one-time sweep for stores an older version left behind.
+
 ## 12.2 Interactive CLI app (`cli/`)
 
 `cli/` is a Claude Code-style **interactive shell** for MAK — an inline REPL built
@@ -2232,6 +2424,13 @@ in memory and are **never written back to `mak/config.yaml`** or any other file.
    was interpreted against the process CWD regardless of `--work-dir`, so the two
    front ends disagreed about where a project's state lives. They now share one
    implementation and cannot drift apart again.
+
+`run_session_in_thread` runs `session.run()` on a daemon thread and joins it. It
+used to spin on `while t.is_alive(): time.sleep(0.05)` *and then* `join()` — the
+loop changed nothing about when the function returned, since the join did all the
+waiting, and burned a core for the length of every run (Wave 18 deleted it). If
+progress ticks are ever wanted here, they belong on the session's log events, not
+on a polling loop.
 
 If you add new CLI state fields that affect how MAK runs, apply them in
 `_apply_state_to_config` (in-memory only) and never persist them to the config file.
@@ -2899,6 +3098,60 @@ suite exercised only the pure per-provider helpers and never the patch point
 itself. The gates closed the wave at 1216 tests, `mypy --strict` and `ruff` clean
 over `mak` **and** `cli`.
 
+**Wave 18 — residual hardening & hygiene.** The same audit's remaining findings,
+closed so nothing is left outstanding: four residual **Medium** items and every
+**Low/polish** one. Unlike Wave 17 these are largely independent of each other,
+so the wave is grouped by area rather than by severity, and several are a few
+lines each.
+
+The two that change behaviour an operator can feel are the **no-op narrowing**
+(§10) and the **spend ceiling** (§11). The first closes the last self-attested
+completion: `no_changes_required` was still gated on an *existence* check rather
+than a *work* check, so an agent that found a task hard could close it with one
+boolean as long as the target file happened to be there and to parse. It is now
+refused where the target cannot have existed to inspect — a file a `depends_on`
+dependency created this wave, or a greenfield whole-file grant on the first
+attempt — both decided from the plan, never from the agent's answer. The second
+adds `session.max_total_tokens`, because nothing bounded a run's cost at all:
+`max_attempts` × `max_iterations` × cascade waves × unbounded per-agent output
+multiply out to no ceiling, and the per-wave approval prompt is a human gate, not
+a budget.
+
+The other two Mediums are pure cost, with the behaviour held fixed and asserted
+that way. Enrichment's cross-file layer walked the whole store and regex-scanned
+every node on **every dispatch and every retry** — the budget caps what is *sent*,
+not what is *scanned* — and is now an inverted symbol index keyed on a store
+generation counter (§3.2): ~8x per dispatch on this repo's own 892-node store,
+byte-identical bundles, verified differentially against the implementation it
+replaces. Ingestion globbed `**/*.py` over the entire tree and *then* discarded
+`.venv`, `node_modules`, `site-packages` and `__pycache__`; it now prunes an
+excluded directory before descending into it (§3.1): **496 ms → 12 ms** on this
+repo for an identical file list, also verified differentially, across nine
+pattern shapes and three exclusion sets.
+
+The Lows are each small and each real. API keys are written with
+`os.open(..., 0o600)` rather than written-then-`chmod`-ed, closing a window in
+which the file sat at `0644` with the keys already in it, and the legacy in-package
+`mak/.env` is deprecated with a warning naming its replacement (§11). `mak update`
+resolves a release tag instead of tracking unpinned `HEAD`, and prints the version
+it is moving to (§12.1.2). Two log events that misreported their own type —
+a task *failure* and an agent-type *remap*, both logged as `TASK_COMPLETED` —
+got the names they describe (§1). `list_nodes` sorts by `(file_path, order)`, so
+the planner's inventory is no longer shuffled by a per-file `order` sorted
+globally (§2). The node store gained a retention policy, deletes superseded
+fragments' directories, and exposes `mak gc` for stores an older MAK left
+unbounded (§2, §12.1.2). And `cli/runner.py`'s `while t.is_alive(): sleep(0.05)`
+followed by `t.join()` is gone — it burned a core for the length of every run
+and changed nothing about when the function returned.
+
+One process note worth recording. `tests/conftest.py` is new, and it exists
+because Wave 18's own deprecation warning broke an unrelated test: the suite read
+the *developer's* real `mak/.env`, so what it asserted about stderr depended on
+whose machine it ran on. Both `.env` lookups are now redirected to an empty temp
+dir for every test. A test that passes because of a file outside the repo was
+always going to fail eventually; it happened to be this wave that found it. The
+gates closed at 1289 tests, `mypy --strict` and `ruff` clean over `mak` and `cli`.
+
 ---
 
 # Part V — Design decisions & rationale
@@ -2945,6 +3198,30 @@ the grain.
   one case: whenever a positive and a negative outcome can produce
   indistinguishable evidence, require the positive case to assert itself
   explicitly rather than inferring it from the negative case's absence.
+- **An assertion is only as good as what it could have been about (Wave 18).**
+  The corollary to the above, and the reason the no-op guard needed narrowing
+  twice. Requiring the agent to *assert* a no-op fixed the truncation collision
+  but left an existence check standing in for a work check — the agent still
+  awarded itself the completion, and the guard only asked whether the file
+  happened to be there. What makes a self-assessment checkable is not the
+  assertion's form but whether the thing assessed existed to be assessed, which
+  is a question **the plan** can answer and the answer cannot.
+- **Bound what a run scans, not only what it sends (Wave 18).** Two of this
+  wave's costs hid behind correct filters: enrichment's byte budget capped what
+  reached the agent while the scan behind it walked the whole store per dispatch,
+  and ingestion's exclusion list was applied only after globbing everything it
+  excluded. Both were invisible in output and expensive in practice. When a
+  filter is downstream of the work, the filter is not the bound.
+- **An event names what happened; a flag in a payload does not (Wave 18).**
+  A failure logged as `TASK_COMPLETED(failed=True)` is legible only to a reader
+  who knows to check the flag, so anything counting completions by type —
+  including a human skimming — over-reported. Give the outcome its own name.
+- **Prefer differential tests when the claim is "identical, only better".**
+  Both of this wave's performance changes reimplement something subtle (glob
+  matching; word-boundary regex semantics). Neither is trusted because it looks
+  right: each is asserted equal to the implementation it replaces, over the real
+  repo and a matrix of inputs, and the old implementation is kept in the test as
+  the oracle.
 
 ---
 

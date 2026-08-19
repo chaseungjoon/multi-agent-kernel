@@ -6,6 +6,23 @@ have to guess the next version. Prior versions are retained on disk, enabling
 ``revert_node`` (roll a committed node back to its previous version). Fragment
 order is preserved as ``order`` metadata so reconstruction emits source in its
 original order. All mutations are guarded by a re-entrant lock.
+
+**Retention (Wave 18).** "Prior versions are retained" used to mean *all* of
+them: every commit wrote a ``v{n}.py`` and nothing ever removed one, so
+``.mak/node_store/`` grew monotonically for the life of a project. A commit now
+prunes back to ``version_retention`` versions of that node (the committed one
+plus ``N-1`` prior; the floor is 2 because ``revert_node`` needs one prior
+version, and ``-1`` restores the old unbounded behaviour). :meth:`gc` applies
+the same policy to the whole store and additionally removes fragment
+directories no live node id addresses any more.
+
+**Ordering (Wave 18).** ``order`` is assigned 0..n *per file*, so a global sort
+on ``order`` alone interleaved every file's node 0, then every file's node 1 —
+harmless for reconstruction, which filters by file first, but it presented the
+planner's inventory prompt shuffled. Listings sort by ``(file_path, order)`` and
+the ordering is memoized behind the store lock, invalidated whenever the
+committed set changes; :attr:`generation` exposes that same invalidation signal
+so callers can cache derived state of their own.
 """
 
 from __future__ import annotations
@@ -20,12 +37,34 @@ from pathlib import Path
 from typing import Any
 
 from mak.core.atomic import write_text_atomic
-from mak.core.exceptions import NodeStoreError
+from mak.core.exceptions import NodeStoreError, UnsafeNodeIdError
 from mak.core.paths import check_node_id, safe_path_under
 from mak.core.types import NodeFragment, NodeId
 from mak.node_store.ingestion import parse_file_into_fragments
 
 _logger = logging.getLogger(__name__)
+
+# How many on-disk versions of a node the store keeps by default: the committed
+# one plus four prior. ``UNBOUNDED_VERSION_RETENTION`` restores the pre-Wave-18
+# "keep everything" behaviour for anyone who wants the full history.
+DEFAULT_VERSION_RETENTION = 5
+# ``revert_node`` rolls back to ``version - 1``, so a store that kept only the
+# committed version could never revert. Two is the floor for that reason.
+MIN_VERSION_RETENTION = 2
+UNBOUNDED_VERSION_RETENTION = -1
+
+
+def normalize_retention(value: int) -> int:
+    """Coerce a retention setting to a value the store can honour.
+
+    Anything negative means unbounded; anything below the floor is raised to it
+    rather than rejected, because a store that cannot revert is a worse outcome
+    than a config value being quietly widened, and the configuration layer
+    already refuses out-of-range values before they reach here.
+    """
+    if value < 0:
+        return UNBOUNDED_VERSION_RETENTION
+    return max(MIN_VERSION_RETENTION, value)
 
 
 def _extract_indent(source: str) -> tuple[str, str]:
@@ -47,7 +86,12 @@ def _extract_indent(source: str) -> tuple[str, str]:
 class NodeStore:
     """Versioned fragment store backed by ``.mak/node_store/`` on disk."""
 
-    def __init__(self, store_root: Path) -> None:
+    def __init__(
+        self,
+        store_root: Path,
+        *,
+        version_retention: int = DEFAULT_VERSION_RETENTION,
+    ) -> None:
         self._root = store_root
         self._root.mkdir(parents=True, exist_ok=True)
 
@@ -55,8 +99,52 @@ class NodeStore:
         self._pending: dict[NodeId, NodeFragment] = {}
         self._metadata: dict[NodeId, dict[str, object]] = {}
         self._lock = threading.RLock()
+        self._retention = normalize_retention(version_retention)
+        # Bumped whenever the *committed* set changes. Staging and rollback do
+        # not touch it: they leave ``_nodes`` alone, so anything derived from the
+        # committed set is still valid and need not be rebuilt.
+        self._generation = 0
+        self._sorted_cache: list[NodeId] | None = None
 
         self._load_from_disk()
+        self._invalidate()
+
+    @property
+    def generation(self) -> int:
+        """Monotonic counter bumped on every change to the committed node set.
+
+        A caller that derives an index from the store (the session's cross-file
+        symbol index) caches it against this value and rebuilds only when the
+        number moves, without having to learn *what* changed.
+        """
+        with self._lock:
+            return self._generation
+
+    @property
+    def version_retention(self) -> int:
+        """How many on-disk versions of a node are kept (``-1`` = unbounded)."""
+        return self._retention
+
+    def _invalidate(self) -> None:
+        """Drop memoized ordering and bump the generation. Call under the lock."""
+        self._generation += 1
+        self._sorted_cache = None
+
+    def _sort_key(self, node_id: NodeId) -> tuple[str, int]:
+        """Sort key grouping a file's nodes together, in source order within it."""
+        return (str(node_id).split("::", 1)[0], self._order(node_id))
+
+    def _sorted_node_ids(self) -> list[NodeId]:
+        """Return committed ids in ``(file, order)``, memoized until a change.
+
+        The sort itself is O(n log n) over the whole store and ``list_nodes`` is
+        called once per enrichment layer per dispatch *and* per retry, so
+        re-sorting on each call was a measurable share of a wide plan's cost. The
+        returned list is the cache: callers copy or filter it, never mutate it.
+        """
+        if self._sorted_cache is None:
+            self._sorted_cache = sorted(self._nodes, key=self._sort_key)
+        return self._sorted_cache
 
     def _fragment_dir(self, node_id: NodeId) -> Path:
         """Return a node's on-disk version directory, refusing an escaping id.
@@ -227,17 +315,39 @@ class NodeStore:
             }
             if "::" not in str(node_id):
                 self._supersede_fragments(str(node_id))
+            self._prune_versions(node_id)
+            self._invalidate()
             self._save_metadata()
 
     def _supersede_fragments(self, file_path: str) -> None:
-        """Drop a file's ``path::…`` fragments — a whole-file node now defines it."""
+        """Drop a file's ``path::…`` fragments — a whole-file node now defines it.
+
+        In-memory *and* on disk. Dropping only the former left every superseded
+        fragment's version directory under ``.mak/node_store/`` forever, with
+        nothing left in the store that could ever address it again — the second
+        half of Wave 18's node-store growth finding. Removal is best-effort: a
+        directory that will not delete is a disk-hygiene problem, never a reason
+        to fail the commit that supersedes it.
+        """
         prefix = f"{file_path}::"
-        for nid in [n for n in self._nodes if str(n).startswith(prefix)]:
-            del self._nodes[nid]
-        for nid in [n for n in self._pending if str(n).startswith(prefix)]:
-            del self._pending[nid]
-        for nid in [n for n in self._metadata if str(n).startswith(prefix)]:
-            del self._metadata[nid]
+        superseded = {
+            nid
+            for group in (self._nodes, self._pending, self._metadata)
+            for nid in group
+            if str(nid).startswith(prefix)
+        }
+        for nid in superseded:
+            self._nodes.pop(nid, None)
+            self._pending.pop(nid, None)
+            self._metadata.pop(nid, None)
+            try:
+                self._delete_fragment_dir(nid)
+            except NodeStoreError as exc:
+                _logger.warning(
+                    "could not remove superseded fragment directory: %s", exc
+                )
+        if superseded:
+            self._invalidate()
 
     def rollback_node(self, node_id: NodeId) -> None:
         """Discard a pending (uncommitted) fragment."""
@@ -265,6 +375,7 @@ class NodeStore:
                 "kind": previous.kind,
                 "version": previous.version,
             }
+            self._invalidate()
             self._save_metadata()
             return previous
 
@@ -281,8 +392,96 @@ class NodeStore:
             ]
             return sorted(versions)
 
+    def _prune_versions(self, node_id: NodeId) -> int:
+        """Delete a node's oldest on-disk versions past the retention policy.
+
+        Called after every commit, so growth is bounded as it happens rather than
+        needing a periodic sweep. The *newest* ``retention`` versions survive,
+        which always includes the committed one (a commit assigns the highest
+        version number there is) and — for any retention at or above the floor of
+        2 — the one ``revert_node`` would roll back to.
+
+        Best-effort: an unlink that fails leaves a stale file behind, which is
+        exactly the condition before this existed, and is never worth failing a
+        commit over.
+        """
+        if self._retention < 0:
+            return 0
+        versions = self.list_versions(node_id)
+        doomed = versions[: max(0, len(versions) - self._retention)]
+        if not doomed:
+            return 0
+        frag_dir = self._fragment_dir(node_id)
+        removed = 0
+        for version in doomed:
+            try:
+                (frag_dir / f"v{version}.py").unlink()
+                removed += 1
+            except OSError as exc:  # pragma: no cover - unwritable store dir
+                _logger.warning(
+                    "could not prune version %d of '%s': %s", version, node_id, exc
+                )
+        return removed
+
+    def gc(self) -> dict[str, int]:
+        """Apply the retention policy to the whole store; return what it removed.
+
+        Two kinds of garbage, both of which accumulate only in a store written by
+        an older MAK: versions beyond the retention policy (every commit now
+        prunes its own), and fragment directories no live node id addresses any
+        more (superseded fragments now delete theirs). Returns
+        ``{"versions": n, "directories": n}``.
+        """
+        with self._lock:
+            versions = sum(self._prune_versions(nid) for nid in self._nodes)
+            directories = 0
+            for orphan in self._orphan_fragment_dirs():
+                try:
+                    shutil.rmtree(orphan)
+                    directories += 1
+                except OSError as exc:  # pragma: no cover - unwritable store dir
+                    _logger.warning("could not remove orphan '%s': %s", orphan, exc)
+            return {"versions": versions, "directories": directories}
+
+    def _orphan_fragment_dirs(self) -> list[Path]:
+        """Directories under the store root that no live node id addresses.
+
+        Derived by *forward* mapping — every known id to its directory — never by
+        parsing a path back into an id, which is ambiguous: a file path contains
+        the same ``/`` separator that ``::`` becomes on disk, so ``a/b.py`` and
+        ``a/b.py::function::f`` nest inside one another. A directory that is an
+        ancestor of a live node's directory is therefore kept even when nothing
+        addresses it directly, and only the topmost orphan of a subtree is
+        returned so the caller removes each one exactly once.
+        """
+        root = self._root.resolve()
+        known: set[Path] = set()
+        for nid in {*self._nodes, *self._pending, *self._metadata}:
+            try:
+                known.add(self._fragment_dir(nid).resolve())
+            except (UnsafeNodeIdError, OSError):
+                continue
+        orphans: list[Path] = []
+        for path in sorted(root.rglob("*")):
+            if not path.is_dir():
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:  # pragma: no cover - unreadable store dir
+                continue
+            if any(resolved.is_relative_to(found) for found in orphans):
+                continue  # already covered by the subtree root above it
+            if resolved in known or any(k.is_relative_to(resolved) for k in known):
+                continue
+            orphans.append(resolved)
+        return orphans
+
     def list_nodes(self, file_path: str | None = None) -> list[NodeId]:
         """List committed node IDs in source order, optionally filtered by file.
+
+        Ordering is ``(file_path, order)``: ``order`` is assigned per file, so
+        sorting on it alone grouped every file's node 0 together and shuffled the
+        planner's inventory prompt into an order no file actually has.
 
         A *whole-file* node — a bare path id equal to ``file_path`` with no
         ``::kind::name`` suffix — supersedes all fragment nodes for that file.
@@ -294,7 +493,7 @@ class NodeStore:
         node are omitted so the planner does not offer them as write targets.
         """
         with self._lock:
-            nodes = sorted(self._nodes, key=self._order)
+            nodes = self._sorted_node_ids()
             if file_path is None:
                 whole_file_paths = {
                     str(nid) for nid in nodes if "::" not in str(nid)
@@ -319,7 +518,7 @@ class NodeStore:
         actually holds.
         """
         with self._lock:
-            return sorted(self._nodes, key=self._order)
+            return list(self._sorted_node_ids())
 
     def remove_node(self, node_id: NodeId) -> bool:
         """Delete a node outright: committed and pending state, metadata, files.
@@ -342,6 +541,7 @@ class NodeStore:
             self._nodes.pop(node_id, None)
             self._pending.pop(node_id, None)
             self._metadata.pop(node_id, None)
+            self._invalidate()
             self._save_metadata()
             return True
 
