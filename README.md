@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.5.10 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.6.0 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -33,6 +33,7 @@ arbitrates shared memory between threads.
 - [Run](#run)
   - [CLI App](#cli-app)
   - [CLI Command](#cli-command)
+- [Local Models](#local-models)
 - [Configuration & API Keys](#configuration--api-keys)
 - [Benchmark](#benchmark)
 - [Contribute](#contribute)
@@ -40,42 +41,28 @@ arbitrates shared memory between threads.
 
 ## The Idea
 
-Most multi-agent coding systems give each agent a Git branch and merge at the end. A **message-passing** model where conflicts surface late, after the dependency
+Most multi-agent coding systems give each agent a Git branch and merge at the end —
+a **message-passing** model where conflicts surface late, after the dependency
 information needed to resolve them is gone.
 
-The Multi Agent Kernel takes the **shared-memory** approach.
+MAK takes the **shared-memory** approach instead: the codebase is decomposed into
+independently lockable `AST nodes` (functions, methods, classes, headers), and files
+on disk are derived artifacts reconstructed from a `versioned node store`. A
+`symbol-level lock table` resolves conflicts at *scheduling* time, while the
+dependency graph is still explicit, so each agent edits only the nodes it holds
+write locks on and the kernel reassembles the file. Around those write targets the
+kernel automatically builds the agent's read context — same-file siblings,
+cross-file callers, and a dependency's just-built output — budget-bounded so it
+stays relevant rather than growing with the repo; a task that would arrive with no
+context at all is a kernel bug, not a shrug. Before dispatch, the planner's proposed
+plan is cross-checked against that same dependency graph — grounding hallucinated
+node ids and correcting bad edges before they reach the scheduler — and after a
+wave, MAK re-checks what it left behind and offers any fix-ups as another
+reviewable plan.
 
-- The codebase is decomposed into
-independently lockable `AST nodes` (functions, methods, classes, headers). 
-
-- Files on
-disk are derived artifacts reconstructed from a `versioned node store`.
-
-- The kernel owns a `symbol-level lock table` and resolves conflicts at *scheduling* time, where the
-dependency graph is still explicit. 
-
-- Each agent receives only the nodes it holds write
-locks on, edits them in isolation, and returns the modified fragments. The kernel
-reassembles the file.
-
-- Around those write targets the kernel assembles the agent's `read context`
-automatically: same-file siblings, cross-file callers, and — for a task that depends
-on another — whatever that dependency just built, so an agent writing a brand-new
-module is never guessing at the API of the module beside it. Each layer is
-budget-bounded, so context stays relevant rather than growing with the repo. A task
-that would arrive with *no* context at all is a kernel bug, and MAK fails it rather
-than shipping the guess.
-
-- After a wave, MAK re-checks what that wave left behind — callers a changed signature
-broke, and new modules that disagree about each other's API — and offers the fix-ups
-as another reviewable plan.
-
-- Before dispatch, the kernel cross-checks the planner's proposed plan against that
-same AST-derived dependency graph — grounding hallucinated node ids, adding missing
-`depends_on` edges, and flagging spurious ones — so a bad LLM guess is corrected
-before it reaches the scheduler, not after a collision.
-
-> Check out the [knowledge graph](https://mak-kg.vercel.app) for this project. (created with [graphify](https://github.com/safishamsi/graphify))
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full architecture, or the
+[knowledge graph](https://mak-kg.vercel.app) (built with
+[graphify](https://github.com/safishamsi/graphify)).
 
 ## Install
 
@@ -162,6 +149,8 @@ mak
 * `/models <provider-1>:<model> <provider-2>:<model> ...` - Set agent models
 * `/planner <provider>:<model>` - Set planner model
 * `/refresh-models` - Re-fetch the model list from each provider right now
+* `/local` - Detect a local runtime, pull a model, run fully offline (see [Local Models](#local-models))
+* `/mode [cloud|local|hybrid]` - Show or switch how this session gets its models
 * `/max-agents <int>` - Set number of agents
 * `/config` - Returns to auto-discovery (see [Configuration & API Keys](#configuration--api-keys))
 * `/config /path/to/config.yaml` - Point to a custom config
@@ -221,6 +210,10 @@ mak run --task "your task" --work-dir /path/to/project \
 --models anthropic --max-agents 5 
 --models anthropic:claude-opus-5 --max-agents 3
 
+# Local models — no API key needed (see Local Models below)
+--models ollama:qwen2.5-coder:14b
+--models local:my-model@http://localhost:8000/v1
+
 # Choose a custom config file (default: auto-discovered, see below)
 --config /path/to/config.yaml
 
@@ -237,10 +230,47 @@ update. Run `/refresh-models` to fetch immediately instead of waiting.
 > (which MAK treats as a failed task), and it is priced above Opus tier ($10/$50 per MTok).
 > MAK prints this warning whenever you select it as a planner or agent model.
 
+## Local Models
+
+MAK runs against a model on your own machine — no API key, no data leaving it.
+
+```bash
+mak                 # → choose "Local" → /local detects a runtime, pulls a
+                     #   model if none is installed, and you're running
+```
+
+Or non-interactively:
+
+```bash
+mak examples local-ollama > mak.yaml   # a ready-to-run config for Ollama
+mak run --task "your task" --work-dir /path/to/project
+
+# or point directly at a runtime, no config file needed
+mak run --task "your task" --work-dir /path/to/project \
+  --models ollama:qwen2.5-coder:14b
+```
+
+`ollama:<model>` talks to [Ollama](https://ollama.com)'s native API and defaults
+to `http://localhost:11434`; `local:<model>@<url>` talks to any
+OpenAI-compatible server (vLLM, LM Studio, llama.cpp) at an explicit endpoint.
+Neither needs a key, and **a real cloud API key already in your environment is
+never sent to a local endpoint** — MAK forwards only what you explicitly
+configure, or a harmless placeholder.
+
+MAK also sizes the model's context window for you and refuses a bundle that
+would not fit, rather than letting it be silently truncated into a wrong
+answer. If your local model plans worse than it edits, pair it with a hosted
+planner — `mak.yaml` naming a cloud `planner.model` beside local `agents:` — the
+`/local` wizard recommends this automatically for smaller models. See
+[`mak/examples/`](mak/examples/) for ready-made configs (`local-ollama`,
+`local-openai-compatible`, `hybrid-cloud-planner-local-agents`,
+`fully-local-offline`), and [CONTRIBUTING.md §7.7/§14](CONTRIBUTING.md) for
+the full detail.
+
 ## Configuration & API Keys
 
 **API keys.** MAK drives hosted models from **three providers — Anthropic, OpenAI,
-and Google Gemini**. Keys are read from the environment
+and Google Gemini** — plus any local runtime, which needs none. Keys are read from the environment
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or from
 `~/.config/mak/.env` — the TUI's `/apikey` command (and its first-run setup)
 writes them there for you, creating the file readable only by you (`0600`).

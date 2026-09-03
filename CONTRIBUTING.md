@@ -44,6 +44,7 @@ roadmap, and design rationale.
   - [Command-line interface](#12-command-line-interface)
   - [Interactive CLI app](#122-interactive-cli-app-cli)
   - [Model catalog](#13-model-catalog)
+  - [Local runtimes](#14-local-runtimes-maklocal)
 - [Part III — Developing](#part-iii--developing)
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
@@ -207,7 +208,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **1289 tests pass**,
+The **kernel is functionally complete and well-tested**: **1577 tests pass**,
 `mypy --strict mak cli` is clean, and `ruff check mak cli tests` is clean (the
 gate was extended to `cli/` in Wave 17 — see below). The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
@@ -230,6 +231,7 @@ The module-by-module state:
 | `mak/planner/` (planner, review, LLM backends, response parsing) | Complete |
 | `mak/git_integration/` | Complete |
 | `mak/models/` (self-refreshing model catalog, Wave 14) | Complete |
+| `mak/local/` (local runtime detection + native Ollama client, Wave 15) | Complete |
 | `mak/session.py` | Complete (concurrent) |
 | `mak/bootstrap.py` (composition root) | Complete |
 | `mak/__main__.py` (CLI entry point) | Complete |
@@ -242,6 +244,7 @@ The module-by-module state:
 | **Context budget** | **Complete (Wave 16)** — the caller layer is bounded and evidence-filtered; the cascade guard runs from both front ends |
 | **Write-path safety & state durability** | **Complete (Wave 17)** — every entry point that turns a node id into a path is containment-checked; all three persisted state files are crash-safe; `mypy --strict`/`ruff` now cover `cli/` too |
 | **Cost & disk bounds, log fidelity** | **Complete (Wave 18)** — a run has a token ceiling and the store a retention policy; a no-op cannot be asserted about code that never existed; enrichment and ingestion stop paying for what they discard |
+| **Local LLM support** | **Complete (Wave 15)** — `local_api`/`ollama_api` transports, native context sizing, a parse→repair→retry loop, and an app mode (`cloud`/`local`/`hybrid`) that reaches the prompt with no API key at all |
 | `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
@@ -1459,6 +1462,159 @@ no subprocess and ignore it); `docker_available()` lets the CLI fail fast with
 guidance if Docker is missing. The module only *builds* argv and probes the daemon,
 so it is unit-testable without Docker.
 
+### 7.7 Local transports: `local_api` and `ollama_api` (Wave 15)
+
+Two more agent types reach a model running on this machine (or one the user names
+by URL) instead of a hosted API — the shared design decisions live in `TASKS.md`
+§15.0 (**D1–D13**); this is what they built.
+
+- **`result_schema.py`** (a prerequisite refactor). Before this wave the
+  `TaskResult` schema was written out twice, verbatim, differing only in how a
+  nullable `error` is spelled (Anthropic's `input_schema`, Gemini's
+  `parameters`). `result_schema(dialect)` renders the one contract — property
+  names, descriptions, and the required set are module constants — in four
+  dialects: `anthropic` (a `type` union for nullable), `gemini` (`nullable:
+  true`), `openai` (**strict** JSON Schema — `additionalProperties: false` and
+  *every* property in `required`, which is what OpenAI strict mode and
+  vLLM/llama.cpp guided decoding demand), and `ollama` (plain JSON Schema for
+  llama.cpp's grammar converter — no `type` unions, no `anyOf`, so `error` is
+  a plain optional string). The Anthropic and Gemini adapters were refactored
+  onto it as a **pure refactor** — their existing tests are the regression
+  gate and pass unchanged, and the two rendered schemas are byte-identical to
+  the literals they replaced.
+- **`local_api`** — the *same* `OpenAiApiAdapter` class, registered under a
+  second agent type with `base_url` required (D1). Why a second type rather
+  than just adding `base_url` to `openai_api`: the `AdapterRegistry` is keyed
+  by agent **type**, so with one shared type a roster could have cloud OpenAI
+  **or** a local model, never both — and nothing downstream (the health
+  preflight, the planner's agent-type list, `--models` parsing, warnings,
+  logs, the TUI) could tell a local run from a cloud one. The constructor
+  takes an `agent_type` kwarg (default `"openai_api"`) that the composition
+  root overrides for a `local_api` instance, so it reports its own name
+  everywhere the kernel asks.
+- **The key is never leaked (D2).** With `base_url` set, `_get_client` sends
+  the configured `api_key_env`'s value if one was named, and the literal
+  placeholder `"local"` otherwise — and always sends *something*, so the SDK
+  can never fall back to reading `OPENAI_API_KEY` from the environment and
+  POSTing a real cloud key to whatever host the config names. This is the
+  wave's one security property; it has a named test at both unit and
+  acceptance level (`test_a_real_openai_key_in_the_environment_is_never_forwarded`),
+  deliberately named so a future refactor cannot delete it silently.
+- **The output-cap field name differs by transport (D4).** `max_completion_tokens`
+  for cloud OpenAI (unchanged); `max_tokens` when `base_url` is set, because
+  Ollama's and llama.cpp's OpenAI-compat layers implement only the older
+  name — sending the newer one there is at best ignored, so the cap silently
+  would not exist.
+- **`structured_output` and the one-shot downgrade (D5).** `AgentConfig.structured_output`
+  is `json_object` (today's default), `json_schema` (strict schema /
+  constrained decoding — the `ollama_api` default, where it is native and
+  free), or `none`. A call rejected for naming an unsupported response format
+  is retried **once**, one rung down (`json_schema → json_object → none`);
+  anything else propagates unchanged. No adaptive memory across calls — the
+  registry rebuilds adapters per dispatch, so anything remembered would be
+  global mutable state (`AGENTS.md` forbids it).
+- **The parse → repair → retry turn (D6), shared via `repair.py::repair_loop`.**
+  A decode failure used to cost a full re-dispatch — the whole bundle (write
+  sources, sibling context, caller context: tens of KB) sent again to
+  re-earn an answer the model had already worked out and merely mis-shaped.
+  For a small local model a malformed first reply is the common case, not the
+  rare one, so the adapter instead sends **one short follow-up turn** carrying
+  the model's own previous reply plus `protocol.py::REPAIR_INSTRUCTION`,
+  bounded by `agents[].repair_attempts` (adapter default `1`; `0` disables
+  it). Never after a truncation or a refusal — `repair_loop` runs
+  `read_meta` (which raises those) *before* any payload is read, so neither
+  repeats through a rung it cannot fix. Usage is **summed across turns**
+  (`TaskResult.repairs` records the count, merged after the model's own keys
+  so it cannot be forged) — `Session.total_tokens` and therefore
+  `session.max_total_tokens` (§11) are computed from it, and a repair turn
+  billing invisibly would put the only spend ceiling MAK has out by however
+  many repairs a run needed. The OpenAI-compatible and native Ollama adapters
+  (below) share this one driver so the two transports cannot repair
+  differently.
+- **A malformed body is a `protocol` failure, not an `api` one (D7).** *(A bug
+  found while reading for this wave.)* `openai_api` used to raise a bare
+  `AgentError` for "no choices" / "no content" / "not valid JSON" / "not an
+  object" — `AgentError` is the *parent* of `AgentResponseError`, so
+  `AgentRunner._assign_api`'s `except AgentResponseError` missed it, the
+  result was classified `error_kind="api"`, and `Session._retry_note` (§10)
+  emitted the generic "that produced nothing usable" note instead of the one
+  that restates the schema. The schema-restating retry note — added
+  precisely for a model that slips on shape — had never fired for the
+  JSON-mode adapter. Now raises `AgentProtocolError`; same fix applied to the
+  Anthropic/Gemini "no tool_use block" / "no function call" paths.
+- **`health_check` probes a `base_url` endpoint once.** Unchanged when
+  `base_url is None` (constructing the client is the whole check, and
+  "building a registry performs no network call" stays true for cloud
+  adapters). With `base_url` set, one `models.list()` call under a 5s
+  timeout proves the server answers — "the server isn't running" used to
+  surface as three failed dispatch attempts per task instead of one startup
+  line. A failing probe sets `health_detail()`, a new optional method
+  (`getattr`-checked, so no adapter is forced to implement it) that
+  `bootstrap.healthy_agent_types` carries back so `mak/__main__.py`'s
+  startup warning can name *why* — "Ollama is not running at
+  http://localhost:11434" / "model 'qwen2.5-coder:14b' is not pulled" —
+  instead of the generic "missing API key/SDK, or CLI not on PATH", which is
+  never the reason a local server is unreachable.
+
+`ollama_api` (`mak/agent_runner/adapters/ollama_api_adapter.py`) is a **native**
+adapter over Ollama's own API rather than the OpenAI-compatible one, for one
+reason the module docstring calls "the heart of D11": **Ollama's runtime context
+defaults to a few thousand tokens regardless of what the model supports, and it
+silently truncates an over-long prompt rather than erroring.** MAK's bundles run
+to tens of KB, so the naive local setup hands a model a fraction of its task and
+returns a confident, wrong, well-formed answer with nothing in any log to explain
+it — the OpenAI-compatible path cannot fix this, because `num_ctx` is not an
+OpenAI parameter. So the adapter:
+
+1. reads the model's real context length from `/api/show` (cached on the
+   instance — it does not change while a process runs);
+2. sizes `options.num_ctx` to the bundle: `min(model_context_length,
+   round_up(estimate_tokens(prompt) * 1.25 + num_predict))`, floored at 4096.
+   The estimate is the documented `len(prompt) / 4` heuristic
+   (`estimate_tokens`) — it does not have to be exact, only conservative, and
+   the 1.25 margin is deliberate: over-estimating costs memory,
+   under-estimating costs the silent truncation this module exists to
+   prevent;
+3. **refuses, loudly and non-retryably**, when the bundle cannot fit even the
+   model's real window — the new `AgentContextExceededError`
+   (`mak/core/exceptions.py`, an `AgentResponseError` subclass,
+   `retryable = False`, `kind = "context"`) names the estimated prompt size,
+   the model's limit, and the two settings that fix it
+   (`session.dependency_context_bytes` / `session.cross_file_context_bytes`,
+   or a larger model). Non-retryable because the same bundle re-sent is the
+   same overflow. A configured `num_ctx` (unset = auto-size) is honoured
+   verbatim and enforced as a hard ceiling instead — the user asked for
+   exactly that window.
+
+`format` is the constrained-decoding lever, and the reason `json_schema` is this
+adapter's *default* structured-output mode (D5): Ollama compiles the schema to a
+grammar, which on a small model is usually more reliable than cloud-style tool
+calling — a grammar constrains syntax, not intent, so the system prompt still
+describes the shape in words. `num_predict` is the resolved output budget,
+explicit rather than Ollama's unlimited default, because a small model that
+starts looping is otherwise bounded only by the timeout. `keep_alive` (e.g.
+`"30m"`) keeps the model resident between tasks — without it every task can pay
+a multi-second reload. Usage comes from `prompt_eval_count`/`eval_count`
+(`stop_signals.py::_USAGE_FIELDS` gained those two names); `done_reason` goes
+through the same shared `check_stop_reason(..., provider="ollama")`, and
+`"length"` was already in `TRUNCATION_STOP_REASONS`. `health_check` checks two
+independent things — the server is reachable (`version()`) **and** the
+configured model is present (`list_models()`) — and `health_detail()`
+distinguishes which one failed, which is where the `health_detail` seam above
+earns its keep.
+
+`mak/agent_runner/adapters/repair.py::repair_loop` is the one driver both local
+adapters call through — parameterized by `call` (make one request), `read_meta`
+(reject a cut/refusal before any payload is read; return usage + stop reason +
+raw text), `extract` (pull the JSON payload from a response), and `follow_up`
+(append the model's previous reply plus the repair instruction). The validation
+decode inside the loop is thrown away and `parse_result` decodes the accepted
+payload again downstream — cheap next to a model call, and it keeps
+`parse_result` a pure function of the string the adapter returns.
+
+`mak/planner/llm.py::OllamaPlannerLLM` and `build_planner_llm`'s backend
+resolution are the planner's half of this wave — see §8.
+
 ## 8. Planner & human-in-the-loop review
 
 `mak/planner/` is the only module that calls an LLM.
@@ -1560,6 +1716,43 @@ so it is unit-testable without Docker.
   because an idle non-streaming connection can be dropped before a long
   generation finishes. `get_final_message()` returns the same assembled message a
   non-streaming call would, so `stop_reason` handling is unchanged.
+  **`OllamaPlannerLLM`** (Wave 15) is the fourth backend, over the native
+  Ollama client (§14): `complete(prompt)` requests **no** `format` — the
+  planner parses its own JSON through `loads_json` above, which already
+  tolerates fences and prose, so constraining the reply to a grammar would
+  mean maintaining a second schema for a shape the planner alone owns. It
+  sizes `num_ctx` by the same rule the `ollama_api` agent adapter does
+  (§7.7): a plan prompt lists the **whole node inventory**, so the D11
+  problem applies here too, and an oversized inventory raises
+  `PlannerFailedError` naming the numbers rather than letting Ollama
+  truncate the inventory and plan for half a repo (open problem 1's real
+  fix is shrinking the inventory itself — this wave only makes the failure
+  loud instead of silent).
+  **`build_planner_llm(model, *, backend=None, base_url=None, api_key=None,
+  timeout=…)`** resolves the backend in three steps, in this order, because
+  each is a stronger signal than the next: `backend` when set
+  (`"anthropic"`/`"openai"`/`"gemini"`/`"ollama"`, via `planner.backend` in
+  config or the TUI's `/local` wizard) always wins; otherwise `base_url`
+  being set routes to the OpenAI-compatible backend (a `base_url` *is* a
+  statement about the transport); otherwise today's model-id prefix routing
+  runs unchanged. The first two steps exist for local models specifically —
+  an id like `qwen2.5-coder:14b` or `llama3.1` matches no prefix, and without
+  them a local planner would raise `PlannerFailedError` before a single call.
+  `mak/__main__.py::_planner_api_key` now checks `config.planner.api_key_env`
+  first (for a token-protected gateway, e.g. `vllm --api-key`), then falls
+  through to today's provider inference, then `None` — `None` is the correct
+  answer for a local planner, not a fallback: it is what lets
+  `OpenAiPlannerLLM` apply the same D2 placeholder-key rule the agent adapter
+  does (§7.7).
+  **`warn_local_planner_mismatch(config)`** (beside `warn_model_caveats` in
+  `mak/__main__.py`) warns on stderr when **every** configured agent is local
+  but the planner is not: `--models ollama:qwen2.5-coder:14b` looks fully
+  local and quietly is not — the run still ships the whole node inventory to
+  a hosted provider to plan — which for an air-gapped user is the whole
+  point of the wave, failing silently. Hybrid (a cloud planner beside local
+  agents) is a legitimate, common configuration, so this is a warning, not
+  an error, and it stays silent whenever the planner names a local backend
+  or `base_url` itself.
 - **`depgraph.py`** (Wave 10) — a static dependency-graph extractor, purpose-built to
   *validate* a plan rather than detect a live conflict (that job stays in
   `mak/conflict_detector/*`, which is untouched). `build_dep_graph(sources)` parses
@@ -1988,6 +2181,12 @@ planner:
                           # ground node ids, add missing depends_on edges (Wave 10)
   strategy: "oneshot"     # "oneshot" or "outline" (outline -> per-step detail)
   self_critique: false    # one extra LLM reflection pass over the produced plan
+  # backend: "ollama"       # Wave 15, §8 — explicit planner backend, when the
+                            # model id's prefix cannot say (a local model id
+                            # matches none): anthropic | openai | gemini | ollama
+  # base_url: "http://localhost:11434"   # required for an "ollama"/local backend
+  # api_key_env: "VLLM_TOKEN"            # for a token-protected gateway; unset
+                                         # means the D2 placeholder key is sent
 
 agents:                         # first entry is the default agent
   - type: "anthropic_api"
@@ -2005,6 +2204,19 @@ agents:                         # first entry is the default agent
   - type: "gemini_api"
     model: "gemini-3.5-flash"
     api_key_env: "GEMINI_API_KEY"
+  # Wave 15 (§7.7, §14) — a local runtime, or any OpenAI-compatible server:
+  # - type: "ollama_api"
+  #   model: "qwen2.5-coder:14b"
+  #   base_url: "http://localhost:11434"   # optional; this is the default
+  #   structured_output: "json_schema"     # json_object | json_schema | none
+  #   repair_attempts: 1                   # 0 disables the repair turn
+  #   num_ctx: 32768                       # unset = auto-sized per bundle
+  #   keep_alive: "30m"
+  #   temperature: 0.1
+  # - type: "local_api"                    # vLLM / LM Studio / llama.cpp / …
+  #   model: "Qwen/Qwen2.5-Coder-32B-Instruct"
+  #   base_url: "http://localhost:8000/v1" # required — MAK never guesses a port
+  #   structured_output: "json_schema"
 
 git:
   auto_commit: true
@@ -2140,6 +2352,25 @@ Rules and behaviors:
   ingestion is also *pruned* from the store on the next `initialize`.
 - Type coercion is strict and wrapped in `ConfigError` (e.g. `"false"` parses to
   `False`, not Python's truthy `bool("false")`).
+- **The nine local-transport fields (Wave 15, §7.7, §14).** Six on `AgentConfig` —
+  `base_url`, `structured_output`, `repair_attempts`, `num_ctx`, `keep_alive`,
+  `temperature` — and three on `PlannerConfig` — `backend`, `base_url`,
+  `api_key_env`. Every one is `None` when unset, the same rule `max_tokens`
+  states above: the field exists so a value can be set, but the *adapter*
+  stays the single place that owns the default. `structured_output` and
+  `backend` are validated **at load** against a fixed set of choices
+  (`_as_choice`) — a typo must fail before a run starts, not surface as a
+  provider 400 mid-wave. `base_url` goes through `normalize_base_url` (also
+  used by `agents_from_specs`, §12.1, and the TUI's `/local url`, §12.2) —
+  `http://`/`https://` and a host are required, and a trailing slash is
+  stripped, so a URL typed on the command line, one written in YAML, and one
+  entered interactively are all validated by exactly one rule. `repair_attempts`
+  accepts `0` (its own helper, `_opt_non_negative_int`, distinct from
+  `_opt_positive_int` because `0` is meaningful here — it switches the repair
+  turn off). `validate_config` (§7.3) rejects any of these six set on a type
+  that ignores them, and rejects `local_api` **without** a `base_url` — MAK
+  never guesses a port for a local server, so the message names Ollama's
+  OpenAI-compat default (`http://localhost:11434/v1`) as the likely fix.
 
 ## 12. Command-line interface
 
@@ -2204,14 +2435,46 @@ required** — because `main` rewrites the loaded `MakConfig` (a frozen dataclas
   | `anthropic` | `anthropic_api` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` |
   | `openai` | `openai_api` | `OPENAI_API_KEY` | `gpt-5.6-sol` |
   | `gemini` (alias `google`) | `gemini_api` | `GEMINI_API_KEY` | `gemini-3.5-flash` |
+  | `ollama` (Wave 15, §7.7) | `ollama_api` | *(none)* | required |
+  | `local` (Wave 15, §7.7) | `local_api` | *(none)* | required |
 
   With no `:model`, `AgentConfig.model` is left `None` and the adapter's built-in
-  default applies. **These three providers are MAK's entire hosted-model surface**
-  (`bootstrap.SUPPORTED_PROVIDERS`); an unknown provider is rejected with a
-  `ConfigError` listing the supported set. Because the `AdapterRegistry` is keyed by
-  agent *type*, MAK runs **one model per provider** per session — a repeated provider
-  is rejected with a message pointing at `--max-agents` for concurrency. The first
-  entry becomes the routing default (overridable with `--agent`).
+  default applies — except `ollama`/`local`, where a local runtime has no
+  catalog default and a missing model is a `ConfigError` showing the syntax.
+  Because the `AdapterRegistry` is keyed by agent *type*, MAK runs **one model
+  per provider** per session — a repeated provider is rejected with a message
+  pointing at `--max-agents` for concurrency. The first entry becomes the
+  routing default (overridable with `--agent`).
+
+  **The full grammar is `provider[:model][@base_url]`.** `bootstrap._split_spec`
+  splits on the **first** `@` (a URL may carry a userinfo segment,
+  `http://user:pass@host/v1`, and `rpartition` would cut inside it; a model id
+  never contains one) and then the **first** `:` (an Ollama tag itself contains
+  one, `qwen2.5-coder:14b`, and partitioning on the first keeps it intact).
+  `@base_url` is accepted on `openai` (a gateway or proxy), `local`, and
+  `ollama`; naming it on `anthropic`/`gemini` is a `ConfigError` — neither has
+  a notion of an alternate endpoint, and accepting the flag there would
+  silently ignore it. `ollama` defaults to `http://localhost:11434` (falling
+  back to `$MAK_LOCAL_BASE_URL` first) because the provider name *is* the
+  runtime; `local` has **no default** — guessing Ollama's port for someone
+  running vLLM is worse than asking, so a missing endpoint for `local` is a
+  `ConfigError` naming the syntax. `SUPPORTED_PROVIDERS` is now these five
+  names (`bootstrap.SUPPORTED_PROVIDERS`); an unknown provider's error message
+  lists the set including the two local ones.
+
+  ```bash
+  --models ollama:qwen2.5-coder:14b                       # default endpoint
+  --models ollama:qwen2.5-coder:14b@http://gpu-box:11434   # explicit endpoint
+  --models local:my-model@http://localhost:8000/v1         # vLLM, LM Studio, …
+  --models openai:gpt-5.6-sol@https://my-gateway/v1         # a gateway/proxy
+  ```
+
+  Neither `ollama` nor `local` needs an API key — the `_LOCAL_TYPES` set
+  (§7.7) is exactly the two types the health preflight and the planner-mismatch
+  warning (§8) also key off of. `OPENAI_API_KEY` in the environment is never
+  forwarded to a `local:`/`openai:…@url` endpoint (D2, §7.7) — sent instead is
+  the `api_key_env` value if one was configured, or the literal placeholder
+  `"local"`.
 
 - **`--max-agents N`** overrides `session.max_concurrent_agents` — the size of the
   bounded worker pool in `Session` (§10), i.e. **how many agents run at once**. This
@@ -2243,10 +2506,11 @@ selected entirely by the config file.
 
 ### 12.1.1 Using a local CLI agent (`claude_code` / `codex` / `copilot`)
 
-The `--models` flag only builds the three hosted-API providers. To run a **local
-CLI** agent instead — the `claude`, `codex`, or `gh copilot` you already have
-installed — add it to the config's `agents:` list by `type` (there is no
-`--models` shorthand for CLI agents):
+The `--models` flag only builds the five API-transport providers (§12.1) — three
+hosted, two local (Wave 15). To run a **local CLI** agent instead — the
+`claude`, `codex`, or `gh copilot` you already have installed — add it to the
+config's `agents:` list by `type` (there is no `--models` shorthand for CLI
+agents):
 
 ```yaml
 # ~/.config/mak/config.yaml (or ./mak.yaml, or mak/config.yaml)
@@ -2280,7 +2544,8 @@ suggestions, so it's the weakest fit for MAK's node-rewrite protocol.
 ### 12.1.2 `mak update` and `mak gc` (`cli/__main__.py`)
 
 `cli/__main__.py` is the `mak` console script: it dispatches the bare TUI, `run`
-(forwarding to `mak.__main__.main`), `gc`, `update`, and `--version`/`--help`.
+(forwarding to `mak.__main__.main`), `gc`, `update`, `examples`, and
+`--version`/`--help`.
 
 **`mak update` installs a release tag, not `HEAD` (Wave 18).** It used to run
 `uv tool install git+https://github.com/…` with no tag, no pin, and no signature
@@ -2304,6 +2569,19 @@ reinstall when already current is unchanged; it now compares against the tag.
 and orphaned fragment directories it removed. A store written by a current MAK
 stays bounded on its own — every commit prunes its own node — so this is the
 one-time sweep for stores an older version left behind.
+
+**`mak examples [name]`** (Wave 15, §14) lists — or, given a name, prints to
+stdout — one of the four configs packaged under `mak/examples/`
+(`local-ollama`, `local-openai-compatible`, `hybrid-cloud-planner-local-agents`,
+`fully-local-offline`). `mak examples local-ollama > mak.yaml` is the whole
+non-interactive quickstart for a local run. `config.example_path(name)`
+resolves the name to a file **inside** `mak/examples/` and rejects anything
+that resolves elsewhere — the name reaches this function from the command
+line, and joining it to a package path unchecked is how "print my config"
+becomes an arbitrary file read. An unknown name exits `1` listing what
+exists; `tests/test_example_configs.py` loads and `validate_config`s every
+packaged example, which is what stops a doc example rotting silently past a
+schema change.
 
 ## 12.2 Interactive CLI app (`cli/`)
 
@@ -2373,9 +2651,11 @@ dumps.
 
 | Command | Description |
 |---|---|
-| `/models [provider:model …]` | Select agent models (same `provider:model` spec as `--models`) |
-| `/planner [model]` | Switch the planner model; shows a warning for models below `claude-sonnet-4-6` capability |
-| `/refresh-models` | Re-fetch the model catalog from every provider now, ignoring the refresh schedule (§13) |
+| `/models [provider:model …]` | Select agent models (same `provider:model` spec as `--models`); in local/hybrid mode, bare `/models` lists the runtime's models live instead of the cloud catalog |
+| `/planner [model]` | Switch the planner model; accepts a local model with no catalog lookup and no key check |
+| `/refresh-models` | Re-fetch the *cloud* model catalog now, ignoring the refresh schedule (§13) — says so explicitly in local mode, where `/local models` is the equivalent |
+| `/local [sub-command]` | Local-runtime setup — see below (Wave 15) |
+| `/mode [cloud\|local\|hybrid]` | Show or switch how this session gets its models (Wave 15) |
 | `/max-agents N` | Set the concurrent-agents limit |
 | `/work-dir <path>` | Set MAK's working directory |
 | `/apikey` | Add or update API keys interactively |
@@ -2385,6 +2665,86 @@ dumps.
 | `/help` | List commands and keyboard shortcuts |
 | `/clear` | Clear the screen and reprint the welcome box |
 | `/exit`, `/quit` | Quit MAK (Ctrl+C / Ctrl+D also work) |
+
+### Mode, `/local`, and `/mode` (Wave 15)
+
+**The problem this closes.** Before Wave 15, `MakCli.run` exited `1` when no
+provider key was set and `run_setup` refused to continue with none — so a
+fully-offline machine could never reach the prompt at all, regardless of
+whether a local runtime was sitting right there. `CliState.mode` is now a
+first-class field (`"cloud"` | `"local"` | `"hybrid"`, `cli/core/state.py`)
+that decides which surfaces validate against API keys and which against a
+local runtime, shown in the bottom toolbar and `/status` so a user can never
+be unsure whether the next task costs money. It never changes *how the
+kernel is configured* — the roster the runner builds is always
+`selected_models`, filled with `ollama:qwen2.5-coder:14b@http://localhost:11434`
+in local mode exactly as `--models` would take it, and `_apply_state_to_config`
+("Session-only configuration" below) parses both through the same
+`agents_from_specs`.
+
+**First run** (`cli/setup.py::run_setup`) now asks the question before
+prompting for anything else — after a **background** `discover()` scan so the
+three options can be honest about what is actually on the machine:
+
+```
+  Welcome to MAK — how do you want to run models?
+
+    1) Cloud     hosted APIs (Anthropic, OpenAI, Google)     ● 0 keys set
+    2) Local     on this machine, private and offline        ● Ollama detected (3 models)
+    3) Hybrid    cloud planner + local agents                — recommended for small local models
+
+  Select (1–3):
+```
+
+**Cloud** runs the unchanged key wizard. **Local** hands straight to the
+`/local` wizard below — no key is asked for, and choosing it with nothing
+detected prints install guidance rather than failing (`MakCli` still reaches
+the prompt). **Hybrid** runs the key wizard restricted to a planner key, then
+the `/local` wizard for agents.
+
+**`/local`** (`cli/local.py`) is the setup wizard, and bare `/local` runs it
+end to end: **detect** (`mak.local.discover`, §14, with a spinner) → **choose
+the runtime** if more than one answered (Ollama first) → **choose an agent
+model** (installed models are listed with parameter size and quantization; if
+none are installed, the curated suggestions from `mak.local.recommended`
+appear instead, smallest first, and the chosen one is pulled with a `rich`
+progress bar) → **choose the planner** (the same local model, a different
+local model, or a cloud planner — recommended in one line, off the curated
+table's `is_small()`, never off a size heuristic computed in the wizard) →
+**report the context fit** (the chosen model's window beside MAK's current
+`dependency_context_bytes` + `cross_file_context_bytes` — D11's footgun made
+visible *before* the first run rather than after a bad one) → **confirm**,
+which sets `state.mode`/`local_*`/`selected_models`/`planner_*`, then asks
+`Save this setup to ./mak.yaml? [y/N]` — **default no**. This is not a special
+case of MAK's "never writes config except on an explicit model change" rule
+("Session-only configuration" below); it *is* that rule, applied to a setup
+wizard instead of `/models`. Saving renders one of the packaged examples (§12.1.2) with the
+chosen values substituted and round-trips it through `load_config` +
+`validate_config` before writing, so the file a user ends up with is the
+documented one.
+
+Every `/local` sub-command survives an unreachable server: an `OllamaError`
+becomes one red line naming the endpoint, never a traceback, never a crash of
+the prompt loop.
+
+| `/local` sub-command | Behaviour |
+|---|---|
+| `status` | endpoint, version, models installed, models currently loaded (`/api/ps`) |
+| `models` | list what the runtime offers, live |
+| `use <model> […]` | set the agent model(s) |
+| `planner <model>` | set the planner to a local model |
+| `pull <model>` | download a model with a progress bar (interruptible; resumes on re-run) |
+| `url <base_url>` | point at a custom endpoint (validated by `normalize_base_url`, then probed) |
+| `off` | drop back to cloud mode (keeps the API keys already set) |
+
+**`/mode`** with no argument lists the three modes and what each needs; with
+one, it switches — refusing with an actionable message ("no local runtime
+configured — run `/local`" / "no API key set — run `/apikey`") when the
+target is not usable yet, rather than switching into a mode that then fails
+the first task. `MakCompleter` (§12) offers `/local`'s sub-commands and
+`/mode`'s three values in the argument-completion position, mirrored in a
+small local table rather than importing `cli/local.py` — so every keystroke
+does not pay for `prompt_toolkit`'s styles and `rich`'s progress-bar imports.
 
 **Adding a new slash command:** add a handler in `commands.py` (print a one-line
 `print_ok`/`print_warn`/`print_error` confirmation if it mutates state — the
@@ -2397,8 +2757,11 @@ list drives both the `/` menu and `/help`), and add argument completions in
 ### Session-only configuration (design constraint)
 
 All changes made via slash commands (`/models`, `/work-dir`, `/max-agents`,
-`/planner`, `/no-review`, `/config`) are **session-only**. They live in `CliState`
-in memory and are **never written back to `mak/config.yaml`** or any other file.
+`/planner`, `/no-review`, `/config`, `/local`, `/mode`) are **session-only**.
+They live in `CliState` in memory and are **never written back to
+`mak/config.yaml`** or any other file — `/local`'s own save prompt is the one
+deliberate, explicit exception, and even that writes only on a "y" answer
+(§12.2 above).
 
 `cli/runner.py` enforces two invariants that protect this:
 
@@ -2518,6 +2881,88 @@ re-exports `mak.models.ModelEntry` as `ModelInfo` (one dataclass, not two — it
 `ModelRegistry()` singleton. There is deliberately **no** module-level
 `ALL_MODELS` list anymore — a list captured at import time cannot reflect a
 refresh; call `all_models()` instead.
+
+## 14. Local runtimes (`mak/local/`)
+
+`mak/local/` is `mak/models/`'s counterpart for models that are not hosted
+(Wave 15, D9). It is a **separate package on purpose** — the two answer
+structurally different questions, and folding one into the other would have
+bent both shapes to fit neither well.
+
+**Why not just extend `mak/models/`.** Every provider in the catalog is keyed
+by an API-key environment variable and refreshed from that provider's hosted
+list-models endpoint (§13). A keyless, per-user-URL "provider" fits none of
+that: it would touch `PROVIDER_ORDER`, `PROVIDER_KEY_ENV`,
+`KEY_ENV_TO_PROVIDER`, the manifest schema, curation, retirement marking, and
+the TUI's three `_KEY_ENV` maps — real machinery, built for a fact that a
+local runtime doesn't have. So `mak/local/` asks **the running server what it
+has, live, every time**: no cache, no manifest, no retirement marking,
+because a local model list is authoritative, instant, and changes the moment
+the user runs `ollama pull`. It borrows exactly one thing from `mak/models/`:
+the **fact / judgment split** — `recommended.py` is the judgment half, and
+nothing infers into it.
+
+- **`ollama_client.py`** — a dependency-free HTTP client over Ollama's native
+  API: `urllib.request` + `json`, one `Request` per call, no shared socket
+  state. Three reasons, in order of weight: a fully-local install then needs
+  **no third-party provider SDK at all** (the strongest possible form of this
+  wave's promise, and why the `[local]` packaging extra, §13/pyproject, is
+  empty rather than a dependency list); the surface MAK needs is five
+  endpoints of plain JSON; and the `ollama` SDK pins `httpx` versions that
+  would have to be reconciled against `openai`/`anthropic` for no gain.
+  `OllamaClient` exposes `version()`, `list_models()`, `show(model)` (context
+  length, read by **key suffix** across `model_info` —
+  `"<architecture>.context_length"` — because the architecture is not knowable
+  up front), `running()`, `chat(...)` (`stream: false` — the endpoint is on
+  localhost, so a single blocking POST under the per-agent timeout is
+  simpler than defending an idle streamed connection nothing will drop), and
+  `pull(model)` (streams NDJSON progress, interruptible — a `KeyboardInterrupt`
+  closes the response and leaves Ollama's partial blob alone, so a re-run
+  resumes rather than restarts). Every transport/HTTP/timeout/JSON failure
+  becomes a typed `OllamaError` naming the endpoint and the reason — nothing
+  else escapes, because "the server isn't running" is the single most common
+  failure here and must read as one clear line, not a `URLError` traceback
+  out of a worker thread. The client holds no state across calls, so it is
+  trivially safe to share across the session's worker pool, and it is
+  injectable everywhere it is used — no test in `tests/local/` opens a socket.
+- **`runtime.py`** — `LocalRuntime` (`kind`, `name`, `base_url`, `version`,
+  `models`), a **value object**, not a live handle, so the TUI can hold,
+  list, and compare probe results without holding connections open. Two
+  kinds: `"ollama"` (probed via `/api/version` then `/api/tags`) — the one
+  MAK reaches natively, because only it can size its own context window
+  (§7.7/D11) — and `"openai_compatible"` (probed via `/v1/models`), which
+  covers everything else: LM Studio, vLLM, llama.cpp's server, LocalAI.
+- **`discovery.py`** — `discover(*, extra_urls=(), timeout=0.4, prober=None)`
+  scans the well-known local ports **concurrently** (one short-lived thread
+  per address under a `ThreadPoolExecutor`, sub-second timeout each) and
+  returns whatever actually answered, Ollama first, deduplicated by
+  `base_url`. It **never raises** — discovery runs on a UI path (first-run
+  setup, `/local`) and during startup, where "nothing is running" is an
+  ordinary, expected result, not a failure that should be able to take a
+  session down with it; even a prober that violates that contract is caught
+  and treated as "not there" rather than propagated. `$MAK_LOCAL_BASE_URL`
+  (the same env var `agents_from_specs`'s `local:` provider falls back to,
+  §12.1) and any `extra_urls` are scanned last and deduplicated against the
+  well-known ports.
+- **`recommended.py`** — the judgment half, mirroring
+  `mak/models/curation.py`'s discipline exactly: a hand-maintained table of
+  **exact Ollama tags** (a suggestion that cannot be pasted into `ollama
+  pull` is not a suggestion), each with a rough download size and a
+  one-line "what it's for", explicitly ordered **smallest first** so a
+  wizard's default suggestion is the one most machines can actually run.
+  `RecommendedModel.is_small()` is what `/local`'s planner step (§12.2) and
+  `warn_local_planner_mismatch` (§8) read to recommend a cloud/hybrid
+  planner — **MAK does not benchmark or rank local models; a human edits
+  this list**, the same sentence `mak/models/curation.py`'s `CURATED` table
+  carries.
+
+Non-goals, stated once here because they shape the whole package: **MAK never
+manages the Ollama daemon** — it detects, reports, and instructs, but never
+runs, stops, or installs `ollama serve` itself, the same way it never
+manages a CLI agent's binary (§7.6). And there is **no native adapter** for
+LM Studio, vLLM, llama.cpp, or LocalAI — they are covered by `local_api`
+(§7.7), and a native API per runtime would be a maintenance surface for a
+marginal gain; Ollama is the one exception, and D11 is why.
 
 ---
 
@@ -2800,18 +3245,34 @@ from the environment and doesn't auto-load `.env`. Then: a `mak` console entry p
 SDKs are heavy), a CI release workflow (OIDC trusted publishing), and a `Dockerfile`
 that bind-mounts the target repo (`docker run -v "$PWD:/work" …`).
 
-### 4. Local LLM support
+### 4. Local LLM support — **[RESOLVED — Wave 15]**
 
-Only hosted API adapters today; local models (Ollama, vLLM, llama.cpp, LM Studio)
-matter for cost, privacy, and offline/air-gapped repos. Most local servers expose an
-**OpenAI-compatible endpoint**, so the minimal primary step is to add a **`base_url`**
-field to `AgentConfig` and thread it into the OpenAI adapter and `build_planner_llm` —
-one change unlocks every compatible server for both agents and the planner. Then harden
-**structured output** for weaker models (JSON-mode / grammar-constrained decoding where
-supported, plus a parse→repair→retry loop for malformed edits — the standing live-model
-hardening), document **hybrid** (API planner + local agents) and **fully-local**
-configs, and add optional-dependency extras (with #3) so a local-only user needn't
-install cloud SDKs.
+**Shipped in Wave 15.** Two new agent types — `local_api` (any OpenAI-compatible
+server: vLLM, LM Studio, llama.cpp, Ollama's compat layer) and `ollama_api` (a
+dependency-free native client that can size its own context window, which the
+OpenAI-compatible transport structurally cannot) — plus a matching
+`OllamaPlannerLLM` and explicit backend resolution for the planner. Structured
+output is configurable per transport with a one-shot automatic downgrade, and
+both local adapters share one parse→repair→retry loop instead of paying a
+full bundle re-dispatch for a malformed reply. The interactive app gained a
+first-class `mode` (`cloud`/`local`/`hybrid`) and a `/local` wizard that
+detects a runtime, pulls a model, and completes a task with **no API key
+anywhere** — see §7.7, §8, §12.2, and the new §14 for the detail, and
+`TASKS.md`'s Wave 15 section (design decisions D1–D13) for exactly what was
+built and why. Four deviations from the original sketch below, all decided
+for concrete reasons rather than scope creep: **(a)** two agent types sharing
+one adapter class, not one type with an added field — the registry is keyed
+by type, so one type could never run cloud and local together; **(b)**
+malformed replies are repaired in the adapter with one short follow-up turn,
+not by re-dispatching the whole bundle; **(c)** Ollama gets a genuine native
+adapter (stdlib HTTP, no SDK) instead of routing through the OpenAI-compatible
+transport, because only the native API can read and set the model's real
+context window — the compat layer's `num_ctx` is not an OpenAI parameter, and
+Ollama silently truncates an over-long prompt rather than erroring on one;
+**(d)** the app's mode is explicit state rather than something inferred from
+what keys happen to be set, because "cloud or local" changes which surfaces
+validate against what, and inferring it wrongly is exactly the kind of
+silent surprise this wave exists to remove.
 
 ### Also: extend the benchmark
 
@@ -3151,6 +3612,34 @@ whose machine it ran on. Both `.env` lookups are now redirected to an empty temp
 dir for every test. A test that passes because of a file outside the repo was
 always going to fail eventually; it happened to be this wave that found it. The
 gates closed at 1289 tests, `mypy --strict` and `ruff` clean over `mak` and `cli`.
+
+**Wave 15** picked up the top-priority item Waves 17/18's security-and-robustness
+audit had temporarily reordered around — local LLM support (§7.7, §8, §12.2, §14)
+— and, like Wave 10 before it, is numbered for the roadmap item it closes rather
+than for chronological order. Eighteen steps across four phases, each phase
+leaving the tree green: **Phase A** built the transport and config core —
+`local_api` and `ollama_api` as two agent types sharing one class where sharing
+made sense and two where it didn't, the D2 key-never-leaked rule, one
+`TaskResult` schema rendered in four provider dialects instead of the two
+hand-copied ones that existed, and the parse→repair→retry loop both local
+adapters use. **Phase B** added the piece an OpenAI-compatible transport cannot
+provide by construction: a native Ollama client that reads a model's real
+context window and sizes every request to it, refusing loudly instead of
+letting the server truncate a bundle and answer from a fraction of the task.
+**Phase C** made the interactive app usable with **no API key anywhere** — a
+`mode` field, a first-run fork (cloud / local / hybrid), and a `/local` wizard
+that detects, pulls, and confirms before ever touching `mak.yaml`. **Phase D**
+shipped four packaged example configs, the packaging extras that let a
+fully-local install skip every provider SDK, and an acceptance test
+independent of the unit suite. One correction happened along the way: an
+`AgentError` raised for a malformed OpenAI-mode reply had always been the
+*wrong* exception (`AgentError` is `AgentResponseError`'s parent, so
+`AgentRunner._assign_api`'s `except AgentResponseError` silently missed it),
+which meant the schema-restating retry note Wave 12 built (§10) had never once
+fired for that adapter — found while reading the adapter for this wave, not
+caused by it, and fixed alongside the local-transport work rather than left for
+a fifth pass at the same file. The gates closed at 1577 tests, `mypy --strict`
+and `ruff` clean over `mak` and `cli`.
 
 ---
 
