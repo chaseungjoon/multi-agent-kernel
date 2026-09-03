@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from typing import Any
 
 import pytest
 
 import mak.core.budget as budget_module
 from mak.core.exceptions import PlannerFailedError
+from mak.local.ollama_client import OllamaChatResponse, OllamaModel
 from mak.planner.llm import (
     AnthropicPlannerLLM,
     GeminiPlannerLLM,
+    OllamaPlannerLLM,
     OpenAiPlannerLLM,
     build_planner_llm,
     resolve_max_tokens,
@@ -332,3 +336,157 @@ class TestAnthropicStreams:
         """Any budget we resolve must be one the SDK will accept over a stream."""
         for model in ("claude-opus-5", "claude-haiku-4-5", "unknown-model"):
             assert resolve_max_tokens(model) <= 128000
+
+
+class FakeOllamaClient:
+    """An OllamaClient stand-in for the planner backend."""
+
+    def __init__(
+        self,
+        content: str = '{"tasks": []}',
+        *,
+        done_reason: str = "stop",
+        context_length: int | None = 32768,
+        prompt_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        self._content = content
+        self._done_reason = done_reason
+        self._context_length = context_length
+        self._prompt_tokens = prompt_tokens
+        self._output_tokens = output_tokens
+        self.calls: list[dict[str, Any]] = []
+
+    def show(self, model: str) -> OllamaModel:
+        return OllamaModel(name=model, context_length=self._context_length)
+
+    def chat(self, **kwargs: Any) -> OllamaChatResponse:
+        self.calls.append(kwargs)
+        return OllamaChatResponse(
+            content=self._content,
+            done_reason=self._done_reason,
+            prompt_eval_count=self._prompt_tokens,
+            eval_count=self._output_tokens,
+        )
+
+
+class TestBackendResolution:
+    """Wave 15.11 (D3): explicit backend, then transport, then model name."""
+
+    def test_backend_ollama_builds_the_native_planner(self) -> None:
+        llm = build_planner_llm(
+            "qwen2.5-coder:14b",
+            backend="ollama",
+            base_url="http://localhost:11434",
+        )
+        assert isinstance(llm, OllamaPlannerLLM)
+        assert llm.base_url == "http://localhost:11434"
+
+    def test_base_url_alone_routes_an_unknown_model_to_openai(self) -> None:
+        # A local model id matches no prefix and would otherwise raise before a
+        # single call; a base_url *is* a statement about the transport.
+        llm = build_planner_llm(
+            "Qwen/Qwen2.5-Coder-32B-Instruct", base_url="http://localhost:8000/v1"
+        )
+        assert isinstance(llm, OpenAiPlannerLLM)
+        assert llm.base_url == "http://localhost:8000/v1"
+
+    def test_an_explicit_backend_beats_the_model_prefix(self) -> None:
+        llm = build_planner_llm("gpt-5.6-sol", backend="anthropic")
+        assert isinstance(llm, AnthropicPlannerLLM)
+
+    def test_an_explicit_backend_beats_the_base_url(self) -> None:
+        llm = build_planner_llm(
+            "qwen2.5-coder:14b", backend="ollama", base_url="http://h:11434"
+        )
+        assert isinstance(llm, OllamaPlannerLLM)
+
+    def test_an_unknown_backend_is_rejected(self) -> None:
+        with pytest.raises(PlannerFailedError, match="unknown planner backend"):
+            build_planner_llm("m", backend="llamacpp")
+
+    def test_the_unknown_model_message_names_the_two_settings(self) -> None:
+        with pytest.raises(PlannerFailedError) as excinfo:
+            build_planner_llm("qwen2.5-coder:14b")
+        message = str(excinfo.value)
+        assert "planner.backend" in message
+        assert "planner.base_url" in message
+
+
+class TestPlannerKeyIsNeverLeaked:
+    def test_a_real_openai_key_is_never_forwarded_to_a_base_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # D2 again, on the planner side. Same rule, same reason.
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-real-secret")
+        captured: dict[str, Any] = {}
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs: Any) -> None:
+                captured.update(kwargs)
+
+        module = types.ModuleType("openai")
+        module.OpenAI = FakeOpenAI  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "openai", module)
+
+        llm = OpenAiPlannerLLM(model="m", base_url="http://evil.example/v1")
+        llm._get_client()
+        assert captured["api_key"] == "local"
+        assert captured["base_url"] == "http://evil.example/v1"
+
+    def test_a_configured_key_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, Any] = {}
+
+        class FakeOpenAI:
+            def __init__(self, **kwargs: Any) -> None:
+                captured.update(kwargs)
+
+        module = types.ModuleType("openai")
+        module.OpenAI = FakeOpenAI  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "openai", module)
+
+        OpenAiPlannerLLM(
+            model="m", base_url="http://gw/v1", api_key="tok"
+        )._get_client()
+        assert captured["api_key"] == "tok"
+
+
+class TestOllamaPlannerLLM:
+    def test_complete_returns_the_reply_and_records_usage(self) -> None:
+        client = FakeOllamaClient('{"tasks": []}', prompt_tokens=900, output_tokens=70)
+        llm = OllamaPlannerLLM(model="qwen2.5-coder:14b", client=client)
+        assert llm.complete("plan this") == '{"tasks": []}'
+        assert llm.last_usage == {"input_tokens": 900, "output_tokens": 70}
+
+    def test_no_format_is_requested(self) -> None:
+        # The planner parses its own JSON through loads_json, which already
+        # tolerates fences and prose.
+        client = FakeOllamaClient()
+        OllamaPlannerLLM(model="m", client=client).complete("plan")
+        assert "format" not in client.calls[0]
+
+    def test_num_ctx_is_sized_to_the_prompt(self) -> None:
+        small = FakeOllamaClient()
+        OllamaPlannerLLM(model="m", client=small).complete("plan")
+        large = FakeOllamaClient()
+        OllamaPlannerLLM(model="m", client=large).complete("x" * 40_000)
+        assert (
+            large.calls[0]["options"]["num_ctx"]
+            > small.calls[0]["options"]["num_ctx"]
+        )
+
+    def test_a_length_finish_raises_truncated(self) -> None:
+        client = FakeOllamaClient("{", done_reason="length")
+        with pytest.raises(TruncatedResponseError):
+            OllamaPlannerLLM(model="m", client=client).complete("plan")
+
+    def test_an_oversized_inventory_is_refused_with_the_numbers(self) -> None:
+        # Better a clear failure than a plan written for half a repository.
+        client = FakeOllamaClient(context_length=8192)
+        llm = OllamaPlannerLLM(model="m", client=client, max_tokens=4096)
+        with pytest.raises(PlannerFailedError) as excinfo:
+            llm.complete("x" * 400_000)
+        message = str(excinfo.value)
+        assert "8192" in message
+        assert "context window" in message
+        assert client.calls == []

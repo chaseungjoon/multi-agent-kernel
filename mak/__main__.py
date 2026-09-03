@@ -26,6 +26,7 @@ from mak.agent_runner.runner import AgentRunner
 from mak.agent_runner.sandbox import SandboxConfig, docker_available
 from mak.bootstrap import (
     DEFAULT_KEY_ENV,
+    LOCAL_AGENT_TYPES,
     agents_from_specs,
     build_registry,
     default_agent_type,
@@ -140,14 +141,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--models",
         nargs="+",
         default=None,
-        metavar="PROVIDER[:MODEL]",
+        metavar="PROVIDER[:MODEL][@URL]",
         help=(
             "set the agent roster from the command line, overriding the config's "
-            "'agents' list. Each entry is a provider (anthropic, openai, gemini) "
-            "with an optional model, e.g. --models anthropic:claude-opus-4-8 "
-            "openai gemini:gemini-3.5-flash. One model per provider; keys are read "
-            "from the usual env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, "
-            "GEMINI_API_KEY)."
+            "'agents' list. Each entry is provider[:model][@base_url]. Hosted: "
+            "anthropic, openai, gemini — e.g. --models anthropic:claude-opus-4-8 "
+            "openai gemini:gemini-3.5-flash, with keys read from the usual env "
+            "vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY). Local: "
+            "ollama:<model> (defaults to http://localhost:11434) and "
+            "local:<model>@<url> for any OpenAI-compatible server, neither of "
+            "which needs a key. One model per provider."
         ),
     )
     parser.add_argument(
@@ -232,7 +235,16 @@ def _cli_cascade_approval(*, no_review: bool) -> CascadeApproval:
 
 
 def _planner_api_key(config: MakConfig) -> str | None:
-    """Resolve the planner's API key by reusing the matching agent's env var."""
+    """Resolve the planner's API key: explicit env var, then inference, then none.
+
+    ``planner.api_key_env`` wins when set — it is the only way to name the token
+    for a protected gateway (``vllm --api-key``), whose model id tells us
+    nothing. Falling through to ``None`` is deliberate rather than an oversight:
+    a local planner has no key, and ``None`` is what lets the adapter apply its
+    placeholder rule instead of forwarding a real cloud key to a local host.
+    """
+    if config.planner.api_key_env:
+        return os.environ.get(config.planner.api_key_env)
     model = config.planner.model.lower()
     if model.startswith("claude"):
         backend = "anthropic_api"
@@ -267,6 +279,35 @@ def warn_model_caveats(config: MakConfig) -> None:
             print(f"mak: warning: {caveat}", file=sys.stderr)
 
 
+def warn_local_planner_mismatch(config: MakConfig) -> None:
+    """Warn when every agent is local but the planner still calls a hosted API.
+
+    ``--models ollama:qwen2.5-coder:14b`` looks fully local and quietly is not:
+    the planner keeps whatever model the config named, so the run still ships
+    the whole node inventory to a hosted provider. For someone choosing local
+    models for privacy or for an air-gapped repo, that is the entire point of
+    the feature failing silently.
+
+    Hybrid is a legitimate configuration — a cloud planner with local agents is
+    the cost/privacy sweet spot — so this is a warning naming the settings that
+    change it, not an error.
+    """
+    if not config.agents:
+        return
+    if any(a.type not in LOCAL_AGENT_TYPES for a in config.agents):
+        return
+    if config.planner.backend == "ollama" or config.planner.base_url is not None:
+        return
+    print(
+        "mak: warning: every agent is local, but the planner "
+        f"('{config.planner.model or 'unset'}') is not — this run still sends "
+        "the node inventory to a hosted API. Set planner.backend (and "
+        "planner.base_url for a local server) to plan locally too, or ignore "
+        "this if a cloud planner with local agents is what you want.",
+        file=sys.stderr,
+    )
+
+
 def build_session(
     args: argparse.Namespace,
     config: MakConfig,
@@ -291,11 +332,15 @@ def build_session(
     # pool; the default agent must be among it.
     default_type = args.agent or default_agent_type(config)
     configured = [a.type for a in config.agents]
-    healthy, unhealthy = healthy_agent_types(registry, configured)
+    healthy, unhealthy, why = healthy_agent_types(registry, configured)
     for agent_type in unhealthy:
+        # The adapter's own reason when it has one — "Ollama is not running at
+        # http://localhost:11434", "model 'qwen2.5-coder:14b' is not pulled" —
+        # because the generic line sends a local user to fix the wrong thing.
+        reason = why.get(agent_type) or "missing API key/SDK, or CLI not on PATH"
         print(
             f"mak: warning: agent '{agent_type}' failed its health check "
-            "(missing API key/SDK, or CLI not on PATH) — it will not be used.",
+            f"({reason}) — it will not be used.",
             file=sys.stderr,
         )
     if default_type not in healthy:
@@ -312,7 +357,12 @@ def build_session(
         work_dir=str(work_dir),
     )
     planner = Planner(
-        build_planner_llm(config.planner.model, api_key=_planner_api_key(config)),
+        build_planner_llm(
+            config.planner.model,
+            backend=config.planner.backend,
+            base_url=config.planner.base_url,
+            api_key=_planner_api_key(config),
+        ),
         max_retries=config.planner.max_retries,
         agent_types=healthy,
         strategy=config.planner.strategy,
@@ -395,6 +445,7 @@ def main(
             file=sys.stderr,
         )
     warn_model_caveats(config)
+    warn_local_planner_mismatch(config)
 
     sandbox: SandboxConfig | None = None
     if args.sandbox:

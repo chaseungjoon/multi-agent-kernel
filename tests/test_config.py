@@ -15,6 +15,7 @@ from mak.config import (
     discover_config_path,
     load_config,
     model_caveat,
+    normalize_base_url,
     packaged_config_path,
     user_config_dir,
 )
@@ -415,3 +416,181 @@ class TestDefaultExcludes:
         assert set(shipped.node_store.exclude_patterns) == set(
             NodeStoreConfig().exclude_patterns
         )
+
+
+_LOCAL_YAML = """\
+planner:
+  model: "qwen2.5-coder:14b"
+  backend: "ollama"
+  base_url: "http://localhost:11434/"
+  api_key_env: "VLLM_TOKEN"
+
+agents:
+  - type: "ollama_api"
+    model: "qwen2.5-coder:14b"
+    base_url: "http://localhost:11434"
+    structured_output: "json_schema"
+    repair_attempts: 2
+    num_ctx: 16384
+    keep_alive: "30m"
+    temperature: 0.1
+  - type: "local_api"
+    model: "Qwen/Qwen2.5-Coder-32B-Instruct"
+    base_url: "http://localhost:8000/v1"
+    structured_output: "json_object"
+"""
+
+
+def _agent_yaml(body: str) -> str:
+    return f'agents:\n  - type: "local_api"\n{body}'
+
+
+class TestLocalEndpointConfig:
+    """Wave 15.1: the local-transport fields on AgentConfig / PlannerConfig."""
+
+    def test_local_config_round_trips(self, tmp_path: Path) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_LOCAL_YAML)
+        config = load_config(path)
+
+        ollama, local = config.agents
+        assert ollama.type == "ollama_api"
+        assert ollama.base_url == "http://localhost:11434"
+        assert ollama.structured_output == "json_schema"
+        assert ollama.repair_attempts == 2
+        assert ollama.num_ctx == 16384
+        assert ollama.keep_alive == "30m"
+        assert ollama.temperature == 0.1
+        assert local.base_url == "http://localhost:8000/v1"
+        assert local.structured_output == "json_object"
+
+        assert config.planner.backend == "ollama"
+        assert config.planner.base_url == "http://localhost:11434"
+        assert config.planner.api_key_env == "VLLM_TOKEN"
+
+    def test_trailing_slash_is_stripped(self, tmp_path: Path) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml('    base_url: "http://localhost:11434/"\n'))
+        assert load_config(path).agents[0].base_url == "http://localhost:11434"
+
+    @pytest.mark.parametrize("url", ["ftp://localhost:11434", "localhost:11434"])
+    def test_non_http_url_is_rejected(self, tmp_path: Path, url: str) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml(f'    base_url: "{url}"\n'))
+        with pytest.raises(ConfigError, match="base_url"):
+            load_config(path)
+
+    def test_empty_url_is_unset(self, tmp_path: Path) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml('    base_url: ""\n'))
+        assert load_config(path).agents[0].base_url is None
+
+    @pytest.mark.parametrize("mode", ["json_object", "json_schema", "none"])
+    def test_each_structured_output_mode_is_accepted(
+        self, tmp_path: Path, mode: str
+    ) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml(f'    structured_output: "{mode}"\n'))
+        assert load_config(path).agents[0].structured_output == mode
+
+    def test_structured_output_typo_is_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml('    structured_output: "json-schema"\n'))
+        with pytest.raises(ConfigError, match="structured_output"):
+            load_config(path)
+
+    @pytest.mark.parametrize(
+        "backend", ["anthropic", "openai", "gemini", "ollama"]
+    )
+    def test_each_planner_backend_is_accepted(
+        self, tmp_path: Path, backend: str
+    ) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(
+            f'planner:\n  backend: "{backend}"\n{_MINIMAL_YAML}'
+        )
+        assert load_config(path).planner.backend == backend
+
+    def test_planner_backend_typo_is_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(f'planner:\n  backend: "llamacpp"\n{_MINIMAL_YAML}')
+        with pytest.raises(ConfigError, match="backend"):
+            load_config(path)
+
+    def test_repair_attempts_zero_is_accepted(self, tmp_path: Path) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml("    repair_attempts: 0\n"))
+        assert load_config(path).agents[0].repair_attempts == 0
+
+    def test_negative_repair_attempts_is_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml("    repair_attempts: -1\n"))
+        with pytest.raises(ConfigError, match="repair_attempts"):
+            load_config(path)
+
+    def test_num_ctx_must_be_positive(self, tmp_path: Path) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml("    num_ctx: 0\n"))
+        with pytest.raises(ConfigError, match="num_ctx"):
+            load_config(path)
+
+    @pytest.mark.parametrize("raw,expected", [("1", 1.0), ("0.15", 0.15)])
+    def test_temperature_accepts_int_and_float(
+        self, tmp_path: Path, raw: str, expected: float
+    ) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml(f"    temperature: {raw}\n"))
+        assert load_config(path).agents[0].temperature == expected
+
+    def test_temperature_rejects_non_numbers(self, tmp_path: Path) -> None:
+        path = tmp_path / "mak.yaml"
+        path.write_text(_agent_yaml('    temperature: "warm"\n'))
+        with pytest.raises(ConfigError, match="temperature"):
+            load_config(path)
+
+    def test_every_new_field_defaults_to_none(self) -> None:
+        agent = AgentConfig(type="openai_api")
+        assert agent.base_url is None
+        assert agent.structured_output is None
+        assert agent.repair_attempts is None
+        assert agent.num_ctx is None
+        assert agent.keep_alive is None
+        assert agent.temperature is None
+        planner = PlannerConfig()
+        assert planner.backend is None
+        assert planner.base_url is None
+        assert planner.api_key_env is None
+
+
+class TestNormalizeBaseUrl:
+    """The one URL rule, shared by YAML, --models, and the /local wizard."""
+
+    def test_strips_trailing_slashes(self) -> None:
+        assert (
+            normalize_base_url("http://localhost:11434/", where="test")
+            == "http://localhost:11434"
+        )
+
+    def test_keeps_a_path(self) -> None:
+        assert (
+            normalize_base_url("http://localhost:8000/v1", where="test")
+            == "http://localhost:8000/v1"
+        )
+
+    def test_keeps_userinfo(self) -> None:
+        assert (
+            normalize_base_url("http://user:pass@host:8000/v1", where="test")
+            == "http://user:pass@host:8000/v1"
+        )
+
+    def test_error_names_where(self) -> None:
+        with pytest.raises(ConfigError, match="--models"):
+            normalize_base_url("nope", where="--models")
+
+    def test_empty_is_rejected(self) -> None:
+        with pytest.raises(ConfigError):
+            normalize_base_url("   ", where="test")
+
+    def test_scheme_without_host_is_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="host"):
+            normalize_base_url("http:///v1", where="test")

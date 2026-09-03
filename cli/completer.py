@@ -14,12 +14,14 @@ from prompt_toolkit.completion import (
 from prompt_toolkit.document import Document
 
 from cli.core.models import PROVIDER_DISPLAY, PROVIDER_ORDER, all_models
-from cli.core.state import CliState
+from cli.core.state import MODES, CliState, mode_summary
 
 COMMANDS: list[tuple[str, str]] = [
     ("/models",     "Select agent models"),
     ("/planner",    "Switch the planner model"),
-    ("/refresh-models", "Re-fetch the model list from each provider"),
+    ("/refresh-models", "Re-fetch the cloud model list from each provider"),
+    ("/local",      "Set up a local model runtime (Ollama, vLLM, LM Studio)"),
+    ("/mode",       "Switch between cloud, local, and hybrid"),
     ("/max-agents", "Set how many agents run in parallel"),
     ("/work-dir",   "Set the working directory MAK edits"),
     ("/apikey",     "Add or update provider API keys"),
@@ -29,6 +31,20 @@ COMMANDS: list[tuple[str, str]] = [
     ("/help",       "Show commands and shortcuts"),
     ("/clear",      "Clear the screen"),
     ("/exit",       "Quit MAK"),
+]
+
+# ``/local``'s sub-commands, for argument completion. Mirrors cli.local's own
+# table; kept here so the completer does not import the wizard module (which
+# would make every keystroke pay for prompt_toolkit's styles and rich's
+# progress).
+_LOCAL_SUBCOMMANDS: list[tuple[str, str]] = [
+    ("status",  "endpoint, version, models installed and loaded"),
+    ("models",  "list what the runtime offers, live"),
+    ("use",     "set the agent model(s)"),
+    ("planner", "set the planner to a local model"),
+    ("pull",    "download a model with a progress bar"),
+    ("url",     "point MAK at a custom endpoint"),
+    ("off",     "drop back to cloud mode"),
 ]
 
 _KEY_ENV = {
@@ -106,6 +122,32 @@ class MakCompleter(Completer):
                     ),
                 ]
             return self._complete_path(arg, complete_event)
+
+        if cmd == "/mode":
+            partial = arg.strip()
+            return [
+                Completion(
+                    mode,
+                    start_position=-len(partial),
+                    display=mode,
+                    display_meta=mode_summary(mode),
+                )
+                for mode in MODES
+                if mode.startswith(partial)
+            ]
+
+        if cmd == "/local":
+            partial = arg.strip()
+            return [
+                Completion(
+                    name,
+                    start_position=-len(partial),
+                    display=name,
+                    display_meta=desc,
+                )
+                for name, desc in _LOCAL_SUBCOMMANDS
+                if name.startswith(partial)
+            ]
 
         if cmd == "/no-review":
             partial = arg.strip()

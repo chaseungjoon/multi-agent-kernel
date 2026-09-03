@@ -25,6 +25,20 @@ dependencies = [
 mak = "cli.__main__:main"
 
 [project.optional-dependencies]
+# Per-provider extras. The three SDKs stay in base `dependencies` above for now
+# (Wave 15, D8): removing them changes the install contract, and `mak update` is
+# a `uv tool install` from git that resolves fresh — it would strip the SDKs out
+# from under every existing user mid-beta. The removal ships with the PyPI
+# packaging work (Wave 9.3), alongside install docs. These extras exist now so
+# every lazy-import failure message can name the command that fixes it.
+anthropic = ["anthropic>=0.107.1"]
+openai    = ["openai>=2.41.0"]
+gemini    = ["google-genai>=2.8.0"]
+# Deliberately empty, and the point worth documenting: MAK's native Ollama
+# client is written against `urllib.request` and `json`, so a fully-local
+# install needs **no** provider SDK at all.
+local     = []
+all       = ["multi-agent-kernel[anthropic,openai,gemini]"]
 dev = [
     "mypy>=1.10",
     "pytest>=8.2",
@@ -40,7 +54,7 @@ include = ["mak*", "cli*"]
 [tool.setuptools.package-data]
 # The built-in default config must ship in the wheel: config discovery falls
 # back to it when no ./mak.yaml or ~/.config/mak/config.yaml exists.
-mak = ["config.yaml", ".env.example", "models/seed.json"]
+mak = ["config.yaml", ".env.example", "models/seed.json", "examples/*.yaml"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -90,6 +104,12 @@ known-first-party = ["mak"]
 # The model-list fetchers wrap the same three untyped SDKs to read each
 # provider's catalog; the response objects are dynamic at that boundary.
 "mak/models/providers.py" = ["ANN401"]
+# The stdlib Ollama client returns urlopen's result, which is an
+# http.client.HTTPResponse in production and an injected double in tests — the
+# seam that keeps every test off a socket. Naming either concrete type would
+# break the other, so Any is the honest annotation at exactly that one boundary;
+# every decoded JSON value in the module is typed `object` and narrowed.
+"mak/local/ollama_client.py" = ["ANN401"]
 # prompt_toolkit's key-binding handlers receive an untyped event object; there is
 # no annotation to give it that is more honest than Any. Everything else in cli/
 # is typed, and `mypy --strict` covers the package.

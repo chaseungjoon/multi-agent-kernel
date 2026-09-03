@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -77,6 +78,96 @@ def _opt_positive_int(raw: dict[str, Any], key: str) -> int | None:
     return number
 
 
+_STRUCTURED_OUTPUT_MODES = ("json_object", "json_schema", "none")
+_PLANNER_BACKENDS = ("anthropic", "openai", "gemini", "ollama")
+
+
+def normalize_base_url(value: str, *, where: str) -> str:
+    """Return a validated endpoint URL with any trailing slash stripped.
+
+    Shared by ``mak.bootstrap.agents_from_specs``, this module's own parsing, and
+    the TUI's ``/local`` wizard, so a URL typed on the command line, one written
+    in YAML, and one entered interactively are validated by exactly one rule —
+    and a user who is told "http:// or https:// required" once is told it
+    everywhere. ``where`` names the setting so the message points at the line to
+    fix.
+    """
+    text = value.strip()
+    if not text:
+        raise ConfigError(f"{where} must not be empty")
+    parts = urlsplit(text)
+    if parts.scheme not in ("http", "https"):
+        raise ConfigError(
+            f"{where} must be an http:// or https:// URL, got {value!r} "
+            "(e.g. http://localhost:11434)"
+        )
+    if not parts.netloc:
+        raise ConfigError(
+            f"{where} must include a host, got {value!r} "
+            "(e.g. http://localhost:11434)"
+        )
+    return text.rstrip("/")
+
+
+def _opt_url(raw: dict[str, Any], key: str) -> str | None:
+    """Return an optional endpoint URL setting, or None when unset or empty."""
+    value = raw.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return normalize_base_url(text, where=f"'{key}'")
+
+
+def _as_choice(
+    raw: dict[str, Any], key: str, default: str | None, allowed: tuple[str, ...]
+) -> str | None:
+    """Return an optional enumerated setting, rejecting a typo **at load time**.
+
+    A misspelled mode must fail before a run starts rather than at dispatch,
+    where it would surface as a provider 400 halfway through a wave.
+    """
+    value = raw.get(key, default)
+    if value is None:
+        return None
+    text = str(value)
+    if text not in allowed:
+        raise ConfigError(
+            f"'{key}' must be one of {allowed}, got {text!r}"
+        )
+    return text
+
+
+def _opt_non_negative_int(raw: dict[str, Any], key: str) -> int | None:
+    """Return an optional int setting that may be zero, or None when unset.
+
+    Distinct from :func:`_opt_positive_int` because ``0`` is meaningful for
+    ``repair_attempts``: it is how a user switches the repair turn off.
+    """
+    value = raw.get(key)
+    if value is None:
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"'{key}' must be an integer, got {value!r}") from exc
+    if number < 0:
+        raise ConfigError(f"'{key}' must not be negative, got {number}")
+    return number
+
+
+def _opt_float(raw: dict[str, Any], key: str) -> float | None:
+    """Return an optional float setting, or None when unset."""
+    value = raw.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"'{key}' must be a number, got {value!r}") from exc
+
+
 def _as_bool(raw: dict[str, Any], key: str, default: bool) -> bool:
     value = raw.get(key, default)
     if isinstance(value, bool):
@@ -103,6 +194,38 @@ class AgentConfig:
     the model's own maximum" for OpenAI/Gemini — a hardcoded constant here is
     what silently clipped whole-file rewrites. Set it to bound spend on a metered
     model, or to fit a local model whose real limit the catalog does not know.
+
+    The remaining six parameterize a **local** transport (``local_api`` over any
+    OpenAI-compatible server, or ``ollama_api`` over Ollama's native API). Every
+    one is ``None`` when unset so the *adapter* stays the single place that owns
+    each default, the same rule ``max_tokens`` states above.
+
+    ``base_url`` is the endpoint. It is required for ``local_api``, optional for
+    ``openai_api`` (a gateway or proxy), and defaulted for ``ollama_api``.
+    Setting it also arms a security rule the adapter enforces: a real
+    ``OPENAI_API_KEY`` is **never** forwarded to a ``base_url`` endpoint — MAK
+    sends the configured ``api_key_env``'s value if one was named, else the
+    literal placeholder ``"local"``, and never lets the SDK read the environment
+    itself.
+
+    ``structured_output`` picks how the reply's shape is constrained:
+    ``json_object`` (the OpenAI-compatible default, today's behaviour),
+    ``json_schema`` (strict schema / constrained decoding — the ``ollama_api``
+    default, where it is native and free), or ``none``. A call rejected for
+    naming an unsupported response format is retried once one rung down.
+
+    ``repair_attempts`` bounds the adapter's follow-up turn after a malformed
+    reply (adapter default 1; ``0`` disables it). A decode failure would
+    otherwise cost a full re-dispatch of the whole bundle — tens of KB — which
+    for a small local model is the common case, not the rare one.
+
+    ``num_ctx`` / ``keep_alive`` / ``temperature`` apply to ``ollama_api`` only.
+    Ollama's runtime context defaults to a few thousand tokens regardless of what
+    the model supports and **silently truncates** an over-long prompt, so the
+    adapter sizes the window itself; ``num_ctx`` overrides that sizing.
+    ``keep_alive`` (e.g. ``"30m"``) keeps the model resident between tasks, which
+    is otherwise a multi-second reload per task. ``temperature`` unset leaves the
+    server's own default, which is tuned for chat rather than for code.
     """
 
     type: str
@@ -112,6 +235,12 @@ class AgentConfig:
     api_key_env: str | None = None
     cmd: str | None = None
     max_tokens: int | None = None
+    base_url: str | None = None
+    structured_output: str | None = None
+    repair_attempts: int | None = None
+    num_ctx: int | None = None
+    keep_alive: str | None = None
+    temperature: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +305,16 @@ class PlannerConfig:
     dependency edges (see ``mak.planner.validation``). ``strategy`` is ``oneshot``
     (single decomposition call) or ``outline`` (outline → per-step detail).
     ``self_critique`` adds one LLM reflection pass over a produced plan.
+
+    ``backend`` / ``base_url`` / ``api_key_env`` are how a planner reaches a
+    runtime the model id cannot name. Backend resolution is explicit, then
+    transport, then name: ``backend`` when set (``anthropic`` / ``openai`` /
+    ``gemini`` / ``ollama``), else the OpenAI-compatible client when ``base_url``
+    is set, else the model-id prefix routing. A local model id
+    (``qwen2.5-coder:14b``, ``llama3.1``) matches no prefix and would otherwise
+    fail the run before a single call. ``api_key_env`` names the variable holding
+    a token for a protected gateway (``vllm --api-key``); a local runtime needs
+    none, and leaving it unset is what lets the placeholder-key rule apply.
     """
 
     model: str = ""
@@ -183,6 +322,9 @@ class PlannerConfig:
     validate: bool = True
     strategy: str = "oneshot"
     self_critique: bool = False
+    backend: str | None = None
+    base_url: str | None = None
+    api_key_env: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +396,14 @@ def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
         api_key_env=_opt_str(raw, "api_key_env"),
         cmd=_opt_str(raw, "cmd"),
         max_tokens=_opt_positive_int(raw, "max_tokens"),
+        base_url=_opt_url(raw, "base_url"),
+        structured_output=_as_choice(
+            raw, "structured_output", None, _STRUCTURED_OUTPUT_MODES
+        ),
+        repair_attempts=_opt_non_negative_int(raw, "repair_attempts"),
+        num_ctx=_opt_positive_int(raw, "num_ctx"),
+        keep_alive=_opt_str(raw, "keep_alive"),
+        temperature=_opt_float(raw, "temperature"),
     )
 
 
@@ -287,6 +437,9 @@ def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
         validate=_as_bool(raw, "validate", True),
         strategy=strategy,
         self_critique=_as_bool(raw, "self_critique", False),
+        backend=_as_choice(raw, "backend", None, _PLANNER_BACKENDS),
+        base_url=_opt_url(raw, "base_url"),
+        api_key_env=_opt_str(raw, "api_key_env"),
     )
 
 
@@ -400,6 +553,42 @@ def user_config_dir() -> Path:
 def packaged_config_path() -> Path:
     """Return the default ``config.yaml`` shipped inside the ``mak`` package."""
     return Path(__file__).resolve().parent / "config.yaml"
+
+
+def examples_dir() -> Path:
+    """Return the directory of packaged example configs (``mak/examples/``)."""
+    return Path(__file__).resolve().parent / "examples"
+
+
+def list_examples() -> list[str]:
+    """Return the names of the packaged example configs, alphabetically.
+
+    Names carry no ``.yaml`` suffix, so ``mak examples local-ollama > mak.yaml``
+    reads as one thought.
+    """
+    directory = examples_dir()
+    if not directory.is_dir():
+        return []
+    return sorted(path.stem for path in directory.glob("*.yaml"))
+
+
+def example_path(name: str) -> Path:
+    """Return the path of one packaged example, or raise naming what exists.
+
+    Rejects any name that is not a plain file in the examples directory: the
+    argument reaches here from the command line, and joining an arbitrary string
+    to a package path is how a "print my config" command becomes a file read.
+    """
+    candidate = (examples_dir() / f"{name}.yaml").resolve()
+    if (
+        candidate.parent != examples_dir()
+        or not candidate.is_file()
+    ):
+        available = ", ".join(list_examples()) or "none"
+        raise ConfigError(
+            f"no packaged example named {name!r}; available: {available}"
+        )
+    return candidate
 
 
 def discover_config_path() -> Path:

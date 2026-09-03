@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from cli.core.state import CliState
+from cli.core.state import CliState, mode_summary
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mak.session import SessionResult
@@ -69,6 +69,7 @@ def _catalog_status() -> str:
 def print_status(console: Console, state: CliState) -> None:
     """Print the live session status block: models, planner, agents, workdir."""
     rows = [
+        ("mode", f"{state.mode_display()} — {mode_summary(state.mode)}"),
         ("models", state.models_display()),
         ("planner", state.planner_model),
         ("agents", str(state.max_agents)),
@@ -77,6 +78,10 @@ def print_status(console: Console, state: CliState) -> None:
         ("approval", "off — plans run immediately" if state.no_review else "on"),
         ("catalog", _catalog_status()),
     ]
+    if state.uses_local_agents():
+        # A local run's endpoint is the thing most likely to be wrong, and it is
+        # invisible everywhere else.
+        rows.insert(1, ("runtime", state.local_display()))
     console.print()
     for label, value in rows:
         console.print(f"  [dim]{label:>9}[/dim]  {value}")

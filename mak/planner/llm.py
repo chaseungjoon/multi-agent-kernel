@@ -19,11 +19,14 @@ planner can ask for a smaller plan instead of blindly retrying.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
+from mak.agent_runner.adapters.ollama_api_adapter import estimate_tokens
 from mak.agent_runner.stop_signals import extract_usage
 from mak.core.budget import resolve_output_budget
 from mak.core.exceptions import PlannerFailedError
+from mak.local.ollama_client import DEFAULT_BASE_URL, OllamaClient, OllamaError
 from mak.planner.planner import PlannerLLM
 from mak.planner.response import ResponseError, TruncatedResponseError
 
@@ -40,6 +43,19 @@ _MAX_MAX_TOKENS = 32000
 # sits well above an agent call's budget — but it is bounded, because an
 # unbounded planner call hangs the run before a single lock is taken.
 _DEFAULT_TIMEOUT_S = 600.0
+
+# Sent whenever a ``base_url`` is configured and no key env var was named. The
+# SDK needs *some* key; this one is deliberately not a secret, and sending it is
+# what stops the SDK reading a real one from the environment.
+_LOCAL_PLACEHOLDER_KEY = "local"
+
+# The planner backends a config may name explicitly.
+_BACKENDS = ("anthropic", "openai", "gemini", "ollama")
+
+# Same margin and floor the Ollama agent adapter uses; see its module docstring
+# for why over-estimating a context window is the safe direction to err in.
+_CONTEXT_MARGIN = 1.25
+_MIN_NUM_CTX = 4096
 
 
 def resolve_max_tokens(model: str) -> int:
@@ -89,7 +105,8 @@ class AnthropicPlannerLLM:
                 import anthropic
             except ImportError as exc:  # pragma: no cover - exercised via build
                 raise PlannerFailedError(
-                    "anthropic SDK not installed; run `pip install anthropic`"
+                    "anthropic SDK not installed; run "
+                    "'pip install \"multi-agent-kernel[anthropic]\"'"
                 ) from exc
             options: dict[str, Any] = {}
             if self._api_key is not None:
@@ -142,7 +159,13 @@ class AnthropicPlannerLLM:
 
 
 class OpenAiPlannerLLM:
-    """Planner completion via OpenAI Chat Completions."""
+    """Planner completion via OpenAI Chat Completions — cloud or local.
+
+    With ``base_url`` set this drives any OpenAI-compatible server (vLLM,
+    llama.cpp, LM Studio, Ollama's compat layer), and the same key rule the
+    agent adapter enforces applies here: a real ``OPENAI_API_KEY`` is never
+    forwarded to a ``base_url`` endpoint.
+    """
 
     def __init__(
         self,
@@ -151,9 +174,11 @@ class OpenAiPlannerLLM:
         client: Any | None = None,
         api_key: str | None = None,
         timeout: float | None = _DEFAULT_TIMEOUT_S,
+        base_url: str | None = None,
     ) -> None:
         self.model = model
         self.timeout = timeout
+        self.base_url = base_url
         # Token usage of the most recent completion. Recorded here because the
         # response object is the only place it exists, and the alternative in
         # use — monkeypatching the SDK's own method — silently missed every
@@ -169,10 +194,16 @@ class OpenAiPlannerLLM:
                 import openai
             except ImportError as exc:  # pragma: no cover - exercised via build
                 raise PlannerFailedError(
-                    "openai SDK not installed; run `pip install openai`"
+                    "openai SDK not installed; run "
+                    "'pip install \"multi-agent-kernel[openai]\"'"
                 ) from exc
             options: dict[str, Any] = {}
-            if self._api_key is not None:
+            if self.base_url is not None:
+                options["base_url"] = self.base_url
+                # D2: always explicit, so the SDK can never fall back to reading
+                # OPENAI_API_KEY and POST a real cloud key to a local host.
+                options["api_key"] = self._api_key or _LOCAL_PLACEHOLDER_KEY
+            elif self._api_key is not None:
                 options["api_key"] = self._api_key
             if self.timeout is not None:
                 options["timeout"] = self.timeout
@@ -226,7 +257,8 @@ class GeminiPlannerLLM:
                 from google import genai
             except ImportError as exc:  # pragma: no cover - exercised via build
                 raise PlannerFailedError(
-                    "google-genai SDK not installed; run `pip install google-genai`"
+                    "google-genai SDK not installed; run "
+                    "'pip install \"multi-agent-kernel[gemini]\"'"
                 ) from exc
             options: dict[str, Any] = {}
             if self._api_key is not None:
@@ -272,17 +304,142 @@ def _gemini_finish_reason(response: Any) -> str:
     return "" if reason is None else str(reason)
 
 
+class OllamaPlannerLLM:
+    """Planner completion via Ollama's native ``/api/chat``.
+
+    No ``format`` is requested: the planner parses its own reply through
+    ``loads_json``, which already tolerates code fences and surrounding prose,
+    and constraining a plan to a grammar would mean maintaining a second schema
+    for a shape the planner alone owns.
+
+    It does, however, size the context window, for the same reason the agent
+    adapter does (see its module docstring): a plan prompt lists the whole node
+    inventory, Ollama's default window is a few thousand tokens, and an
+    over-long prompt is **silently truncated**. A planner given half a repo
+    writes a confident plan for half a repo. Wave 7 is the real fix for
+    inventory size; this wave must at least not fail silently.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        client: OllamaClient | None = None,
+        base_url: str | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = _DEFAULT_TIMEOUT_S,
+        num_ctx: int | None = None,
+    ) -> None:
+        self.model = model
+        self.base_url = base_url or DEFAULT_BASE_URL
+        self.max_tokens = (
+            max_tokens if max_tokens is not None else resolve_max_tokens(model)
+        )
+        self.timeout = timeout
+        self.num_ctx = num_ctx
+        # See the other backends: usage lives only on the response object.
+        self.last_usage: dict[str, int] = {}
+        self._client = client
+        self._model_context: int | None = None
+
+    def _get_client(self) -> OllamaClient:
+        if self._client is None:
+            self._client = OllamaClient(
+                self.base_url,
+                timeout=_DEFAULT_TIMEOUT_S if self.timeout is None else self.timeout,
+            )
+        return self._client
+
+    def _model_context_length(self) -> int | None:
+        """Return the model's real context window, asking ``/api/show`` once."""
+        if self._model_context is None:
+            try:
+                self._model_context = self._get_client().show(self.model).context_length
+            except OllamaError:
+                return None
+        return self._model_context
+
+    def _effective_num_ctx(self, prompt: str) -> int:
+        """Return the window to request, or refuse if the inventory cannot fit."""
+        needed = math.ceil(estimate_tokens(prompt) * _CONTEXT_MARGIN) + self.max_tokens
+        if self.num_ctx is not None:
+            limit: int | None = self.num_ctx
+        else:
+            limit = self._model_context_length()
+        if limit is not None and needed > limit:
+            raise PlannerFailedError(
+                f"the plan prompt needs about {needed} tokens "
+                f"({len(prompt)} characters of node inventory plus a "
+                f"{self.max_tokens}-token plan), which does not fit "
+                f"{self.model}'s context window of {limit} tokens. Ollama would "
+                "truncate it silently and plan for part of the repository, so "
+                "MAK refused. Use a model with a larger context window, or raise "
+                "planner num_ctx if the model supports more."
+            )
+        if limit is not None:
+            return max(_MIN_NUM_CTX, min(limit, needed))
+        return max(_MIN_NUM_CTX, needed)
+
+    def complete(self, prompt: str) -> str:
+        """Return the model's text completion for ``prompt``."""
+        num_ctx = self._effective_num_ctx(prompt)
+        response = self._get_client().chat(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            options={"num_ctx": num_ctx, "num_predict": self.max_tokens},
+            timeout=self.timeout,
+        )
+        self.last_usage = extract_usage(response)
+        if response.done_reason == "length":
+            raise TruncatedResponseError(
+                f"ollama stopped at the {self.max_tokens}-token output limit "
+                "before the plan was complete"
+            )
+        return response.content
+
+
 def build_planner_llm(
     model: str,
     *,
+    backend: str | None = None,
     api_key: str | None = None,
     timeout: float | None = _DEFAULT_TIMEOUT_S,
+    base_url: str | None = None,
 ) -> PlannerLLM:
-    """Pick a ``PlannerLLM`` for ``model`` by its id prefix.
+    """Pick a ``PlannerLLM``: explicit backend, then transport, then model name.
 
-    ``claude*`` → Anthropic, ``gemini*`` → Gemini, ``gpt*``/``o1``/``o3``/``o4`` →
-    OpenAI. Raises ``PlannerFailedError`` for an unrecognized model id.
+    Resolution order, and why it is this order:
+
+    1. ``backend`` when set (``anthropic`` / ``openai`` / ``gemini`` /
+       ``ollama``) — an explicit statement always wins;
+    2. otherwise the OpenAI-compatible client when ``base_url`` is set, since a
+       ``base_url`` *is* a statement about the transport;
+    3. otherwise today's model-id prefix routing: ``claude*`` → Anthropic,
+       ``gemini*`` → Gemini, ``gpt*``/``o1``/``o3``/``o4`` → OpenAI.
+
+    Steps 1 and 2 exist for local models: a local model id
+    (``qwen2.5-coder:14b``, ``llama3.1``) matches no prefix, so without them a
+    local planner would raise ``PlannerFailedError`` before a single call.
     """
+    if backend is not None:
+        if backend not in _BACKENDS:
+            raise PlannerFailedError(
+                f"unknown planner backend '{backend}'; "
+                f"use one of {', '.join(_BACKENDS)}"
+            )
+        if backend == "anthropic":
+            return AnthropicPlannerLLM(model=model, api_key=api_key, timeout=timeout)
+        if backend == "gemini":
+            return GeminiPlannerLLM(model=model, api_key=api_key, timeout=timeout)
+        if backend == "ollama":
+            return OllamaPlannerLLM(model=model, base_url=base_url, timeout=timeout)
+        return OpenAiPlannerLLM(
+            model=model, api_key=api_key, timeout=timeout, base_url=base_url
+        )
+    if base_url is not None:
+        return OpenAiPlannerLLM(
+            model=model, api_key=api_key, timeout=timeout, base_url=base_url
+        )
     lowered = model.lower()
     if lowered.startswith("claude"):
         return AnthropicPlannerLLM(model=model, api_key=api_key, timeout=timeout)
@@ -292,5 +449,7 @@ def build_planner_llm(
         return OpenAiPlannerLLM(model=model, api_key=api_key, timeout=timeout)
     raise PlannerFailedError(
         f"cannot infer a planner backend for model '{model}'; "
-        "use a claude-*, gpt-*, or gemini-* model"
+        "use a claude-*, gpt-*, or gemini-* model, or name the runtime "
+        "explicitly with planner.backend (and planner.base_url for a local "
+        "server) — e.g. backend: ollama for 'qwen2.5-coder:14b'"
     )

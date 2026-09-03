@@ -29,6 +29,11 @@ from typing import Any
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
 from mak.agent_runner.adapters.budget import resolve_agent_max_tokens
+from mak.agent_runner.adapters.result_schema import (
+    RESULT_TOOL_DESCRIPTION,
+    RESULT_TOOL_NAME,
+    result_schema,
+)
 from mak.agent_runner.protocol import (
     NO_CHANGE_CONTRACT,
     NODE_ID_CONTRACT,
@@ -42,67 +47,19 @@ from mak.agent_runner.stop_signals import (
     extract_usage,
     with_response_metadata,
 )
-from mak.core.exceptions import AgentError
+from mak.core.exceptions import AgentError, AgentProtocolError
 from mak.core.types import TaskBundle, TaskResult
 
 _DEFAULT_MODEL = "claude-sonnet-5"
-_RESULT_TOOL_NAME = "submit_task_result"
+_RESULT_TOOL_NAME = RESULT_TOOL_NAME
 
+# The one TaskResult contract, rendered in Anthropic's JSON-Schema dialect. It
+# lives in ``result_schema`` rather than here so the four backends that must
+# describe the same five keys cannot drift apart.
 _RESULT_TOOL: dict[str, Any] = {
     "name": _RESULT_TOOL_NAME,
-    "description": (
-        "Report the structured outcome of the assigned MAK task. You MUST call "
-        "this tool exactly once as your final action."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "task_id": {
-                "type": "string",
-                "description": "The task_id from the received task bundle.",
-            },
-            "success": {
-                "type": "boolean",
-                "description": "True if the task was completed successfully.",
-            },
-            "modified_fragments": {
-                "type": "array",
-                "description": (
-                    "For every node you changed, an object with its node_id and "
-                    "the FULL rewritten source of that node (not a diff)."
-                ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "node_id": {
-                            "type": "string",
-                            "description": (
-                                "A node id copied verbatim from the bundle's "
-                                "target_nodes. Never a narrower or invented id."
-                            ),
-                        },
-                        "new_source": {
-                            "type": "string",
-                            "description": "The complete rewritten source of the node.",
-                        },
-                    },
-                    "required": ["node_id", "new_source"],
-                },
-            },
-            "no_changes_required": {
-                "type": "boolean",
-                "description": (
-                    "True only when you inspected every target and found nothing "
-                    "to change. Never true alongside modified_fragments."
-                ),
-            },
-            "error": {
-                "type": ["string", "null"],
-                "description": "Failure reason when success is false, else null.",
-            },
-        },
-        "required": ["task_id", "success"],
-    },
+    "description": RESULT_TOOL_DESCRIPTION.format(noun="tool"),
+    "input_schema": result_schema("anthropic"),
 }
 
 _SYSTEM_PROMPT = (
@@ -155,7 +112,8 @@ class AnthropicApiAdapter(AgentAdapter):
                 import anthropic
             except ImportError as exc:  # pragma: no cover - exercised via health_check
                 raise AgentError(
-                    "anthropic SDK not installed; run `pip install anthropic`"
+                    "anthropic SDK not installed; run "
+                    "'pip install \"multi-agent-kernel[anthropic]\"'"
                 ) from exc
             options: dict[str, Any] = {}
             if self._api_key is not None:
@@ -206,12 +164,28 @@ class AnthropicApiAdapter(AgentAdapter):
             budget=self.max_tokens,
             usage=usage,
         )
-        payload = self._extract_tool_payload(response)
+        payload = self._extract_tool_payload(
+            response, stop_reason=stop_reason, usage=usage
+        )
         return with_response_metadata(payload, stop_reason=stop_reason, usage=usage)
 
     @staticmethod
-    def _extract_tool_payload(response: Any) -> str:
-        """Pull the ``submit_task_result`` tool_use input out of the response."""
+    def _extract_tool_payload(
+        response: Any,
+        *,
+        stop_reason: object = None,
+        usage: dict[str, int] | None = None,
+    ) -> str:
+        """Pull the ``submit_task_result`` tool_use input out of the response.
+
+        A reply with no result block is an ``AgentProtocolError``, not a bare
+        ``AgentError``: the call succeeded and the model answered, just not in
+        the shape the protocol can decode. Only that classification reaches the
+        session's schema-restating retry note — reported as a transport failure
+        it drew the generic "produced nothing usable" note instead. The
+        provider's own signals travel with it so a rejected reply stays
+        accountable in the log.
+        """
         for block in getattr(response, "content", []) or []:
             if (
                 getattr(block, "type", None) == "tool_use"
@@ -220,8 +194,10 @@ class AnthropicApiAdapter(AgentAdapter):
                 payload = dict(block.input)
                 payload["protocol_version"] = PROTOCOL_VERSION
                 return json.dumps(payload)
-        raise AgentError(
-            f"anthropic response contained no '{_RESULT_TOOL_NAME}' tool_use block"
+        raise AgentProtocolError(
+            f"anthropic response contained no '{_RESULT_TOOL_NAME}' tool_use block",
+            stop_reason=None if stop_reason is None else str(stop_reason),
+            usage=usage,
         )
 
     def parse_result(self, raw_output: str) -> TaskResult:

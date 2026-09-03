@@ -11,6 +11,7 @@ from mak.agent_runner.adapters.base_adapter import (
     AgentAdapter,
     SubprocessAgentAdapter,
 )
+from mak.agent_runner.adapters.openai_api_adapter import OpenAiApiAdapter
 from mak.agent_runner.protocol import (
     decode_task_result,
     encode_task_bundle,
@@ -23,6 +24,39 @@ from mak.core.exceptions import (
     AgentTruncatedError,
 )
 from mak.core.types import NodeId, TaskBundle, TaskResult
+
+
+def _client_replying(content: str) -> object:
+    """Return a minimal fake OpenAI client whose one choice carries ``content``."""
+
+    class Message:
+        def __init__(self) -> None:
+            self.content = content
+
+    class Choice:
+        def __init__(self) -> None:
+            self.message = Message()
+            self.finish_reason = "stop"
+
+    class Completion:
+        def __init__(self) -> None:
+            self.choices = [Choice()]
+            self.usage = None
+
+    class Completions:
+        def create(self, **_: object) -> Completion:
+            return Completion()
+
+    class Chat:
+        def __init__(self) -> None:
+            self.completions = Completions()
+
+    class Client:
+        def __init__(self) -> None:
+            self.chat = Chat()
+
+    return Client()
+
 
 # --- API-style stub adapters -------------------------------------------------
 
@@ -292,6 +326,19 @@ class TestErrorKind:
     def test_a_successful_result_has_no_error_kind(self) -> None:
         adapter = StubApiAdapter(TaskResult(task_id="t1", success=True))
         assert AgentRunner().assign(adapter, _bundle("t1")).error_kind is None
+
+    def test_a_json_mode_adapters_malformed_body_is_a_protocol_error(self) -> None:
+        # Wave 15.6 (D7). The JSON-mode adapter used to raise a bare AgentError
+        # for a malformed body; AgentError is the *parent* of AgentResponseError,
+        # so `except AgentResponseError` missed it and the result was classified
+        # "api" — which draws the generic retry note instead of the one that
+        # restates the schema.
+        adapter = OpenAiApiAdapter(
+            client=_client_replying("this is prose, not JSON"), repair_attempts=0
+        )
+        result = AgentRunner().assign(adapter, _bundle("t1"))
+        assert result.success is False
+        assert result.error_kind == "protocol"
 
 
 # --- subprocess path tests ---------------------------------------------------

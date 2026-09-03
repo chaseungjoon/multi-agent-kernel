@@ -27,6 +27,11 @@ import json
 from typing import Any
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
+from mak.agent_runner.adapters.result_schema import (
+    RESULT_TOOL_DESCRIPTION,
+    RESULT_TOOL_NAME,
+    result_schema,
+)
 from mak.agent_runner.protocol import (
     NO_CHANGE_CONTRACT,
     NODE_ID_CONTRACT,
@@ -40,70 +45,19 @@ from mak.agent_runner.stop_signals import (
     extract_usage,
     with_response_metadata,
 )
-from mak.core.exceptions import AgentError
+from mak.core.exceptions import AgentError, AgentProtocolError
 from mak.core.types import TaskBundle, TaskResult
 
 _DEFAULT_MODEL = "gemini-3.5-flash"
-_RESULT_FN_NAME = "submit_task_result"
+_RESULT_FN_NAME = RESULT_TOOL_NAME
 
-# Gemini function declaration. Schema is the OpenAPI subset Gemini accepts:
-# `nullable` (not a JSON-Schema `type` union) marks the optional error field.
+# The one TaskResult contract in Gemini's dialect: the OpenAPI subset the SDK
+# accepts, where the optional ``error`` is marked ``nullable`` rather than given
+# a JSON-Schema type union. See ``result_schema``.
 _RESULT_FUNCTION: dict[str, Any] = {
     "name": _RESULT_FN_NAME,
-    "description": (
-        "Report the structured outcome of the assigned MAK task. You MUST call "
-        "this function exactly once as your final action."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "task_id": {
-                "type": "string",
-                "description": "The task_id from the received task bundle.",
-            },
-            "success": {
-                "type": "boolean",
-                "description": "True if the task was completed successfully.",
-            },
-            "modified_fragments": {
-                "type": "array",
-                "description": (
-                    "For every node you changed, an object with its node_id and "
-                    "the FULL rewritten source of that node (not a diff)."
-                ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "node_id": {
-                            "type": "string",
-                            "description": (
-                                "A node id copied verbatim from the bundle's "
-                                "target_nodes. Never a narrower or invented id."
-                            ),
-                        },
-                        "new_source": {
-                            "type": "string",
-                            "description": "The complete rewritten source of the node.",
-                        },
-                    },
-                    "required": ["node_id", "new_source"],
-                },
-            },
-            "no_changes_required": {
-                "type": "boolean",
-                "description": (
-                    "True only when you inspected every target and found nothing "
-                    "to change. Never true alongside modified_fragments."
-                ),
-            },
-            "error": {
-                "type": "string",
-                "nullable": True,
-                "description": "Failure reason when success is false, else null.",
-            },
-        },
-        "required": ["task_id", "success"],
-    },
+    "description": RESULT_TOOL_DESCRIPTION.format(noun="function"),
+    "parameters": result_schema("gemini"),
 }
 
 _SYSTEM_PROMPT = (
@@ -152,7 +106,8 @@ class GeminiApiAdapter(AgentAdapter):
                 from google import genai
             except ImportError as exc:  # pragma: no cover - exercised via health_check
                 raise AgentError(
-                    "google-genai SDK not installed; run `pip install google-genai`"
+                    "google-genai SDK not installed; run "
+                    "'pip install \"multi-agent-kernel[gemini]\"'"
                 ) from exc
             options: dict[str, Any] = {}
             if self._api_key is not None:
@@ -207,12 +162,25 @@ class GeminiApiAdapter(AgentAdapter):
             budget=self.max_tokens,
             usage=usage,
         )
-        payload = self._extract_function_call(response)
+        payload = self._extract_function_call(
+            response, stop_reason=finish_reason, usage=usage
+        )
         return with_response_metadata(payload, stop_reason=finish_reason, usage=usage)
 
     @staticmethod
-    def _extract_function_call(response: Any) -> str:
-        """Pull the ``submit_task_result`` function-call args out of the response."""
+    def _extract_function_call(
+        response: Any,
+        *,
+        stop_reason: object = None,
+        usage: dict[str, int] | None = None,
+    ) -> str:
+        """Pull the ``submit_task_result`` function-call args out of the response.
+
+        A reply with no function call is an ``AgentProtocolError`` for the same
+        reason it is in the Anthropic adapter: the model answered, in a shape
+        the protocol cannot decode, and only that classification earns the
+        schema-restating retry note.
+        """
         for candidate in getattr(response, "candidates", None) or []:
             content = getattr(candidate, "content", None)
             for part in getattr(content, "parts", None) or []:
@@ -221,8 +189,10 @@ class GeminiApiAdapter(AgentAdapter):
                     payload = dict(call.args)
                     payload["protocol_version"] = PROTOCOL_VERSION
                     return json.dumps(payload)
-        raise AgentError(
-            f"gemini response contained no '{_RESULT_FN_NAME}' function call"
+        raise AgentProtocolError(
+            f"gemini response contained no '{_RESULT_FN_NAME}' function call",
+            stop_reason=None if stop_reason is None else str(stop_reason),
+            usage=usage,
         )
 
     @staticmethod

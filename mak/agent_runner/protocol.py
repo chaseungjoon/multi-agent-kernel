@@ -51,6 +51,24 @@ NO_CHANGE_CONTRACT = (
     "without that flag is treated as a failed attempt, never as 'nothing to do'."
 )
 
+# The *in-adapter* repair turn. Distinct from RETRY_NOTE_CONTRACT, which is a
+# standing instruction in the system prompt about a field the next bundle may
+# carry: this is the follow-up message the adapter sends when a reply arrived but
+# could not be decoded. Repairing in the adapter costs one short turn; the
+# alternative — failing the attempt and letting the session re-dispatch — re-sends
+# the entire bundle (write sources, sibling context, caller context: tens of KB).
+# For a small local model a malformed first reply is the common case, not the
+# rare one, so the cheap path has to be the default one.
+REPAIR_INSTRUCTION = (
+    "Your previous reply could not be decoded: {reason}. Reply again with only "
+    "a single JSON object and nothing else — no prose, no explanation, no code "
+    "fences. It must have exactly these keys: 'task_id' (string, echoing the "
+    "bundle's task_id), 'success' (boolean), 'modified_fragments' (array of "
+    "objects, each with 'node_id' and the node's FULL rewritten 'new_source'), "
+    "'no_changes_required' (boolean), and 'error' (string when success is "
+    "false, otherwise null). Do not change the work you did — only its shape."
+)
+
 # The retry half. Populated by the session on a re-dispatch; absent on attempt 1.
 RETRY_NOTE_CONTRACT = (
     "If the bundle carries a 'retry_note', your previous attempt at this task "
@@ -323,6 +341,18 @@ def _decode_usage(raw: object) -> dict[str, int]:
     }
 
 
+def _decode_repairs(raw: object) -> int:
+    """Return the adapter's repair-turn count, defaulting to 0.
+
+    Adapter telemetry, merged into the payload after the model's own keys — so a
+    model that emits a ``repairs`` field of its own cannot forge it. Anything not
+    a non-negative integer is read as 0.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return 0
+    return raw
+
+
 def decode_task_result(raw: str) -> TaskResult:
     """Deserialize a JSON string into a TaskResult.
 
@@ -411,4 +441,5 @@ def _decode_result_body(data: dict[str, Any]) -> TaskResult:
         stop_reason=data.get("stop_reason"),
         usage=_decode_usage(data.get("usage")),
         retryable=bool(data.get("retryable", True)),
+        repairs=_decode_repairs(data.get("repairs")),
     )

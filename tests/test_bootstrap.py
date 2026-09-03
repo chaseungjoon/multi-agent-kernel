@@ -9,6 +9,7 @@ from mak.agent_runner.adapters.budget import resolve_agent_max_tokens
 from mak.agent_runner.adapters.claude_code_adapter import ClaudeCodeAdapter
 from mak.agent_runner.adapters.copilot_adapter import CopilotAdapter
 from mak.agent_runner.adapters.gemini_api_adapter import GeminiApiAdapter
+from mak.agent_runner.adapters.ollama_api_adapter import OllamaApiAdapter
 from mak.agent_runner.adapters.openai_api_adapter import OpenAiApiAdapter
 from mak.agent_runner.registry import AdapterRegistry
 from mak.agent_runner.sandbox import SandboxConfig
@@ -234,12 +235,260 @@ class TestHealthyAgentTypes:
         return reg
 
     def test_splits_healthy_from_unhealthy(self) -> None:
-        healthy, unhealthy = healthy_agent_types(
+        healthy, unhealthy, _why = healthy_agent_types(
             self._registry(), ["good", "bad", "boom"]
         )
         assert healthy == ["good"]
         assert unhealthy == ["bad", "boom"]
 
     def test_preserves_order(self) -> None:
-        healthy, _ = healthy_agent_types(self._registry(), ["bad", "good"])
+        healthy, _, _why = healthy_agent_types(self._registry(), ["bad", "good"])
         assert healthy == ["good"]
+
+    def test_a_raised_failure_is_reported_as_its_own_reason(self) -> None:
+        _healthy, _unhealthy, why = healthy_agent_types(self._registry(), ["boom"])
+        assert "no key" in why["boom"]
+
+
+class TestLocalEndpoints:
+    """Wave 15.2: the local transports at the composition root."""
+
+    def test_both_new_types_register_and_build(self) -> None:
+        config = _config(
+            AgentConfig(type="local_api", model="m", base_url="http://h:8000/v1"),
+            AgentConfig(type="ollama_api", model="qwen2.5-coder:14b"),
+        )
+        registry = build_registry(config)
+        local = registry.get("local_api")
+        ollama = registry.get("ollama_api")
+        assert isinstance(local, OpenAiApiAdapter)
+        assert isinstance(ollama, OllamaApiAdapter)
+        # D1's payoff: the shared class reports the type it was built under.
+        assert local.agent_type == "local_api"
+        assert ollama.agent_type == "ollama_api"
+
+    def test_cloud_and_both_local_types_coexist_in_one_roster(self) -> None:
+        # The whole reason ``local_api`` is a separate type: with one shared
+        # type a run could have cloud OpenAI *or* a local model, never both.
+        config = _config(
+            AgentConfig(type="openai_api", model="gpt-5.6-sol"),
+            AgentConfig(type="local_api", model="m", base_url="http://h:8000/v1"),
+            AgentConfig(type="ollama_api", model="qwen2.5-coder:14b"),
+        )
+        registry = build_registry(config)
+        types = {
+            registry.get(t).agent_type
+            for t in ("openai_api", "local_api", "ollama_api")
+        }
+        assert types == {"openai_api", "local_api", "ollama_api"}
+
+    def test_every_option_reaches_the_local_adapter(self) -> None:
+        config = _config(
+            AgentConfig(
+                type="local_api",
+                model="m",
+                base_url="http://h:8000/v1",
+                structured_output="json_schema",
+                repair_attempts=3,
+            )
+        )
+        adapter = build_registry(config).get("local_api")
+        assert isinstance(adapter, OpenAiApiAdapter)
+        assert adapter.base_url == "http://h:8000/v1"
+        assert adapter.structured_output == "json_schema"
+        assert adapter.repair_attempts == 3
+
+    def test_every_ollama_option_reaches_the_ollama_adapter(self) -> None:
+        config = _config(
+            AgentConfig(
+                type="ollama_api",
+                model="qwen2.5-coder:14b",
+                num_ctx=16384,
+                keep_alive="30m",
+                temperature=0.1,
+            )
+        )
+        adapter = build_registry(config).get("ollama_api")
+        assert isinstance(adapter, OllamaApiAdapter)
+        assert adapter.num_ctx == 16384
+        assert adapter.keep_alive == "30m"
+        assert adapter.temperature == 0.1
+        # Defaulted, because the provider name is the runtime.
+        assert adapter.base_url == "http://localhost:11434"
+
+    def test_no_local_option_reaches_a_cloud_adapter(self) -> None:
+        # The Anthropic/Gemini constructors take none of them; an unconditional
+        # kwarg would be a TypeError at dispatch, not a config error at start.
+        config = _config(AgentConfig(type="anthropic_api", model="claude-sonnet-5"))
+        adapter = build_registry(config).get("anthropic_api")
+        assert isinstance(adapter, AnthropicApiAdapter)
+        assert not hasattr(adapter, "base_url")
+
+
+class TestLocalSpecs:
+    @pytest.mark.parametrize(
+        "spec,expected_url",
+        [
+            ("ollama:qwen2.5-coder:14b", "http://localhost:11434"),
+            ("ollama:llama3.1@http://box:11434", "http://box:11434"),
+            ("ollama:llama3.1@http://box:11434/", "http://box:11434"),
+        ],
+    )
+    def test_ollama_specs(self, spec: str, expected_url: str) -> None:
+        (agent,) = agents_from_specs([spec])
+        assert agent.type == "ollama_api"
+        assert agent.base_url == expected_url
+        assert agent.api_key_env is None
+
+    def test_an_ollama_tag_keeps_its_colon(self) -> None:
+        (agent,) = agents_from_specs(["ollama:qwen2.5-coder:14b"])
+        assert agent.model == "qwen2.5-coder:14b"
+
+    def test_local_spec_requires_an_explicit_url(self) -> None:
+        (agent,) = agents_from_specs(["local:m@http://localhost:8000/v1"])
+        assert agent.type == "local_api"
+        assert agent.base_url == "http://localhost:8000/v1"
+        assert agent.model == "m"
+
+    def test_local_without_a_url_is_rejected_showing_the_syntax(self) -> None:
+        # Guessing Ollama's port for someone running vLLM is worse than asking.
+        with pytest.raises(ConfigError, match="provider\\[:model\\]\\[@base_url\\]"):
+            agents_from_specs(["local:m"])
+
+    def test_a_local_spec_without_a_model_is_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="names no model"):
+            agents_from_specs(["ollama"])
+
+    def test_the_env_var_supplies_the_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MAK_LOCAL_BASE_URL", "http://gpu-box:8000/v1")
+        (agent,) = agents_from_specs(["local:m"])
+        assert agent.base_url == "http://gpu-box:8000/v1"
+
+    def test_an_explicit_url_beats_the_env_var(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MAK_LOCAL_BASE_URL", "http://gpu-box:8000/v1")
+        (agent,) = agents_from_specs(["local:m@http://other:9000/v1"])
+        assert agent.base_url == "http://other:9000/v1"
+
+    def test_a_userinfo_url_survives_the_split(self) -> None:
+        # Split on the FIRST '@': rpartition would cut inside the userinfo.
+        (agent,) = agents_from_specs(["local:m@http://user:pass@host:8000/v1"])
+        assert agent.base_url == "http://user:pass@host:8000/v1"
+
+    def test_openai_accepts_a_gateway_url(self) -> None:
+        (agent,) = agents_from_specs(["openai:gpt-5.6-sol@https://gw.example/v1"])
+        assert agent.type == "openai_api"
+        assert agent.base_url == "https://gw.example/v1"
+        assert agent.api_key_env == "OPENAI_API_KEY"
+
+    @pytest.mark.parametrize("provider", ["anthropic", "gemini"])
+    def test_anthropic_and_gemini_reject_a_url(self, provider: str) -> None:
+        with pytest.raises(ConfigError, match="does not take an '@<base_url>'"):
+            agents_from_specs([f"{provider}:m@http://h/v1"])
+
+    def test_a_malformed_url_is_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="http:// or https://"):
+            agents_from_specs(["local:m@ftp://host:8000"])
+
+    def test_the_unknown_provider_message_lists_the_local_ones(self) -> None:
+        with pytest.raises(ConfigError, match="ollama") as excinfo:
+            agents_from_specs(["nope:m"])
+        assert "local" in str(excinfo.value)
+
+    def test_a_mixed_cloud_and_local_roster_builds(self) -> None:
+        agents = agents_from_specs(
+            ["anthropic:claude-opus-5", "ollama:qwen2.5-coder:14b"]
+        )
+        assert [a.type for a in agents] == ["anthropic_api", "ollama_api"]
+
+
+class TestValidateLocalConfig:
+    def test_base_url_on_a_type_that_ignores_it_is_rejected(self) -> None:
+        config = _config(AgentConfig(type="anthropic_api", base_url="http://h/v1"))
+        with pytest.raises(ConfigError, match="ignores 'base_url'"):
+            validate_config(config)
+
+    def test_local_api_without_a_base_url_is_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="localhost:11434/v1"):
+            validate_config(_config(AgentConfig(type="local_api", model="m")))
+
+    @pytest.mark.parametrize(
+        "field,value", [("structured_output", "json_schema"), ("repair_attempts", 2)]
+    )
+    def test_structured_output_and_repair_outside_the_local_types(
+        self, field: str, value: object
+    ) -> None:
+        config = _config(AgentConfig(type="gemini_api", **{field: value}))
+        with pytest.raises(ConfigError, match=f"ignores '{field}'"):
+            validate_config(config)
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [("num_ctx", 8192), ("keep_alive", "30m"), ("temperature", 0.1)],
+    )
+    def test_ollama_only_options_outside_ollama_api(
+        self, field: str, value: object
+    ) -> None:
+        config = _config(
+            AgentConfig(
+                type="local_api", base_url="http://h/v1", **{field: value}
+            )
+        )
+        with pytest.raises(ConfigError, match="ollama_api only"):
+            validate_config(config)
+
+    def test_a_valid_local_config_passes(self) -> None:
+        validate_config(
+            _config(
+                AgentConfig(
+                    type="local_api",
+                    model="m",
+                    base_url="http://h:8000/v1",
+                    structured_output="json_schema",
+                    repair_attempts=2,
+                ),
+                AgentConfig(
+                    type="ollama_api",
+                    model="qwen2.5-coder:14b",
+                    num_ctx=16384,
+                    keep_alive="30m",
+                    temperature=0.1,
+                ),
+            )
+        )
+
+
+class TestHealthDetailReachesTheWarning:
+    def test_an_adapters_own_reason_is_carried_back(self) -> None:
+        class Detailed:
+            agent_type = "ollama_api"
+
+            def health_check(self) -> bool:
+                return False
+
+            def health_detail(self) -> str:
+                return "Ollama is not running at http://localhost:11434"
+
+        registry = AdapterRegistry()
+        registry.register_factory("ollama_api", lambda: Detailed())  # type: ignore[arg-type,return-value]
+        _healthy, unhealthy, why = healthy_agent_types(registry, ["ollama_api"])
+        assert unhealthy == ["ollama_api"]
+        assert why["ollama_api"] == "Ollama is not running at http://localhost:11434"
+
+    def test_an_adapter_without_health_detail_is_not_required_to_have_one(
+        self,
+    ) -> None:
+        class Plain:
+            agent_type = "x"
+
+            def health_check(self) -> bool:
+                return False
+
+        registry = AdapterRegistry()
+        registry.register_factory("x", lambda: Plain())  # type: ignore[arg-type,return-value]
+        _healthy, unhealthy, why = healthy_agent_types(registry, ["x"])
+        assert unhealthy == ["x"]
+        assert why == {}

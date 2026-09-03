@@ -246,6 +246,32 @@ def _gc(argv: list[str]) -> int:
     return 0
 
 
+def _examples(argv: list[str]) -> int:
+    """List the packaged example configs, or print one to stdout.
+
+    ``mak examples local-ollama > mak.yaml`` is the whole non-interactive
+    quickstart for a local run, which is why this prints the file rather than
+    writing it: redirecting is the user's decision, and MAK does not create a
+    config file on its own.
+    """
+    from mak.config import example_path, list_examples
+    from mak.core.exceptions import MakError
+
+    if not argv:
+        print("Packaged example configs — mak examples <name> prints one:\n")
+        for name in list_examples():
+            print(f"  {name}")
+        print("\ne.g.  mak examples local-ollama > mak.yaml")
+        return 0
+    try:
+        path = example_path(argv[0])
+    except MakError as exc:
+        print(f"mak: {exc}", file=sys.stderr)
+        return 1
+    print(path.read_text(encoding="utf-8"), end="")
+    return 0
+
+
 def main() -> int:
     """Dispatch ``mak``: TUI, ``run``, ``gc``, ``update``, or ``--version``."""
     argv = sys.argv[1:]
@@ -261,6 +287,8 @@ def main() -> int:
             "       mak run --task ...  run one task non-interactively "
             "(see: mak run --help)\n"
             "       mak gc [work_dir]   prune this project's node store\n"
+            "       mak examples [name] list packaged example configs, or "
+            "print one\n"
             "       mak update          update mak to the newest release\n"
             "       mak --version       print the version"
         )
@@ -271,6 +299,9 @@ def main() -> int:
 
     if argv and argv[0] == "gc":
         return _gc(argv[1:])
+
+    if argv and argv[0] == "examples":
+        return _examples(argv[1:])
 
     if argv and argv[0] == "run":
         from mak.__main__ import main as run_main

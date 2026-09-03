@@ -1,0 +1,44 @@
+# Hybrid: a frontier model plans, local models edit.
+#
+#   export ANTHROPIC_API_KEY=...
+#   mak examples hybrid-cloud-planner-local-agents > mak.yaml
+#
+# The cost/privacy sweet spot, and the configuration to reach for when a local
+# model edits acceptably but plans badly. Planning is one call per run; editing
+# is one call per task, and the bundles are far larger — so the cloud share of a
+# run is small, and no file content leaves the machine except what the plan
+# prompt's node inventory names.
+
+session:
+  max_concurrent_agents: 1
+  dependency_context_bytes: 12000
+  cross_file_context_bytes: 16000
+
+planner:
+  model: "claude-opus-5"
+  # No backend/base_url: the model id routes to Anthropic, and the key comes from
+  # ANTHROPIC_API_KEY in the environment or ~/.config/mak/.env.
+
+agents:
+  - type: "ollama_api"
+    model: "qwen2.5-coder:14b"
+    base_url: "http://localhost:11434"
+    structured_output: "json_schema"
+    repair_attempts: 2
+    keep_alive: "30m"
+    temperature: 0.1
+    max_instances: 1
+    timeout: 1800
+
+models:
+  # The planner's model comes from this file, not the catalog, so a refresh only
+  # affects what /models and /planner offer. Leave it on if you use the TUI.
+  auto_refresh: true
+
+git:
+  auto_commit: true
+  auto_push: false
+
+node_store:
+  include_patterns:
+    - "**/*.py"

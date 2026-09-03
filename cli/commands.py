@@ -18,9 +18,18 @@ from cli.core.models import (
     models_for_provider,
     registry,
 )
-from cli.core.state import CliState
+from cli.core.state import (
+    MODE_CLOUD,
+    MODE_HYBRID,
+    MODE_LOCAL,
+    MODES,
+    CliState,
+    mode_summary,
+)
+from cli.local import apply_cloud_planner, apply_local_planner, cmd_local
 from cli.ui import ACCENT, print_error, print_ok, print_status, print_warn
 from mak.config import model_caveat
+from mak.local.runtime import KIND_OLLAMA, KIND_OPENAI_COMPATIBLE
 
 _KEY_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
@@ -53,6 +62,10 @@ def handle_command(text: str, state: CliState, console: Console) -> str | None:
         _cmd_planner(args, state, console)
     elif cmd == "/refresh-models":
         _cmd_refresh_models(state, console)
+    elif cmd == "/local":
+        cmd_local(args, state, console)
+    elif cmd == "/mode":
+        _cmd_mode(args, state, console)
     elif cmd == "/status":
         print_status(console, state)
     elif cmd == "/help":
@@ -87,14 +100,37 @@ def _cmd_help(console: Console) -> None:
     console.print()
 
 
+# Providers whose models live on this machine. They have no API-key env var by
+# construction, so the key check below must not be applied to them: rejecting a
+# keyless provider for having no key is exactly the bug that would make local
+# mode unusable from ``/models``.
+_LOCAL_PROVIDERS = ("local", "ollama")
+
+# The same two names as spec prefixes. Tested against a whole spec rather than a
+# bare provider, so the colon matters: without it a hosted model id that merely
+# began with "local" would be read as a local one.
+_LOCAL_SPEC_PREFIXES = tuple(f"{name}:" for name in _LOCAL_PROVIDERS)
+
+
 def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
     if not args:
+        if state.uses_local_agents():
+            # In local mode the cloud catalog is the wrong list: what matters is
+            # what this machine actually has, which only the server knows.
+            cmd_local(["models"], state, console)
+            return
         _list_models(state, console)
         return
 
     valid: list[str] = []
     for spec in args:
         provider = spec.split(":")[0].lower()
+        if provider in _LOCAL_PROVIDERS:
+            resolved = _local_spec(spec, state, console)
+            if resolved is None:
+                return
+            valid.append(resolved)
+            continue
         key_env = _KEY_ENV.get(provider)
         if key_env is None:
             print_error(console, f"Unknown provider: {provider}")
@@ -116,11 +152,35 @@ def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
         return
 
     state.selected_models = valid
+    if any(spec.startswith(_LOCAL_SPEC_PREFIXES) for spec in valid) and (
+        state.mode == MODE_CLOUD
+    ):
+        state.mode = MODE_LOCAL
     print_ok(console, f"Models: {', '.join(valid)}")
     for spec in valid:
-        caveat = model_caveat(spec.partition(":")[2])
+        caveat = model_caveat(spec.partition(":")[2].partition("@")[0])
         if caveat:
             print_warn(console, caveat)
+
+
+def _local_spec(spec: str, state: CliState, console: Console) -> str | None:
+    """Return ``spec`` with an endpoint attached, or None after reporting why.
+
+    ``/models ollama:qwen2.5-coder:14b`` is accepted with **no** key check; the
+    endpoint comes from the spec's own ``@url`` when given, else from the
+    runtime ``/local`` configured.
+    """
+    if "@" in spec:
+        return spec
+    if not state.has_local_runtime():
+        print_error(
+            console,
+            f"{spec} names no endpoint and no local runtime is configured — "
+            "run [bold]/local[/bold], or write "
+            "[bold]provider:model@http://host:port[/bold].",
+        )
+        return None
+    return f"{spec}@{state.local_base_url}"
 
 
 def _list_models(state: CliState, console: Console) -> None:
@@ -206,7 +266,15 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
         _list_planner_models(state, console)
         return
 
-    model_id = args[0]
+    raw = args[0]
+    # A local model is not in the catalog by construction (mak/local's whole
+    # premise is that the running server is the authority), so the catalog
+    # lookup below must be skipped for one rather than rejecting it.
+    if raw.startswith(_LOCAL_SPEC_PREFIXES) or _is_installed_locally(raw, state):
+        _set_local_planner(raw, state, console)
+        return
+
+    model_id = raw
     if ":" in model_id:
         model_id = model_id.split(":", 1)[1]
 
@@ -226,7 +294,10 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
         )
         return
 
-    state.planner_model = model_id
+    if state.mode == MODE_LOCAL:
+        # A hosted planner beside local agents is hybrid, by definition.
+        state.mode = MODE_HYBRID
+    apply_cloud_planner(state, model_id)
     if not model_info.planner_ok:
         print_warn(
             console,
@@ -237,6 +308,82 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
     caveat = model_caveat(model_id)
     if caveat:
         print_warn(console, caveat)
+
+
+def _is_installed_locally(model: str, state: CliState) -> bool:
+    """Whether ``model`` is one the configured local runtime reported."""
+    return state.has_local_runtime() and model in state.local_models
+
+
+def _set_local_planner(raw: str, state: CliState, console: Console) -> None:
+    """Point the planner at a local model, taking the endpoint from state/spec."""
+    spec, _, url = raw.partition("@")
+    is_prefixed = spec.startswith(_LOCAL_SPEC_PREFIXES)
+    model = spec.partition(":")[2] if is_prefixed else spec
+    if url:
+        state.local_base_url = url
+        if not state.local_kind:
+            state.local_kind = (
+                KIND_OLLAMA
+                if spec.startswith("ollama:")
+                else KIND_OPENAI_COMPATIBLE
+            )
+    if not state.has_local_runtime():
+        print_error(
+            console,
+            f"{raw} names no endpoint and no local runtime is configured — "
+            "run [bold]/local[/bold] first.",
+        )
+        return
+    apply_local_planner(state, model)
+    print_ok(console, f"Planner: {model}  [dim]at {state.local_base_url}[/dim]")
+
+
+def _cmd_mode(args: list[str], state: CliState, console: Console) -> None:
+    """Show or switch how this session gets its models."""
+    if not args:
+        console.print()
+        for mode in MODES:
+            active = "[green]●[/green]" if mode == state.mode else "[dim]○[/dim]"
+            console.print(
+                f"    {active} [bold]{mode}[/bold]  [dim]{mode_summary(mode)} — "
+                f"{_mode_requirement(mode)}[/dim]"
+            )
+        console.print()
+        return
+
+    target = args[0].lower()
+    if target not in MODES:
+        print_error(console, f"/mode expects one of {', '.join(MODES)}, got: {args[0]}")
+        return
+    problem = _mode_blocker(target, state)
+    if problem:
+        # Refuse with the command that fixes it, not with "cannot".
+        print_error(console, problem)
+        return
+    state.mode = target
+    print_ok(console, f"Mode: {target}  [dim]{mode_summary(target)}[/dim]")
+
+
+def _mode_requirement(mode: str) -> str:
+    """Return what a mode needs to be usable."""
+    if mode == MODE_CLOUD:
+        return "needs an API key"
+    if mode == MODE_LOCAL:
+        return "needs a local runtime"
+    return "needs both"
+
+
+def _mode_blocker(mode: str, state: CliState) -> str | None:
+    """Return why ``mode`` cannot be selected yet, or None when it can."""
+    has_key = any(value.strip() for value in state.api_keys.values())
+    needs_key = mode in (MODE_CLOUD, MODE_HYBRID)
+    needs_local = mode in (MODE_LOCAL, MODE_HYBRID)
+    if needs_local and not state.has_local_runtime():
+        return "No local runtime configured — run [bold]/local[/bold]."
+    if needs_key and not has_key:
+        return "No API key set — run [bold]/apikey[/bold]."
+    return None
 
 
 def _list_planner_models(state: CliState, console: Console) -> None:
@@ -272,6 +419,13 @@ def _cmd_refresh_models(state: CliState, console: Console) -> None:
     This is the escape hatch for a model that ships between scheduled refreshes:
     the catalog updates in-session, so the new model is immediately selectable.
     """
+    if state.uses_local_agents():
+        # Otherwise this appears to do nothing in local mode, which is worse
+        # than saying plainly that it is the wrong list.
+        console.print(
+            "\n  [dim]This refreshes the *cloud* model catalog. "
+            "/local models lists what this machine has.[/dim]"
+        )
     console.print("\n  [dim]Fetching model lists…[/dim]")
     try:
         report = registry().refresh_now(state.api_keys)

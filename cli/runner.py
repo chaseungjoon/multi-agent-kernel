@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from cli.core.state import CliState
+from cli.core.state import MODE_LOCAL, CliState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mak.config import MakConfig
@@ -38,8 +38,9 @@ def _apply_state_to_config(config: MakConfig, state: CliState) -> MakConfig:
     All overrides are in-memory only — this function never writes to
     mak/config.yaml or any other file.
     """
-    from mak.bootstrap import agents_from_specs
+    from mak.bootstrap import LOCAL_AGENT_TYPES, agents_from_specs
     from mak.config import anchor_mak_dir
+    from mak.core.exceptions import ConfigError
 
     if state.work_dir and state.work_dir != ".":
         config = replace(
@@ -54,7 +55,19 @@ def _apply_state_to_config(config: MakConfig, state: CliState) -> MakConfig:
     # this one was right.
     config = anchor_mak_dir(config)
     if state.selected_models:
+        # The specs already carry '@<url>' for a local runtime and
+        # agents_from_specs parses that, so local mode needs no branch here —
+        # only the assurance that the roster actually is local, which is a
+        # property of how /local and /models fill it.
         config = replace(config, agents=agents_from_specs(state.selected_models))
+        if state.mode == MODE_LOCAL and any(
+            agent.type not in LOCAL_AGENT_TYPES for agent in config.agents
+        ):
+            raise ConfigError(
+                "local mode produced a roster with hosted agents "
+                f"({state.models_display()}); run /local to set it, or /mode "
+                "hybrid if a cloud agent is intended"
+            )
     config = replace(
         config, session=replace(config.session, max_concurrent_agents=state.max_agents)
     )
@@ -62,6 +75,14 @@ def _apply_state_to_config(config: MakConfig, state: CliState) -> MakConfig:
 
 
 def _resolve_planner_api_key(state: CliState) -> str | None:
+    """Return the key for the planner's provider, or None for a local planner.
+
+    None is the *correct* answer for a local planner, not a fallback: it is what
+    lets the adapter send its placeholder rather than forwarding a real cloud key
+    to a local host.
+    """
+    if state.planner_backend == "ollama" or state.planner_base_url:
+        return None
     model = state.planner_model.lower()
     if model.startswith("claude"):
         return state.api_keys.get("ANTHROPIC_API_KEY")
@@ -95,10 +116,17 @@ def build_session(task: str, state: CliState) -> Session:
     config = _apply_state_to_config(config, state)
     validate_config(config)
 
-    # Override the planner model to respect the user's choice.
+    # Override the planner model to respect the user's choice, and — for a local
+    # planner — the backend and endpoint it cannot be inferred from: a model id
+    # like "qwen2.5-coder:14b" matches no provider prefix.
     config = replace(
         config,
-        planner=replace(config.planner, model=state.planner_model),
+        planner=replace(
+            config.planner,
+            model=state.planner_model,
+            backend=state.planner_backend or config.planner.backend,
+            base_url=state.planner_base_url or config.planner.base_url,
+        ),
     )
 
     # Do NOT pass config=state.config_path here.  mak.__main__.build_session

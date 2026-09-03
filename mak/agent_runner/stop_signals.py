@@ -41,6 +41,11 @@ _USAGE_FIELDS = {
     "prompt_token_count": "input_tokens",
     "candidates_token_count": "output_tokens",
     "total_token_count": "total_tokens",
+    # Ollama's native API names the same two numbers again. Without them a local
+    # run reports zero tokens and ``session.max_total_tokens`` — the only spend
+    # ceiling MAK has — silently cannot bind.
+    "prompt_eval_count": "input_tokens",
+    "eval_count": "output_tokens",
 }
 
 
@@ -101,12 +106,18 @@ def extract_usage(usage: object) -> dict[str, int]:
 
 
 def with_response_metadata(
-    payload: str, *, stop_reason: object, usage: dict[str, int]
+    payload: str,
+    *,
+    stop_reason: object,
+    usage: dict[str, int],
+    repairs: int = 0,
 ) -> str:
-    """Return ``payload`` with the provider's stop reason and usage merged in.
+    """Return ``payload`` with the adapter's own telemetry merged in.
 
-    The adapter's values are written *after* the model's own keys, so a model
-    that happens to emit a field of the same name cannot forge its own telemetry.
+    The provider's stop reason and token counts, and — when the adapter had to
+    spend a follow-up turn getting a decodable reply — the repair count. All are
+    written *after* the model's own keys, so a model that happens to emit a
+    field of the same name cannot forge its own telemetry.
     """
     data = json.loads(payload)
     if not isinstance(data, dict):
@@ -116,4 +127,6 @@ def with_response_metadata(
         merged["stop_reason"] = str(stop_reason)
     if usage:
         merged["usage"] = usage
+    if repairs:
+        merged["repairs"] = repairs
     return json.dumps(merged)

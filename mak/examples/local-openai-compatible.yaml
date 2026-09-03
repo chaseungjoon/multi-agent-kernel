@@ -1,0 +1,57 @@
+# Fully local, against any OpenAI-compatible server: vLLM, LM Studio,
+# llama.cpp's server, LocalAI.
+#
+#   mak examples local-openai-compatible > mak.yaml
+#   # then edit base_url and model to match your server
+#
+# Default ports: vLLM http://localhost:8000/v1, llama.cpp http://localhost:8080/v1,
+# LM Studio http://localhost:1234/v1, Ollama's compat layer
+# http://localhost:11434/v1 (prefer local-ollama.yaml for Ollama — the native
+# adapter can size the context window, which this transport cannot).
+#
+# Your real OPENAI_API_KEY is NEVER sent to a base_url endpoint. MAK forwards the
+# key named by api_key_env if you set one, and the literal placeholder "local"
+# otherwise.
+
+session:
+  max_concurrent_agents: 1
+  dependency_context_bytes: 12000
+  cross_file_context_bytes: 16000
+  # A server that reports no usage cannot be bounded by max_total_tokens; many
+  # OpenAI-compatible servers do report it, but not all.
+  # max_total_tokens: 2000000
+
+planner:
+  model: "Qwen/Qwen2.5-Coder-32B-Instruct"
+  # With base_url set and no explicit backend, MAK routes the planner through the
+  # OpenAI-compatible client — naming it here is clearer.
+  backend: "openai"
+  base_url: "http://localhost:8000/v1"
+  # For a token-protected gateway (e.g. `vllm serve --api-key ...`). Unset means
+  # the placeholder key is sent instead.
+  # api_key_env: "VLLM_TOKEN"
+
+agents:
+  - type: "local_api"
+    model: "Qwen/Qwen2.5-Coder-32B-Instruct"
+    # Required for local_api. MAK will not guess a port for you.
+    base_url: "http://localhost:8000/v1"
+    # vLLM and llama.cpp both support guided/grammar decoding from a JSON schema.
+    # If your server rejects it, MAK retries once at "json_object" on its own —
+    # set it here to skip that first failed call.
+    structured_output: "json_schema"
+    repair_attempts: 2
+    # api_key_env: "VLLM_TOKEN"
+    max_instances: 1
+    timeout: 1800
+
+models:
+  auto_refresh: false
+
+git:
+  auto_commit: true
+  auto_push: false
+
+node_store:
+  include_patterns:
+    - "**/*.py"

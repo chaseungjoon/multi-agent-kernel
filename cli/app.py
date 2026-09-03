@@ -96,9 +96,11 @@ class MakCli:
 
     def run(self) -> None:
         """Run the interactive loop until the user exits."""
-        if not any_key_set(self.state.api_keys):
-            ok = run_setup(self.state, self.console)
-            if not ok:
+        if not any_key_set(self.state.api_keys) and not self.state.has_local_runtime():
+            # Setup can now end successfully with zero keys — a fully-local user
+            # has none, and exiting here is what used to make MAK unreachable
+            # for them. Only an explicitly cancelled setup still exits.
+            if not run_setup(self.state, self.console):
                 sys.exit(1)
 
         print_banner(self.console, self.state)
@@ -307,6 +309,9 @@ class MakCli:
             fragments.append(("class:bottom-toolbar", f"{label} "))
             fragments.append((style, value))
 
+        # Mode leads: a user must never be unsure whether the next task costs
+        # money.
+        item("mode", state.mode_display())
         item("model", state.models_display())
         item("planner", state.planner_model)
         item("agents", str(state.max_agents))

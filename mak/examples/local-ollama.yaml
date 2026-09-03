@@ -1,0 +1,66 @@
+# Fully local, on Ollama's native API.
+#
+#   mak examples local-ollama > mak.yaml
+#   ollama pull qwen2.5-coder:14b
+#   mak run --task "..." --work-dir /path/to/project
+#
+# Nothing here needs an API key, and a fully-local install needs no provider SDK
+# at all — MAK talks to Ollama over the standard library.
+
+session:
+  # One agent at a time on a single-GPU host. Concurrent requests to one Ollama
+  # server queue behind each other and each gets slower, so the parallelism MAK
+  # exists for is bounded by the server here, not by this number. Raise it if you
+  # have the VRAM for concurrent loads.
+  max_concurrent_agents: 1
+  # Reduced from the 24000/32000 defaults so a bundle fits a mid-size local
+  # context window. The Ollama adapter refuses (loudly) rather than letting the
+  # server truncate a prompt, so these two settings are what it will name.
+  dependency_context_bytes: 12000
+  cross_file_context_bytes: 16000
+  # A local run is unmetered, but max_total_tokens still works here: Ollama
+  # reports prompt_eval_count / eval_count on every reply.
+  # max_total_tokens: 2000000
+
+planner:
+  model: "qwen2.5-coder:14b"
+  # Required: a local model id matches no provider prefix, so without `backend`
+  # MAK cannot infer which runtime to plan on.
+  backend: "ollama"
+  base_url: "http://localhost:11434"
+
+agents:
+  - type: "ollama_api"
+    model: "qwen2.5-coder:14b"
+    base_url: "http://localhost:11434"
+    # Constrained decoding: Ollama compiles this schema to a grammar, which on a
+    # small model is usually more reliable than cloud-style tool calling.
+    structured_output: "json_schema"
+    # Two follow-up turns rather than one — a smaller model slips on shape more
+    # often, and one short repair turn is far cheaper than re-sending the bundle.
+    repair_attempts: 2
+    # An explicit window. This beats OLLAMA_CONTEXT_LENGTH *and* the Modelfile,
+    # which is precisely why the native adapter is worth having: leave it unset
+    # and MAK sizes the window to each bundle instead.
+    num_ctx: 32768
+    # Keep the model resident between tasks; without this every task can pay a
+    # multi-second reload.
+    keep_alive: "30m"
+    # The server's own default is tuned for chat, not for code.
+    temperature: 0.1
+    max_instances: 1
+    # Local generation is measured in minutes, and since Wave 17 the per-agent
+    # timeout is what bounds the call.
+    timeout: 1800
+
+models:
+  # Nothing to refresh: no hosted catalog is consulted in a local run.
+  auto_refresh: false
+
+git:
+  auto_commit: true
+  auto_push: false
+
+node_store:
+  include_patterns:
+    - "**/*.py"

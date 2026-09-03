@@ -1,0 +1,43 @@
+# Air-gapped: nothing in this configuration contacts the network.
+#
+#   mak examples fully-local-offline > mak.yaml
+#
+# Everything runs on localhost, the model catalog is never refreshed, and git
+# never pushes. Use this for a repository that must not leave the machine.
+
+session:
+  max_concurrent_agents: 1
+  # Deliberately tight: an offline host is often the smaller machine, and a
+  # bundle that does not fit is refused rather than silently truncated.
+  dependency_context_bytes: 8000
+  cross_file_context_bytes: 12000
+
+planner:
+  model: "qwen2.5-coder:14b"
+  backend: "ollama"
+  base_url: "http://localhost:11434"
+
+agents:
+  - type: "ollama_api"
+    model: "qwen2.5-coder:14b"
+    base_url: "http://localhost:11434"
+    structured_output: "json_schema"
+    repair_attempts: 2
+    num_ctx: 16384
+    keep_alive: "30m"
+    temperature: 0.1
+    max_instances: 1
+    timeout: 1800
+
+models:
+  # No provider model-list API is ever contacted.
+  auto_refresh: false
+
+git:
+  auto_commit: true
+  # Never push from an air-gapped host.
+  auto_push: false
+
+node_store:
+  include_patterns:
+    - "**/*.py"

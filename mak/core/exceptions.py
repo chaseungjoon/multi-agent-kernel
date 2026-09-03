@@ -127,5 +127,26 @@ class AgentProtocolError(AgentResponseError):
     kind = "protocol"
 
 
+class AgentContextExceededError(AgentResponseError):
+    """Raised when a bundle cannot fit the local model's context window.
+
+    Ollama's runtime context defaults to a few thousand tokens *regardless of
+    what the model supports*, and it **silently truncates** an over-long prompt
+    rather than erroring. MAK's bundles run to tens of KB, so the naive local
+    setup produces a confident wrong answer with nothing in any log to explain
+    it — the worst failure mode a code editor can have. The native adapter sizes
+    the window itself and, when even the model's real limit cannot hold the
+    bundle, refuses here instead.
+
+    Not retryable: the same bundle re-sent is the same overflow, so retrying
+    would spend the attempt budget re-earning the identical refusal. The message
+    names the estimated prompt size, the model's limit, and the settings that
+    fix it, so the session's failure reason is something a user can act on.
+    """
+
+    retryable = False
+    kind = "context"
+
+
 class ConfigError(MakError):
     """Raised when configuration loading or validation fails."""

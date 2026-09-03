@@ -1341,6 +1341,7 @@ class Session:
             no_changes_required=result.no_changes_required,
             stop_reason=result.stop_reason,
             usage=dict(result.usage),
+            repairs=result.repairs,
             error=result.error,
         )
 

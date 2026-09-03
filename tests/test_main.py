@@ -322,3 +322,100 @@ class TestModelCaveatWarnings:
             session_builder=_builder(FakeSession()),
         )
         assert "mak: warning:" not in capsys.readouterr().err
+
+
+_LOCAL_AGENTS = (
+    "agents:\n"
+    "  - type: ollama_api\n"
+    "    model: qwen2.5-coder:14b\n"
+)
+
+
+class TestLocalPlannerMismatchWarning:
+    """Wave 15.11: `--models ollama:...` must not look local and quietly not be."""
+
+    def test_an_all_local_roster_with_a_hosted_planner_warns(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = _config_file(
+            tmp_path, f"planner:\n  model: claude-opus-5\n{_LOCAL_AGENTS}"
+        )
+        main(
+            ["--task", "t", "--config", str(cfg)],
+            session_builder=_builder(FakeSession()),
+        )
+        err = capsys.readouterr().err
+        assert "every agent is local" in err
+        assert "planner.backend" in err
+
+    def test_a_fully_local_run_stays_silent(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = _config_file(
+            tmp_path,
+            "planner:\n"
+            "  model: qwen2.5-coder:14b\n"
+            "  backend: ollama\n"
+            "  base_url: http://localhost:11434\n"
+            f"{_LOCAL_AGENTS}",
+        )
+        main(
+            ["--task", "t", "--config", str(cfg)],
+            session_builder=_builder(FakeSession()),
+        )
+        assert "every agent is local" not in capsys.readouterr().err
+
+    def test_a_cloud_roster_stays_silent(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(
+            ["--task", "t", "--config", str(_config_file(tmp_path))],
+            session_builder=_builder(FakeSession()),
+        )
+        assert "every agent is local" not in capsys.readouterr().err
+
+    def test_a_hybrid_roster_stays_silent(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A cloud planner beside *some* local agents is an ordinary mixed
+        # roster, not the silent-surprise case the warning exists for.
+        cfg = _config_file(
+            tmp_path,
+            "planner:\n  model: claude-opus-5\n"
+            "agents:\n"
+            "  - type: anthropic_api\n"
+            "  - type: ollama_api\n    model: qwen2.5-coder:14b\n",
+        )
+        main(
+            ["--task", "t", "--config", str(cfg)],
+            session_builder=_builder(FakeSession()),
+        )
+        assert "every agent is local" not in capsys.readouterr().err
+
+
+class TestPlannerApiKeyResolution:
+    def test_an_explicit_api_key_env_wins_over_inference(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-inferred")
+        monkeypatch.setenv("VLLM_TOKEN", "sk-explicit")
+        cfg = _config_file(
+            tmp_path,
+            "planner:\n  model: claude-opus-5\n  api_key_env: VLLM_TOKEN\n"
+            "agents:\n  - type: anthropic_api\n",
+        )
+        from mak.config import load_config
+
+        assert cli._planner_api_key(load_config(cfg)) == "sk-explicit"
+
+    def test_a_local_planner_resolves_to_no_key(self, tmp_path: Path) -> None:
+        # None is what lets the adapter apply its placeholder rule rather than
+        # forwarding a real cloud key to a local host.
+        cfg = _config_file(
+            tmp_path,
+            "planner:\n  model: qwen2.5-coder:14b\n  backend: ollama\n"
+            f"{_LOCAL_AGENTS}",
+        )
+        from mak.config import load_config
+
+        assert cli._planner_api_key(load_config(cfg)) is None

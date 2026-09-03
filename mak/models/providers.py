@@ -60,6 +60,25 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+# Provider -> the packaging extra that installs its SDK. Named in the failure
+# message because "No module named 'anthropic'" tells a user what is missing but
+# not what to type, and MAK's SDKs are optional extras as of Wave 15.
+_SDK_EXTRA: dict[str, str] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "gemini": "gemini",
+}
+
+
+def _missing_sdk(provider: str, exc: ImportError) -> ModelFetchError:
+    """Return the fetch failure for a provider whose SDK is not installed."""
+    extra = _SDK_EXTRA[provider]
+    return ModelFetchError(
+        f"{provider}: SDK not installed ({exc}); run "
+        f"'pip install \"multi-agent-kernel[{extra}]\"'"
+    )
+
+
 class AnthropicSource:
     """Anthropic ``/v1/models`` — the richest of the three (limits included)."""
 
@@ -71,7 +90,9 @@ class AnthropicSource:
         """Fetch Anthropic's model list (the SDK paginates on iteration)."""
         try:
             import anthropic
-
+        except ImportError as exc:
+            raise _missing_sdk("anthropic", exc) from exc
+        try:
             client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
             return [
                 FetchedModel(
@@ -104,7 +125,9 @@ class OpenAiSource:
         """Fetch OpenAI's model list (bare ids; no limits are exposed)."""
         try:
             import openai
-
+        except ImportError as exc:
+            raise _missing_sdk("openai", exc) from exc
+        try:
             client = openai.OpenAI(api_key=api_key, timeout=timeout)
             return [
                 FetchedModel(model_id=str(m.id))
@@ -126,7 +149,9 @@ class GeminiSource:
         """Fetch Gemini models that actually support content generation."""
         try:
             from google import genai
-
+        except ImportError as exc:
+            raise _missing_sdk("gemini", exc) from exc
+        try:
             client = genai.Client(api_key=api_key)
             models: list[FetchedModel] = []
             for m in client.models.list():

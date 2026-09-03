@@ -105,6 +105,12 @@ class TaskResult:
       never named the schema. Unlike ``retryable``, it is **never read off the
       wire**: it is MAK's classification of why MAK could not use a reply, so an
       agent setting it would be steering the feedback about its own output.
+    - ``repairs`` — how many follow-up turns the adapter spent getting a
+      decodable reply out of this attempt. Adapter telemetry like ``usage`` and
+      ``stop_reason``, merged after the model's own keys so it cannot be forged,
+      and logged with the result: a run whose replies routinely need a second
+      turn is a run whose local model is too weak, or one that wants
+      ``structured_output: json_schema`` — and neither is visible otherwise.
     """
 
     task_id: str
@@ -117,6 +123,7 @@ class TaskResult:
     usage: dict[str, int] = field(default_factory=dict)
     retryable: bool = True
     error_kind: str | None = None
+    repairs: int = 0
 
 
 @dataclass(frozen=True, slots=True)
