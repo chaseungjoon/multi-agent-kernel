@@ -14,6 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from mak.core.atomic import write_text_atomic
 from mak.core.types import NodeFragment
 
 _logger = logging.getLogger(__name__)
@@ -68,12 +69,18 @@ def format_with_ruff(source: str) -> str:
     return result.stdout
 
 
-def reconstruct_file(
+def render_file(
     fragments: list[NodeFragment],
-    output_path: Path | None = None,
     use_ruff: bool = True,
 ) -> str:
-    """Assemble fragments in order, validate, format, and optionally write to disk."""
+    """Assemble, validate, and format fragments — **without touching disk**.
+
+    Split out from :func:`reconstruct_file` for Wave 19's commit transaction,
+    which has to know that *every* file of a multi-file change renders cleanly
+    before it writes *any* of them. Rendering as it went is what let a task write
+    its first file and then fail on its second, leaving disk ahead of a store
+    that was subsequently rolled back.
+    """
     assembled = assemble_fragments(fragments)
 
     # compile() enforces from-__future__ placement; ast.parse() does not
@@ -81,9 +88,22 @@ def reconstruct_file(
 
     if use_ruff:
         assembled = format_with_ruff(assembled)
+    return assembled
 
+
+def reconstruct_file(
+    fragments: list[NodeFragment],
+    output_path: Path | None = None,
+    use_ruff: bool = True,
+) -> str:
+    """Assemble fragments in order, validate, format, and optionally write to disk.
+
+    The write is atomic. ``Path.write_text`` truncates its destination before
+    writing it, so a failure or a kill between the two replaced a real source
+    file with a partial one — on the very path MAK had just been trusted to
+    rewrite.
+    """
+    assembled = render_file(fragments, use_ruff=use_ruff)
     if output_path is not None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(assembled, encoding="utf-8")
-
+        write_text_atomic(output_path, assembled)
     return assembled

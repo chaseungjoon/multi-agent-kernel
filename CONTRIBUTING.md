@@ -208,7 +208,7 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **1577 tests pass**,
+The **kernel is functionally complete and well-tested**: **1672 tests pass**,
 `mypy --strict mak cli` is clean, and `ruff check mak cli tests` is clean (the
 gate was extended to `cli/` in Wave 17 — see below). The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
@@ -245,6 +245,7 @@ The module-by-module state:
 | **Write-path safety & state durability** | **Complete (Wave 17)** — every entry point that turns a node id into a path is containment-checked; all three persisted state files are crash-safe; `mypy --strict`/`ruff` now cover `cli/` too |
 | **Cost & disk bounds, log fidelity** | **Complete (Wave 18)** — a run has a token ceiling and the store a retention policy; a no-op cannot be asserted about code that never existed; enrichment and ingestion stop paying for what they discard |
 | **Local LLM support** | **Complete (Wave 15)** — `local_api`/`ollama_api` transports, native context sizing, a parse→repair→retry loop, and an app mode (`cloud`/`local`/`hybrid`) that reaches the prompt with no API key at all |
+| **State preservation & truthful outcomes** | **Complete (Wave 19)** — a real commit transaction with a journal and restart recovery; the store reconciles with the working tree at startup instead of discarding human edits; audit commits use a private Git index; a run reports its *aggregate* outcome and teardown reports what the suite actually did; one owner per project |
 | `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
@@ -588,10 +589,14 @@ This superseding is enforced at two additional levels for robustness:
   prevents a scenario where a correctly-written whole-file node from a prior run
   coexists with re-ingested stale fragments: without this guard, reconstruction would
   concatenate whole-file content *and* every fragment, emitting every symbol twice.
-- **`parse_file_into_nodes(file_path, …)`** — if a whole-file node is already
-  committed for the file, re-ingestion is skipped entirely and the method returns
-  `[whole_file_nid]`. The whole-file node is the authoritative version; fragmenting
-  it again on `initialize()` would add stale siblings that contaminate reconstruction.
+- **`parse_file_into_nodes(file_path, …)`** — a thin wrapper over `sync_file` since
+  Wave 19. When a whole-file node is already committed for the file, the node keeps
+  its authority and is **not** re-fragmented (fragmenting it again would add the
+  stale siblings that contaminate reconstruction) — but the supplied `source` is no
+  longer *ignored*. It used to be: the method returned `[whole_file_nid]` without
+  looking at what it was handed, which is how a human's edit to a whole-file node
+  was silently reverted on the next run. A differing source now becomes that node's
+  next version. See §10 for the reconciliation this is part of.
 - **`list_nodes()` (no file filter)** — fragment nodes for files that have a
   whole-file node are omitted from the full inventory, so the planner never offers
   them as write targets.
@@ -622,7 +627,8 @@ Runtime state lives under `.mak/` (gitignored):
 `NodeStore` (`store.py`) owns versioning and persistence. Key methods:
 `get_node`, `put_node`, `commit_node`, `rollback_node`, `revert_node`, `get_staged`,
 `list_nodes`, `get_committed_fragments`, `get_preview_fragments`,
-`parse_file_into_nodes`.
+`parse_file_into_nodes`, and — Wave 19 — `transaction`, `uncommit_node`,
+`retire_node`, `sync_file`, `record_materialized` / `materialized_digest`.
 
 Two of them are **maintenance only**, added in Wave 11 for the startup prune and
 used by nothing on the edit path: `list_all_nodes()` returns every committed id
@@ -631,6 +637,32 @@ hides), and `remove_node(node_id)` deletes a node outright — committed and pen
 state, metadata, and its on-disk version directory (only when that directory really
 resolves inside the store root). A rejected *edit* is still rolled back or reverted;
 it is never removed.
+
+**Three different "undo"s, and why each exists (Wave 19).** They are not
+interchangeable, and conflating them is what produced two of the audit's P1s:
+
+| Method | Undoes | Keeps history? |
+|---|---|---|
+| `rollback_node` | a *pending* (staged, uncommitted) fragment | n/a — nothing was committed |
+| `revert_node` | one committed version, to `version - 1` | yes |
+| `uncommit_node` | a **first**-version commit, back to *absent* | yes (the file stays on disk) |
+| `retire_node` | a symbol the working tree no longer has | **yes** — the point of it |
+| `remove_node` | everything, permanently (maintenance only) | no |
+
+`revert_node` has no answer for a node whose committed version is 1: there is no
+version 0, and its correct prior state is not an older version but no node at all.
+That gap is why a failed first-version commit used to stay in the store —
+`uncommit_node` is the piece it could not express, and `transaction()` is what
+composes the two into a whole-commit rollback.
+
+`retire_node` is the **deletion policy**, and deliberately not `remove_node`. Using
+the hard delete to record "a human deleted this function" would destroy exactly the
+history the store exists to keep. A retired node leaves the live set — no listing,
+no reconstruction, no planner inventory — while its metadata entry (flagged
+`retired`) and its on-disk versions stay, so `get_node(nid, version=n)` still
+answers and `gc`'s forward-mapping orphan sweep still protects its directory.
+`_load_from_disk` skips retired ids, so a deleted symbol does not resurrect on the
+next run.
 
 `get_preview_fragments(file_path, staged_overrides)` is used by
 `_preview_is_valid` / `_assemble_preview` to build the prospective file *before*
@@ -661,6 +693,30 @@ next version. Prior versions are retained on disk, which is what makes
 `revert_node` (roll a committed node back to its previous version) possible.
 Fragment order is preserved as `order` metadata so reconstruction emits source in
 its original order. **All mutations are guarded by a re-entrant lock.**
+
+**`transaction()` — the commit point (Wave 19).** `commit_node` used to be its own
+commit point: it mutated the index, deleted superseded fragment directories, pruned
+old versions, and *then* saved the metadata — so a failure anywhere after the first
+of those left the store's representations disagreeing, with the files a rollback
+needed already deleted. Inside a transaction those three destructive effects are
+**deferred** and `_save_metadata` runs exactly once, at the end: **that save is the
+commit point.** Before it nothing durable has changed and the in-memory index is
+restored verbatim (including the version files `put_node` wrote while it was open);
+after it the deferred deletions drain.
+
+Pruning in particular *must* be deferred — it deletes the very version files a
+rollback restores the index to. The transaction is re-entrant by depth, because the
+operations that need it nest (`sync_file` opens one and calls `commit_node`, which
+opens another); only the outermost block commits or rolls back. Outside a
+transaction, `commit_node` still restores the entries it changed if the metadata
+save raises, so even a bare commit cannot leave memory ahead of disk.
+
+**`file_state.json`** is a sidecar recording the SHA-256 of the content MAK last
+*materialized* for each file. It is what makes "did a human edit this?" answerable:
+the store's own fragments cannot distinguish the edit MAK made from an edit someone
+made afterwards. An unreadable sidecar reads as "never seen", which makes
+reconciliation treat the working tree as authoritative — the safe direction to be
+wrong in.
 
 **Retention, ordering, and the generation counter (Wave 18).** Three changes to
 the above, all of them about a store that has to survive months of use rather than
@@ -925,8 +981,10 @@ When an agent returns a `TaskResult`:
    `compile()`-validate it *before* committing. Only if every affected file
    reconstructs cleanly are the fragment versions committed and the files written.
 4. On success, release the task's locks and write an audit commit. On any failure,
-   roll back the staged versions (and revert any commit) so the store and disk
-   never diverge.
+   the whole transaction rolls back — store index, superseded fragments, metadata,
+   and every output file — so the store and disk never diverge. Since Wave 19 that
+   is a genuine transaction with an explicit commit point, not a best-effort
+   revert; see [Session](#10-session-lifecycle).
 
 ### 3.4 Reconstruction (fragments → file) — `reconstruction.py`
 
@@ -972,6 +1030,21 @@ touch ingestion or reconstruction, this test is your gate.**
 ## 4. Lock Manager
 
 `mak/lock_manager/` is the concurrency arbiter.
+
+> ### Scope: the lock table is *intra*-process, by design
+>
+> `LockTable` guards its state with one table-wide `threading.RLock`. That is the
+> right primitive for what it actually protects — a session's own worker threads
+> racing over one in-memory table — and it says **nothing** about a second process.
+> Before Wave 19 that gap was load-bearing in the worst way: two `mak` runs over one
+> project each built their own table over the same persistence file and both granted
+> a write lock on the same node, and each startup's `clear()` dropped the other's
+> leases without establishing that their owner was alive.
+>
+> The guarantee is **single ownership**, not a distributed lock table, and it lives
+> in `project_lease.py` (§4.4). MAK does not implement distributed locking and does
+> not intend to: two concurrent runs on one checkout are a mistake to report, not a
+> workload to schedule.
 
 ### 4.1 Lock model
 
@@ -1028,6 +1101,33 @@ and re-queue it.
 > of a task's locks atomically, a waiting task holds none, so the wait graph is
 > acyclic by construction and the watchdog is defense in depth rather than a
 > hot path.
+
+### 4.4 Project lease — one owner per project (Wave 19)
+
+`project_lease.py` provides `ProjectLease`, the *inter*-process half of the story
+the lock table only covers within one process. A session takes it as the **first**
+action of `initialize()` and `recover()` — before journal recovery, before
+`lock_table.clear()`, before ingestion, before any state mutation — renews it on the
+same heartbeat tick as the task leases, and releases it in `close()`. A second live
+owner fails fast with `ProjectBusyError`, naming the holder's pid, host, session id,
+and the age of its last heartbeat. Maintenance that *mutates* the store takes the
+same lease: `mak gc` deletes version files and fragment directories, which
+underneath a running session would remove the versions its open transaction might
+need to roll back to.
+
+**Why `flock` and not a lock file.** A lock *file* has to answer "is the owner still
+alive?" from data the dead owner wrote, which is unanswerable in general: a pid can
+be recycled, and a heartbeat threshold either strands live sessions or lets dead
+ones block for minutes. `flock` moves that question to the kernel, which releases
+the lock when the holding process dies **however** it dies, `SIGKILL` included. So
+abrupt-owner recovery needs no timeout and no heuristic — the next acquire simply
+succeeds. The JSON record inside the file is diagnostics (who to name in the error)
+plus the staleness signal for Windows, whose `msvcrt` byte-range lock *can* outlive
+its process and therefore does fall back to a `stale_after_s` threshold. That
+fallback is documented as the weaker of the two paths.
+
+Because the lease is held, `lock_table.clear()` is finally sound: holding it **is**
+the proof the prior owner is dead.
 
 ## 5. Conflict Detector
 
@@ -1848,14 +1948,40 @@ resolution are the planner's half of this wave — see §8.
 — lock discipline already prevents conflicting writes, so all commits go directly to
 the working branch (no branches, no worktrees). `GitHelper`:
 
-- `commit_task(task_id, files, description, agent_type, session_id)` stages and
-  commits with a `[MAK-<task_id>]` subject and a `Files/Status/Agent/Session` body,
-  returning the commit hash — or `None` when the staged content is byte-identical to
-  HEAD (an empty diff is a no-op, not an error, so a no-change reconstruction does
-  not crash the session).
+- `commit_task(task_id, files, description, agent_type, session_id)` commits exactly
+  `files` with a `[MAK-<task_id>]` subject and a `Files/Status/Agent/Session` body,
+  returning the commit hash — or `None` when those files are byte-identical to HEAD
+  (an empty diff is a no-op, not an error, so a no-change reconstruction does not
+  crash the session).
+
+  **The user's index is never touched (Wave 19).** This used to run `git add` on the
+  real index, check the *whole* index with `git diff --cached`, and then run an
+  unrestricted `git commit`. Two things followed, neither of which an audit log is
+  entitled to do: a user's staged `unrelated.txt` was swept into MAK's commit, and a
+  task whose own files had not changed still committed whatever else was staged. The
+  commit is now built in a **private index** (`GIT_INDEX_FILE`, a
+  `.git/mak-index-<uuid>` seeded from HEAD with `read-tree`, or `read-tree --empty`
+  on a repo with no HEAD yet), so the resulting tree is exactly "HEAD plus these
+  files" regardless of what the user has staged. The emptiness check is
+  `diff-index --cached --quiet HEAD --` against that private index. The temp index is
+  unlinked in a `finally`, so a Git failure leaves the real index byte-identical to
+  what it was. After a successful commit, `git update-index --add -- <files>`
+  re-stats **only the committed paths** so `git status` does not report MAK's own
+  commit back as staged modifications; a failure there is a warning, since the commit
+  has already landed.
+
+  **Policy for pre-existing edits to task-owned files.** What is committed is the
+  working-tree content MAK materialized, which after startup reconciliation (§10)
+  already incorporates any uncommitted edit the user had made to that file. A
+  *partially staged* version of a task-owned file is therefore not what lands in the
+  commit — the file on disk is — and the user's index entry for it is left alone.
 - `get_session_commits(session_id)` parses `git log` into `CommitInfo` filtered by
-  session; `validate_clean_state()` checks porcelain; `push(branch, remote)`
-  coordinates the single end-of-session push.
+  session; `push(branch, remote)` coordinates the single end-of-session push.
+- `validate_clean_state()` checks porcelain. It had **no callers** until Wave 19;
+  it is now what `git.require_clean_tree` enforces — an opt-in precondition (off by
+  default) that refuses to start a session on a dirty tree, so `git diff` after a run
+  means exactly "what MAK did". It is opt-in because that is a policy a project
+  chooses: MAK's commits are path-scoped either way.
 - `ensure_initialized()` (called from `Session.initialize` when `auto_commit` is on)
   guarantees the work-dir is its **own** repo before any commit. If the dir is nested
   inside an outer repo (a classic footgun: a project under a git-tracked home
@@ -1883,7 +2009,37 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   overriding that list. `prune_excluded_nodes()` runs first and evicts stored nodes
   whose file is no longer ingestable — the migration for a store poisoned before the
   fix (deleting `.mak/` by hand is the blunt alternative). The count is reported on
-  `SESSION_STARTED` as `pruned_nodes` and printed to stderr.
+  `SESSION_STARTED` as `pruned_nodes` and printed to stderr. Exclusion pruning is a
+  **migration sweep, not a deletion policy** — recording that a human deleted a
+  symbol is `retire_node`'s job, below.
+
+  **Startup is now four ordered steps (Wave 19): own, recover, clear, reconcile.**
+  1. `_acquire_project()` takes the project's exclusive lease *first*, before
+     anything reads or mutates `.mak/`. This is what makes step 3 sound: the old
+     `lock_table.clear()` dropped a prior run's leases having established nothing
+     about whether their owner was alive, so a second startup stripped a live
+     session's locks. Holding the lease **is** the proof the prior owner is gone.
+  2. `_recover_journal()` resolves any commit an interrupted run left in flight (§2),
+     so reconciliation never runs against a mid-transaction working tree.
+  3. `lock_table.clear()`, now provably safe.
+  4. `_reconcile_work_dir()` — see below.
+
+  **Reconciliation replaces one-directional ingestion.** `parse_file_into_nodes`
+  used to return early whenever a whole-file node existed, *ignoring the source it
+  was handed*; fragment re-ingestion wrote current fragments but never removed a
+  symbol that had disappeared, and stamped everything version 1. Three observable
+  consequences, all reproduced by the audit: a human's edit between two sessions was
+  silently discarded, a deleted function kept reconstructing, and every node's edit
+  history reset on each run. `NodeStore.sync_file` now diffs both directions —
+  changed fragments advance to their *next* version, identical ones are untouched,
+  and ids the new parse no longer contains are **retired**. A file the store knows
+  and disk no longer has retires all of its nodes.
+
+  A file whose content differs from the digest MAK recorded when it last wrote it
+  (`file_state.json`) was edited by someone else. `session.on_external_edit` decides
+  what happens: `"adopt"` (default) takes the working tree as the newer truth,
+  `"conflict"` raises `WorkTreeConflictError` **during reconciliation**, before
+  planning, so no agent can be handed content the tree no longer holds.
 - **plan** — planner (+ optional self-critique) → deterministic validation → optional
   HitL review → `install_plan` (builds the DAG + persisted `Scheduler`).
   `install_plan` **always** re-validates the incoming plan — this is the one wire-in
@@ -1966,18 +2122,84 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   wave runs. It was in one front end before: the CLI ran the guard and the
   interactive app did not, so whether a defect the kernel could name got reported
   depended on which entry point the operator happened to launch.
+
+  **It returns a `CascadeOutcome`, never `None` (Wave 19).** It used to return only
+  its *last* `SessionResult`, and both front ends then did
+  `if cascade_result is not None: result = cascade_result` — replacing the original.
+  Combined with `install_plan` resetting the per-wave accumulators, an initial wave
+  with a failed task plus a successful fix-up wave presented as a clean success:
+  green tally, zero failures, exit code 0, push armed. The two ways the loop can stop
+  without finishing had no representation at all — reaching `max_waves` returned the
+  last successful result with nothing marking the limit, and a declined wave returned
+  whatever happened to be there. `CascadeOutcome` carries every wave plus `declined`,
+  `limit_reached`, and `unresolved` (filled by one final detection pass after the
+  loop — the difference between "we are done" and "we stopped").
+- **the aggregate** is `ExecutionResult` (`mak/execution_result.py`): the initial
+  wave plus the cascade outcome, reported as one thing. It answers two questions
+  *separately*, which is the whole point — `tasks_completed` is a **statistic**, and
+  `request_satisfied` is the **verdict** that gates exit codes and the push. Four
+  tasks completing across two waves is not the same as the user getting what they
+  asked for. **An earlier failure is never cleared by later work**: a cascade wave is
+  new work about the callers a *successful* change broke, so it has no standing to
+  resolve a failed task, and the aggregate will not infer that it does. Task ids are
+  namespaced by wave index so two waves that both produce `fix-1` stay
+  distinguishable.
 - **teardown** — run the project's test suite and push if green (when `auto_push`).
   The suite is the `session.test_command` (e.g. `pytest -q`) run in the work dir by a
   `TestRunner` built in the composition root (`mak/test_runner.py`); it reports a real
-  `(passed, output)`. With **no** `test_command` configured the step is skipped
-  entirely (teardown reports success) rather than pretending a suite passed — so the
-  `auto_push` gate is only meaningful when a command is set.
+  `(passed, output)`.
+
+  **Teardown returns a `TeardownResult`, not a bool (Wave 19).** The bool started at
+  `True` and only moved if a runner existed, so a project with no `test_command`
+  logged `tests_passed=True` and — with `auto_push` on — *pushed*, every run. It also
+  never looked at the run itself, so failed, blocked, and skipped tasks pushed too,
+  and in the TUI a teardown that raised was printed as a warning while the flag
+  stayed `True`. There are four outcomes now (`mak/teardown.py`): `passed`, `failed`,
+  `skipped` (nothing ran), and `error` (the runner raised). The push gate requires
+  `git.auto_push`, a git helper, a **satisfied aggregate execution outcome**, and
+  `session.test_policy` — `require_pass` (default) opens the gate only for a suite
+  that genuinely passed; `allow_skip` is the opt-out for a project with no suite.
+  `TeardownResult.push_skipped_reason` names whichever gate refused.
 
 Robustness properties worth knowing:
 
-- **Transactional commit** — the prospective file is reconstructed and
-  `compile()`-validated *before* any `commit_node`; a post-commit write failure
-  triggers a best-effort revert, so the node store and disk never diverge.
+- **Transactional commit (rewritten in Wave 19)** — the prospective file is
+  reconstructed and `compile()`-validated *before* any `commit_node`, and the
+  commit that follows is a real transaction rather than a best-effort revert.
+
+  What the old wording ("a post-commit write failure triggers a best-effort
+  revert, so the node store and disk never diverge") promised, the code did not
+  deliver, in four distinct ways — all found by the 2026-09-08 audit while the
+  full suite was green. `_reconstruct_affected` wrote each file in turn with
+  `Path.write_text`, so a two-file change could write the first and fail on the
+  second; `write_text` truncates before writing, so an interruption *destroyed*
+  the file rather than skipping it; `revert_node` rolls back to `version - 1`,
+  which a brand-new node does not have, so a failed first-version commit stayed;
+  and `commit_node` deleted a superseded file's fragment directories before
+  reconstruction succeeded, destroying the history a rollback needed.
+
+  The shape now is: `NodeStore.transaction()` snapshots the in-memory index and
+  **defers** its three destructive effects (the metadata save, superseded-fragment
+  removal, version pruning); `install_files` renders *every* affected file in
+  memory, journals each destination's prior content, then writes them all with
+  `write_text_atomic`. **The store's metadata save is the commit point.** Before
+  it nothing durable has changed and the index is restored verbatim; after it the
+  deferred deletions drain and the change is recoverable in full. `Session._revert`
+  is gone — the transaction is the rollback.
+
+  Proven by `tests/test_wave19_acceptance.py` (criteria 1–3) and
+  `tests/node_store/test_sync.py`, each of which asserts the invariant against a
+  **freshly reopened** store, because agreement between live in-memory objects is
+  exactly what the defect already had.
+- **Crash recovery of an in-flight commit (Wave 19)** — the journal
+  (`mak/node_store/journal.py`) is written before the first output file is touched
+  and carries a backup of every destination. A later process reads it and decides
+  by comparing the versions it recorded against the versions the reopened store
+  holds: all matching means the commit point passed, so it rolls *forward*; any
+  differing means it did not, so it rolls *back*. A journal in the `installed`
+  phase means files and store are both durable and only the Git audit is in doubt,
+  which recovery resolves by re-running `commit_task` — a retry Git itself makes
+  idempotent by reporting an empty diff.
 - **Partial completion** — when a result's `modified_nodes ⊊ target_nodes`, the
   completed grants are accepted and committed and only their locks released; the
   *remaining* grants are re-dispatched as a narrowed task. This is tracked per task
@@ -2173,6 +2395,14 @@ session:
   # max_total_tokens: 2000000      # spend ceiling for one run (Wave 18): input +
                                    # output, every agent call plus the planner's.
                                    # Unset (the default) is unbounded
+  on_external_edit: "adopt"        # Wave 19, §10 — what startup reconciliation does
+                                   # with a file edited since MAK last wrote it.
+                                   # "adopt" takes the working tree as the newer
+                                   # truth; "conflict" raises before planning
+  test_policy: "require_pass"      # Wave 19, §10 — whether a push may happen when
+                                   # no suite ran. "require_pass" says only a suite
+                                   # that ran and passed opens the gate;
+                                   # "allow_skip" is the opt-out for no suite
 
 planner:
   model: "claude-opus-5"
@@ -2220,8 +2450,11 @@ agents:                         # first entry is the default agent
 
 git:
   auto_commit: true
-  auto_push: false
+  auto_push: false        # gated on the *aggregate* outcome plus test_policy (§10)
   commit_prefix: "[MAK]"
+  # require_clean_tree: false  # Wave 19, §9 — opt-in precondition: refuse to start
+                               # on a dirty tree, so `git diff` after a run means
+                               # exactly "what MAK did". Off by default
 
 models:
   auto_refresh: true      # background-refresh the provider model catalog (§13);
@@ -2326,8 +2559,9 @@ Rules and behaviors:
   --work-dir ~/projA` and `mak run --work-dir ~/projB` invoked from the same
   shell shared `./.mak/node_store`, and since node ids are work-dir-relative,
   `toolkit/registry.py` in project A and project B were literally the *same*
-  id: re-ingestion is skipped once a whole-file node exists, so B silently
-  inherited A's content and reconstruction wrote it to disk. The TUI already
+  id: re-ingestion was skipped once a whole-file node existed (Wave 19 replaced
+  that with synchronization, §2), so B silently inherited A's content and
+  reconstruction wrote it to disk. The TUI already
   anchored `mak_dir` correctly (§12.2); `mak run` did not. Both now call the
   shared `config.anchor_mak_dir(config)` — a relative `mak_dir` resolves
   against `work_dir`, an absolute one (an explicit override) is left alone —
@@ -3018,6 +3252,9 @@ mak/
 ├── config.py              # config loading + validation
 ├── config.yaml            # default configuration
 ├── session.py             # session lifecycle, transactional commit, recovery
+├── cascade.py             # the shared post-wave fix-up loop + CascadeOutcome
+├── execution_result.py    # ExecutionResult: the whole run's outcome, not one wave
+├── teardown.py            # SuiteOutcome / TeardownResult + the push policy
 │
 ├── core/
 │   ├── types.py           # NodeId, NodeFragment, LockEntry, TaskBundle, …
@@ -3028,12 +3265,16 @@ mak/
 │
 ├── node_store/
 │   ├── ingestion.py       # file → raw-source span-tiled fragments
-│   ├── store.py           # NodeStore: versioned get/put/commit/rollback/revert
+│   ├── store.py           # NodeStore: versioned get/put/commit/rollback/revert,
+│   │                      #   transaction(), sync_file(), retire_node()
+│   ├── journal.py         # write-ahead commit journal + restart recovery
+│   ├── transaction.py     # render-all → journal → atomic install, as one step
 │   └── reconstruction.py  # fragments → file (assemble + ruff format)
 │
 ├── lock_manager/
 │   ├── rwlock.py          # per-node reader-writer lock
 │   ├── lock_table.py      # thread-safe lock state + persistence + leases
+│   ├── project_lease.py   # OS-backed single ownership of one project (flock)
 │   ├── conflicts.py       # the single canonical conflict matrix
 │   └── deadlock_detector.py
 │
@@ -3332,6 +3573,30 @@ here so contributors don't mistake them for bugs:
   Python offers no safe way to kill a thread mid-call; the alternative is running
   every agent call in a subprocess, which is a materially bigger change than this
   wave's scope.
+- **One MAK per project, enforced (Wave 19).** Two concurrent runs on one checkout
+  are refused with `ProjectBusyError`, not scheduled. This is a deliberate scope
+  limit: MAK is a tool a person runs on their own working tree, and the alternative
+  — a genuinely distributed lock table over the persisted state — is machinery for a
+  workload MAK does not have. Distinct projects still run concurrently.
+- **The Windows project lease is weaker than the POSIX one (Wave 19).** `flock` is
+  released by the kernel when its holder dies, so abrupt-owner recovery on POSIX
+  needs no heuristic. Windows' `msvcrt` byte-range lock can outlive its process, so
+  that path falls back to a heartbeat-age threshold (`stale_after_s`, 90s) — which
+  can, in principle, either break a live lease whose owner was stopped for longer
+  than that or make a successor wait. CI is POSIX; the fallback is documented rather
+  than tested against a real Windows kill.
+- **Reconciliation adopts the working tree by default (Wave 19).** When a file
+  changed since MAK last wrote it, `session.on_external_edit: "adopt"` takes the
+  human's version as the newer truth and syncs the store to it. That is the right
+  default — the alternative is overwriting someone's work — but it does mean MAK
+  will happily build on an edit it never saw made. `"conflict"` is the opt-in for a
+  project that would rather stop and look.
+- **A retired node's metadata entry is kept forever.** Recording a deleted symbol
+  without destroying its history means the id stays in `metadata.json` (flagged
+  `retired`) even after `version_retention` has pruned its last version file. The
+  entry is a few dozen bytes and keeping it is what stops `gc` treating the
+  directory as an orphan; a store with an extremely high symbol churn would
+  accumulate them. No sweep exists for this yet.
 
 ## Good first contributions
 
@@ -3367,9 +3632,11 @@ upfront; **`compile()` everywhere for validation** — replaced `ast.parse()` in
 validation gate so that `from __future__` placement and other compile-time rules are
 enforced before acceptance; **`get_preview_fragments`** added to `NodeStore` for
 correctly-indented pre-commit preview assembly; **whole-file node primacy** —
-`list_nodes` and `parse_file_into_nodes` now enforce that a committed whole-file node
-takes exclusive authority over its file (stale fragments are excluded, re-ingestion
-is skipped); and **no-op disk sync** so that the on-disk file is always written from
+`list_nodes` and `parse_file_into_nodes` enforce that a committed whole-file node
+takes exclusive authority over its file, so stale fragments are excluded from
+reconstruction (the *other* half of that rule — skipping re-ingestion entirely — was
+how a human's edit to a whole-file node got silently discarded, and Wave 19 replaced
+it with synchronization; see §2/§10); and **no-op disk sync** so that the on-disk file is always written from
 the committed node store content when a no-op task completes. **Wave 10** (out of
 numeric order — it didn't depend on Waves 7–9) added deterministic plan validation: a
 static dependency graph over the node store (`depgraph.py`) grounds hallucinated node
@@ -3613,6 +3880,49 @@ dir for every test. A test that passes because of a file outside the repo was
 always going to fail eventually; it happened to be this wave that found it. The
 gates closed at 1289 tests, `mypy --strict` and `ruff` clean over `mak` and `cli`.
 
+**Wave 19** answered a second audit (2026-09-08), which found six P1 defects that
+all shared one root: *consistency is not maintained across lifecycle boundaries*.
+Every one was an operation that advanced part of the system's state and then either
+failed, or was later contradicted by a second source of truth nobody reconciled.
+What makes the wave worth recording is that **all 1,577 tests, `ruff`, and
+`mypy --strict` were green while every one of them held** — the suite proved the
+code did what it did, not what it claimed.
+
+The six, and the boundary each failed to hold: a commit spanning store, disk, and
+wave accounting could leave all three disagreeing (§2, §10); a later session
+silently discarded human edits and kept reconstructing deleted symbols (§2, §10); a
+task commit absorbed the user's unrelated staged work (§9); a cascade published a
+green result over an earlier failure (§10); `teardown` reported "tests passed" when
+no suite had run and pushed on it (§10); and two processes over one project both
+granted a write lock on the same node (§4).
+
+The fix was the same shape six times: **name the transaction, define its commit
+point, make everything before it recoverable.** `NodeStore.transaction()` defers the
+destructive effects and makes the metadata save the commit point; a write-ahead
+journal makes an interrupted commit recoverable *by a later process*, deciding
+roll-forward from roll-back by comparing recorded versions against the reopened
+store. `sync_file` replaced one-directional ingestion with reconciliation in both
+directions, and `retire_node` records a deletion without destroying its history —
+the distinction `remove_node` could not express. Audit commits build in a private
+`GIT_INDEX_FILE` seeded from HEAD, so the user's index is never opened at all.
+`CascadeOutcome` and `ExecutionResult` separate *how much work succeeded* from
+*whether the request was satisfied*. `SuiteOutcome` gave "no tests ran" a name
+distinct from "the tests passed". And `ProjectLease` takes an OS-backed exclusive
+lease before anything reads or mutates `.mak/` — which is also what finally made the
+long-standing `lock_table.clear()` at startup sound, since holding the lease *is*
+the proof the prior owner is dead.
+
+Two process notes. Every item closed with a regression test written to fail against
+the old code rather than merely exercise the new — `tests/test_wave19_acceptance.py`
+has one class per numbered criterion from the report — and each of the durability
+tests asserts against a **freshly reopened** store, because agreement between live
+in-memory objects is exactly what the defects already had. The other is that this
+wave's documentation pass had explicit instructions to *reduce* claims: the previous
+text promised a transactional commit that "never diverges" and a teardown that
+gates a push, and the code delivered neither. Those paragraphs now say what the
+tests prove. The gates closed at 1672 tests, `mypy --strict mak cli` and
+`ruff check mak cli tests` clean.
+
 **Wave 15** picked up the top-priority item Waves 17/18's security-and-robustness
 audit had temporarily reordered around — local LLM support (§7.7, §8, §12.2, §14)
 — and, like Wave 10 before it, is numbered for the roadmap item it closes rather
@@ -3667,7 +3977,11 @@ the grain.
 - **Human-in-the-loop plan review.** A ~5-second check eliminates the single point of
   failure in one-shot LLM DAG generation; bypassable with `--no-review`.
 - **Transactional commit.** Validate the reassembled file before advancing the store,
-  so the node store and disk never diverge.
+  so the node store and disk never diverge. Wave 19 made this literal: one
+  transaction spans the affected nodes, the superseded fragments, the output files,
+  and the wave's accounting, with the store's metadata save as the single commit
+  point and a write-ahead journal making everything before it recoverable by a
+  *later process*. The earlier "best-effort revert" was not one — see §10.
 - **`compile()` for validation, not `ast.parse()`.** `ast.parse()` is lenient about
   `from __future__` import placement: it accepts them anywhere in a file, even after
   regular code. Python's runtime and `compile()` both reject this with a

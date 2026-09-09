@@ -56,6 +56,41 @@ class SessionError(MakError):
     """Raised when the session lifecycle cannot proceed."""
 
 
+class WorkTreeConflictError(MakError):
+    """Raised when a file changed underneath MAK and the policy is to stop.
+
+    Between two sessions a human can edit, rename, or delete anything MAK wrote.
+    The store cannot tell that from its own fragments — they record what MAK
+    last *committed*, not what is on disk now — so the session compares each file
+    against the digest of the content MAK last materialized there.
+
+    A difference means someone else's edit. ``session.on_external_edit`` decides
+    what happens next: ``"adopt"`` (the default) takes the working tree as the
+    newer truth and synchronizes the store to it, while ``"conflict"`` raises
+    this — deliberately during startup reconciliation, *before* planning, because
+    the failure this prevents is an agent being handed content the tree has not
+    held for days and rewriting it back over the human's work.
+    """
+
+
+class ProjectBusyError(MakError):
+    """Raised when another live MAK session already owns this project.
+
+    MAK's lock table is an *intra*-process structure: a ``threading.RLock`` makes
+    it safe across a session's own worker threads and says nothing whatsoever
+    about a second process. Two ``mak`` runs over one project therefore both
+    granted write locks on the same node, and each startup cleared the other's
+    leases from the persisted table without ever establishing that its owner was
+    dead.
+
+    The guarantee is single ownership, not a distributed lock table: one process
+    holds an OS-level exclusive lease on the project's ``.mak/`` for as long as
+    it runs, and everyone else fails fast with this. The message names the
+    holder's pid, host, and how long ago it was last seen, because "busy" without
+    a suspect is not something an operator can act on.
+    """
+
+
 class AgentError(MakError):
     """Raised when agent execution fails."""
 

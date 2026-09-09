@@ -217,6 +217,7 @@ def _gc(argv: list[str]) -> int:
     """
     from mak.config import anchor_mak_dir, discover_config_path, load_config
     from mak.core.exceptions import MakError
+    from mak.lock_manager.project_lease import ProjectLease
     from mak.node_store.store import NodeStore
 
     work_dir = argv[0] if argv and not argv[0].startswith("-") else None
@@ -227,14 +228,20 @@ def _gc(argv: list[str]) -> int:
                 config, session=replace(config.session, work_dir=work_dir)
             )
         config = anchor_mak_dir(config)
-        store_root = Path(config.session.mak_dir) / "node_store"
+        mak_dir = Path(config.session.mak_dir)
+        store_root = mak_dir / "node_store"
         if not store_root.is_dir():
             print(f"mak: no node store at {store_root} — nothing to collect.")
             return 0
-        store = NodeStore(
-            store_root, version_retention=config.node_store.version_retention
-        )
-        removed = store.gc()
+        # gc *mutates* the store — it deletes version files and whole fragment
+        # directories. Doing that underneath a running session would remove the
+        # versions that session's open transaction may still need to roll back
+        # to, so maintenance takes the same single-owner lease a run does.
+        with ProjectLease(mak_dir, "mak-gc"):
+            store = NodeStore(
+                store_root, version_retention=config.node_store.version_retention
+            )
+            removed = store.gc()
     except MakError as exc:
         print(f"mak: gc failed: {exc}", file=sys.stderr)
         return 1

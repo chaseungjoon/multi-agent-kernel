@@ -12,12 +12,17 @@ All operations shell out to ``git`` via ``subprocess`` and surface failures as
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import subprocess
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from mak.core.exceptions import GitIntegrationError
+
+_logger = logging.getLogger(__name__)
 
 # ASCII separators keep field/record boundaries out of commit text.
 _FIELD_SEP = "\x1f"
@@ -44,8 +49,13 @@ class GitHelper:
         self._repo_dir = repo_dir
         self._commit_prefix = commit_prefix
 
-    def _run(self, args: list[str]) -> str:
-        """Run a git subcommand, returning stdout or raising on failure."""
+    def _run(self, args: list[str], *, env: dict[str, str] | None = None) -> str:
+        """Run a git subcommand, returning stdout or raising on failure.
+
+        ``env`` overlays the process environment — in practice always
+        ``GIT_INDEX_FILE``, which is what keeps an audit commit out of the user's
+        own index.
+        """
         try:
             result = subprocess.run(
                 ["git", *args],
@@ -53,6 +63,7 @@ class GitHelper:
                 capture_output=True,
                 text=True,
                 check=False,
+                env={**os.environ, **env} if env else None,
             )
         except FileNotFoundError as exc:
             raise GitIntegrationError("git executable not found on PATH") from exc
@@ -123,51 +134,126 @@ class GitHelper:
         agent_type: str,
         session_id: str,
     ) -> str | None:
-        """Stage ``files`` and commit them with MAK's structured message.
+        """Commit exactly ``files`` with MAK's structured message.
 
-        Returns the new commit's full hash, or ``None`` if the staged content is
+        Returns the new commit's full hash, or ``None`` if those files are
         byte-identical to HEAD (an empty diff) — that is a no-op, not an error, so
         a reconstruction that changed nothing does not crash the session.
+
+        **The user's index is never touched.** This used to run ``git add`` on the
+        real index, check the *whole* index for staged content, and then run an
+        unrestricted ``git commit``, with two consequences: a user's staged
+        ``unrelated.txt`` was swept into MAK's audit commit, and a task whose own
+        files had not changed still committed whatever else the user had staged.
+        Neither is something an audit log is entitled to do.
+
+        Instead the commit is built in a **private index** (``GIT_INDEX_FILE``)
+        seeded from HEAD, so the resulting tree is exactly "HEAD plus these
+        files" no matter what the user has staged. The temporary index is removed
+        on every path, including failure, so a Git error leaves the user's own
+        index byte-identical to what it was before the call.
+
+        **Pre-existing edits to task-owned files.** What is committed is the
+        working-tree content MAK materialized, which after startup reconciliation
+        already incorporates any uncommitted edit the user had made to that file.
+        A partially-staged version of a task-owned file is therefore not what
+        lands in the commit — the file on disk is — and the user's index entry
+        for it is left alone.
         """
         if not files:
             raise GitIntegrationError(
                 f"task '{task_id}' has no files to commit"
             )
-        self._run(["add", "--", *files])
-        if not self._has_staged_changes():
-            return None
-        body = (
-            f"Files: {', '.join(files)}\n"
-            f"Status: complete\n"
-            f"Agent: {agent_type}\n"
-            f"Session: {session_id}"
-        )
-        self._run(
-            ["commit", "-m", self._subject(task_id, description), "-m", body]
-        )
-        return self._run(["rev-parse", "HEAD"]).strip()
+        index_path = self._repo_dir / ".git" / f"mak-index-{uuid.uuid4().hex}"
+        env = {"GIT_INDEX_FILE": str(index_path)}
+        try:
+            self._seed_index(env)
+            self._run(["add", "--", *files], env=env)
+            if not self._index_differs_from_head(env):
+                return None
+            body = (
+                f"Files: {', '.join(files)}\n"
+                f"Status: complete\n"
+                f"Agent: {agent_type}\n"
+                f"Session: {session_id}"
+            )
+            self._run(
+                ["commit", "-m", self._subject(task_id, description), "-m", body],
+                env=env,
+            )
+            commit_hash = self._run(["rev-parse", "HEAD"]).strip()
+        finally:
+            index_path.unlink(missing_ok=True)
+        self._refresh_user_index(files)
+        return commit_hash
 
-    def _has_staged_changes(self) -> bool:
-        """Whether the index differs from HEAD (``git diff --cached --quiet``)."""
+    def _has_head(self) -> bool:
+        """Whether the repo has a HEAD commit yet (a fresh ``git init`` has none)."""
+        try:
+            self._run(["rev-parse", "--verify", "HEAD"])
+        except GitIntegrationError:
+            return False
+        return True
+
+    def _seed_index(self, env: dict[str, str]) -> None:
+        """Fill the private index with HEAD, so the commit is HEAD + our files."""
+        if self._has_head():
+            self._run(["read-tree", "HEAD"], env=env)
+        else:
+            self._run(["read-tree", "--empty"], env=env)
+
+    def _index_differs_from_head(self, env: dict[str, str]) -> bool:
+        """Whether the *private* index has content HEAD does not.
+
+        Scoped twice over: to the index this commit is being built in, and to
+        HEAD. The old check asked whether *anything at all* was staged anywhere,
+        which is how a task with no changes of its own could commit somebody
+        else's work.
+        """
+        if not self._has_head():
+            return bool(self._run(["ls-files", "--cached"], env=env).strip())
         try:
             result = subprocess.run(
-                ["git", "diff", "--cached", "--quiet"],
+                ["git", "diff-index", "--cached", "--quiet", "HEAD", "--"],
                 cwd=self._repo_dir,
                 capture_output=True,
                 text=True,
                 check=False,
+                env={**os.environ, **env},
             )
         except FileNotFoundError as exc:
             raise GitIntegrationError("git executable not found on PATH") from exc
-        # 0 → no staged changes; 1 → changes staged; anything else → error.
+        # 0 → index matches HEAD; 1 → it differs; anything else → error.
         if result.returncode == 0:
             return False
         if result.returncode == 1:
             return True
         raise GitIntegrationError(
-            f"git diff --cached failed (exit {result.returncode}): "
+            f"git diff-index failed (exit {result.returncode}): "
             f"{result.stderr.strip()}"
         )
+
+    def _refresh_user_index(self, files: list[str]) -> None:
+        """Re-stat *only* the committed paths in the user's real index.
+
+        Without this the user's index still holds the pre-commit blobs for those
+        paths, so ``git status`` would report MAK's own commit back to them as
+        staged modifications. Scoped to the committed files, so unrelated staged
+        work is untouched.
+
+        A failure here is a warning, not an error: the commit has already landed
+        and the working tree is correct, so the worst case is a cosmetically
+        stale index entry the user's next ``git add`` fixes.
+        """
+        try:
+            self._run(["update-index", "--add", "--", *files])
+        except GitIntegrationError as exc:
+            _logger.warning(
+                "committed the audit entry but could not refresh the index for "
+                "%s: %s. `git status` may show them as staged until you re-add.",
+                ", ".join(files),
+                exc,
+            )
 
     def get_session_commits(self, session_id: str) -> list[CommitInfo]:
         """Return all commits whose body records ``session_id``, newest first."""

@@ -51,13 +51,16 @@ from mak.core.exceptions import (
 )
 from mak.core.logging import SessionLogger
 from mak.core.types import SubTask
+from mak.execution_result import ExecutionResult
 from mak.git_integration.git import GitHelper
 from mak.lock_manager.lock_table import LockTable
+from mak.lock_manager.project_lease import ProjectLease
 from mak.node_store.store import NodeStore
 from mak.planner.llm import build_planner_llm
 from mak.planner.planner import Planner
 from mak.planner.review import display_plan_for_review
 from mak.session import Session, SessionState
+from mak.teardown import SuiteOutcome, TeardownResult
 from mak.test_runner import build_test_runner
 
 SessionBuilder = Callable[
@@ -374,9 +377,10 @@ def build_session(
         else None
     )
     logger = SessionLogger(mak_dir / "session.log")
+    session_id = f"mak-{int(time.time())}"
 
     return Session(
-        session_id=f"mak-{int(time.time())}",
+        session_id=session_id,
         config=config,
         node_store=node_store,
         lock_table=lock_table,
@@ -390,6 +394,9 @@ def build_session(
         test_runner=build_test_runner(config.session.test_command, work_dir),
         default_agent_type=default_type,
         agent_pool=healthy,
+        # One owner per project. Taken in initialize()/recover(), before anything
+        # reads or mutates .mak/, and released by close().
+        project_lease=ProjectLease(mak_dir, session_id),
     )
 
 
@@ -483,15 +490,16 @@ def main(
         # API.  If so, surface those as a new plan for the user to review (same
         # UI as the initial plan), then run another wave.  The loop itself lives
         # in mak.cascade so the interactive app runs exactly the same one.
-        cascade_result = run_cascade_waves(
+        cascade = run_cascade_waves(
             session,
             _cli_cascade_approval(no_review=args.no_review),
             announce=_announce_cascade,
         )
-        if cascade_result is not None:
-            result = cascade_result
-
-        tests_passed = session.teardown()
+        # The aggregate, not the last wave. Overwriting ``result`` with the
+        # cascade's result reported an initial wave's failures as if a later
+        # successful wave had answered them.
+        execution = ExecutionResult(initial=result, cascade=cascade)
+        teardown = session.teardown(execution)
     except PlanReviewAborted:
         print("mak: plan review aborted; no changes were made.", file=sys.stderr)
         return 1
@@ -502,45 +510,84 @@ def main(
         print(f"mak: {exc}", file=sys.stderr)
         return 1
 
+    return _report(execution, teardown)
+
+
+def _report(execution: ExecutionResult, teardown: TeardownResult) -> int:
+    """Print the run's outcome and return the process exit code."""
     # "N completed" used to include tasks where the agent changed nothing, with
     # no way for an operator to tell the two apart — so a task that declined to
     # do work is counted, but named.
-    noop_note = f" ({len(result.noop)} no-op)" if result.noop else ""
-    print(
-        f"mak: {len(result.completed)} completed{noop_note}, "
-        f"{len(result.failed)} failed, {len(result.skipped)} skipped, "
-        f"{len(result.blocked)} blocked."
-    )
-    if result.noop:
+    print(f"mak: {execution.summary_line()}.")
+    if execution.noop:
         print(
             "mak: no-op (the agent reported nothing needed changing): "
-            f"{', '.join(result.noop)}"
+            f"{_names(execution.noop)}"
         )
-    if not result.ok:
-        if result.stopped_reason:
-            print(f"mak: run stopped — {result.stopped_reason}.", file=sys.stderr)
-        if result.failed:
-            print(f"mak: failed tasks: {', '.join(result.failed)}", file=sys.stderr)
-            for task_id in result.failed:
-                reason = result.failure_reasons.get(task_id)
-                if reason:
-                    print(f"mak:   - {task_id}: {reason}", file=sys.stderr)
-        if result.skipped:
+    if not execution.request_satisfied:
+        for index, reason in execution.stopped_reasons:
             print(
-                f"mak: skipped (an upstream task failed): {', '.join(result.skipped)}",
+                f"mak: wave {index + 1} stopped — {reason}.", file=sys.stderr
+            )
+        if execution.failed:
+            print(f"mak: failed tasks: {_names(execution.failed)}", file=sys.stderr)
+            for key in execution.failed:
+                why = execution.failure_reasons.get(key)
+                if why:
+                    print(f"mak:   - {_name(key)}: {why}", file=sys.stderr)
+        if execution.skipped:
+            print(
+                f"mak: skipped (an upstream task failed): "
+                f"{_names(execution.skipped)}",
                 file=sys.stderr,
             )
-        if result.blocked:
+        if execution.blocked:
             print(
                 f"mak: blocked (stranded, no failed ancestor): "
-                f"{', '.join(result.blocked)}",
+                f"{_names(execution.blocked)}",
+                file=sys.stderr,
+            )
+        # The three ways a cascade stops without finishing. Each used to be
+        # invisible: the loop returned its last successful result either way.
+        if execution.cascade.declined:
+            print(
+                "mak: a cascade wave was declined — callers may still be broken.",
+                file=sys.stderr,
+            )
+        if execution.cascade.limit_reached:
+            print(
+                "mak: the cascade stopped at its wave limit with defects "
+                "remaining.",
+                file=sys.stderr,
+            )
+        if execution.unresolved:
+            print(
+                f"mak: unresolved cascade defects: "
+                f"{', '.join(execution.unresolved)}",
                 file=sys.stderr,
             )
         return 1
-    if not tests_passed:
+    if teardown.outcome is SuiteOutcome.SKIPPED:
+        print("mak: no test_command configured — no suite ran.", file=sys.stderr)
+    elif teardown.outcome is SuiteOutcome.ERROR:
+        print(f"mak: the test runner errored: {teardown.output}", file=sys.stderr)
+        return 1
+    elif teardown.outcome is SuiteOutcome.FAILED:
         print("mak: tasks completed but the test suite did not pass.", file=sys.stderr)
         return 1
+    if teardown.push_skipped_reason:
+        print(f"mak: {teardown.push_skipped_reason}.", file=sys.stderr)
     return 0
+
+
+def _name(key: tuple[int, str]) -> str:
+    """Render an aggregate task key, naming its wave only when there was one."""
+    wave, task_id = key
+    return task_id if wave == 0 else f"{task_id} (wave {wave + 1})"
+
+
+def _names(keys: tuple[tuple[int, str], ...]) -> str:
+    return ", ".join(_name(k) for k in keys)
 
 
 if __name__ == "__main__":  # pragma: no cover - process entry point

@@ -121,7 +121,9 @@ Recent versions are kept so a bad edit can be rolled back — five by default,
 tunable with `node_store.version_retention` (minimum 2, or `-1` to keep every
 version forever) — and anything older is pruned as the commit lands. `mak gc`
 applies that policy to a store written by an older MAK, which kept everything,
-and removes fragment directories that no node addresses any more.
+and removes fragment directories that no node addresses any more. It takes the same
+one-owner-per-project lease a run does, so it will not prune versions out from under
+a session that is still working.
 
 ## Run
 
@@ -312,6 +314,39 @@ left half-written.
 ```yaml
 session:
   max_total_tokens: 2000000   # unset (the default) is unbounded
+```
+
+**When someone edits a file MAK manages.** MAK's node store — not the filesystem —
+is its source of truth, so it has to reconcile with the working tree each time it
+starts. Edit, rename, or delete anything between runs and the next session adopts
+it: your edit becomes the node's next version, a deleted function is retired (its
+history kept, but no longer reconstructed), and a deleted file's nodes go with it.
+This is the default because the alternative is MAK overwriting your work. If you
+would rather it stop and let you look, set `session.on_external_edit: "conflict"` —
+it then refuses to start on a file that changed underneath it, *before* planning, so
+no agent is ever handed content your tree no longer holds.
+
+**One MAK per project.** A session takes an exclusive lease on the project's `.mak/`
+before it touches anything, so a second `mak` on the same checkout fails
+immediately, naming the process that holds it — rather than the two of them
+interleaving writes to the same nodes. Different projects run concurrently as usual.
+If a run is killed, the lease is released by the operating system, so the next one
+starts normally with nothing to clean up.
+
+**Pushing.** `git.auto_push` only fires when the whole run succeeded — every wave,
+with no cascade wave declined or cut short — **and** your test suite actually passed.
+"No `test_command` configured" is reported as *skipped*, not as a pass, so a project
+with no suite never auto-pushes; set `session.test_policy: "allow_skip"` if you want
+it to anyway. MAK's own commits are always scoped to the files a task changed and
+are built in a private Git index, so whatever you have staged is neither committed
+nor disturbed.
+
+```yaml
+session:
+  on_external_edit: "adopt"     # or "conflict" — stop when a file changed
+  test_policy: "require_pass"   # or "allow_skip" — for a project with no suite
+git:
+  require_clean_tree: false     # true = refuse to start on a dirty tree
 ```
 
 **Where `.mak/` lives.** MAK's node store, task graph, and session log always live

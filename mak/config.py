@@ -139,6 +139,24 @@ def _as_choice(
     return text
 
 
+def _require_choice(
+    raw: dict[str, Any], key: str, default: str, allowed: tuple[str, ...]
+) -> str:
+    """Return an enumerated setting that always has a value.
+
+    Distinct from :func:`_as_choice`, whose ``None`` means "unset, let the layer
+    below decide". These settings are *policies* — what to do about a file edited
+    outside MAK, whether a skipped suite may push — and a policy with no value is
+    not a thing MAK can act on, so the default is a real choice rather than a
+    deferral.
+    """
+    value = raw.get(key, default)
+    text = str(value)
+    if text not in allowed:
+        raise ConfigError(f"'{key}' must be one of {allowed}, got {text!r}")
+    return text
+
+
 def _opt_non_negative_int(raw: dict[str, Any], key: str) -> int | None:
     """Return an optional int setting that may be zero, or None when unset.
 
@@ -273,6 +291,20 @@ class SessionConfig:
     is the only way to cap it up front. ``None`` (the default) is unbounded. On a
     breach the run stops dispatching, finishes what is already in flight, and
     reports failure naming the budget; it never interrupts a commit.
+
+    ``on_external_edit`` decides what startup reconciliation does with a file
+    that changed since MAK last wrote it — a human's edit between two sessions.
+    ``"adopt"`` (the default) treats the working tree as the newer truth and
+    synchronizes the store to it, including symbols that were deleted or renamed.
+    ``"conflict"`` refuses to continue, raising before planning so no agent is
+    handed content the tree no longer holds.
+
+    ``test_policy`` decides whether a push may happen when no test suite ran.
+    ``"require_pass"`` (the default) means only a genuinely passing suite opens
+    the push gate — a project with no ``test_command`` configured never pushes,
+    because "no tests ran" is not "the tests passed". ``"allow_skip"`` is the
+    deliberate opt-out for a project that has no suite and wants ``auto_push``
+    anyway.
     """
 
     work_dir: str = "."
@@ -284,6 +316,8 @@ class SessionConfig:
     dependency_context_bytes: int = 24000
     cross_file_context_bytes: int = 32000
     max_total_tokens: int | None = None
+    on_external_edit: str = "adopt"
+    test_policy: str = "require_pass"
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,11 +379,19 @@ class ModelsConfig:
 
 @dataclass(frozen=True, slots=True)
 class GitConfig:
-    """Git integration configuration."""
+    """Git integration configuration.
+
+    ``require_clean_tree`` is an opt-in precondition: when on, a session refuses
+    to start if the working tree has uncommitted changes, so ``git diff`` after a
+    run means exactly "what MAK did". It is off by default because that is a
+    product policy a project chooses, not one MAK is entitled to impose — MAK's
+    audit commits are path-scoped either way and never absorb unrelated work.
+    """
 
     auto_commit: bool = True
     auto_push: bool = False
     commit_prefix: str = "[MAK]"
+    require_clean_tree: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,9 +461,17 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
         dependency_context_bytes=_as_int(raw, "dependency_context_bytes", 24000),
         cross_file_context_bytes=_as_int(raw, "cross_file_context_bytes", 32000),
         max_total_tokens=_opt_positive_int(raw, "max_total_tokens"),
+        on_external_edit=_require_choice(
+            raw, "on_external_edit", "adopt", _EXTERNAL_EDIT_POLICIES
+        ),
+        test_policy=_require_choice(
+            raw, "test_policy", "require_pass", _TEST_POLICIES
+        ),
     )
 
 
+_EXTERNAL_EDIT_POLICIES = ("adopt", "conflict")
+_TEST_POLICIES = ("require_pass", "allow_skip")
 _PLANNER_STRATEGIES = ("oneshot", "outline")
 
 

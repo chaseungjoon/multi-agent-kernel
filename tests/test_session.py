@@ -21,8 +21,10 @@ from mak.core.types import (
 )
 from mak.git_integration.git import GitHelper
 from mak.lock_manager.lock_table import LockTable
+from mak.node_store import transaction as transaction_mod
 from mak.node_store.store import NodeStore
 from mak.session import Session, SessionState, SubTaskProgress, _Completion
+from mak.teardown import SuiteOutcome
 
 # --- fakes -------------------------------------------------------------------
 
@@ -109,6 +111,7 @@ def _session(
     git_helper: object = None,
     config: MakConfig | None = None,
     logger: SessionLogger | None = None,
+    project_lease: object = None,
 ) -> Session:
     return Session(
         session_id="s1",
@@ -121,6 +124,7 @@ def _session(
         test_runner=test_runner,  # type: ignore[arg-type]
         logger=logger,
         max_attempts=max_attempts,
+        project_lease=project_lease,  # type: ignore[arg-type]
     )
 
 
@@ -435,7 +439,7 @@ class TestTeardown:
             node_store=store,
             test_runner=test_runner,
         )
-        assert session.teardown() is True
+        assert session.teardown().outcome is SuiteOutcome.PASSED
         assert calls == ["ran"]
 
     def test_teardown_reports_failing_tests(self, tmp_path: Path) -> None:
@@ -446,7 +450,7 @@ class TestTeardown:
             node_store=store,
             test_runner=lambda: (False, "boom"),
         )
-        assert session.teardown() is False
+        assert session.teardown().outcome is SuiteOutcome.FAILED
 
 
 # --- crash recovery ----------------------------------------------------------
@@ -726,18 +730,24 @@ class TestTransactionalCommit:
         )
         session.initialize()
 
-        def boom(nodes: object) -> list[str]:
+        def boom(path: Path, text: str, **kwargs: object) -> None:
             raise OSError("disk full")
 
-        # A write failure AFTER commit must revert the store so disk and store
-        # never diverge.
-        monkeypatch.setattr(session, "_reconstruct_affected", boom)
+        # A write failure inside the commit transaction must leave the store,
+        # the file, and the wave's accounting on the *previous* state. The seam
+        # is the atomic write itself: the transaction renders every file before
+        # it writes any, so nothing earlier than this can fail on a valid edit.
+        monkeypatch.setattr(transaction_mod, "write_text_atomic", boom)
         session.install_plan([_task("a", ["m.py::function::a"])])
         result = session.run()
         assert not result.ok
         node = store.get_node(NodeId("m.py::function::a"))
         assert node.version == 1
         assert "return 0" in node.source
+        assert "return 0" in (tmp_path / "m.py").read_text()
+        # A rolled-back transaction is not work that happened: leaving it in the
+        # wave log sent cascade analysis off to inspect a reverted edit.
+        assert session._wave_committed == {}
 
 
 class TestStallReporting:

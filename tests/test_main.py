@@ -12,6 +12,7 @@ import mak.__main__ as cli
 from mak.__main__ import load_env_file, main, parse_args
 from mak.core.exceptions import PlannerFailedError, PlanReviewAborted, SessionError
 from mak.session import SessionResult, SessionState
+from mak.teardown import SuiteOutcome, TeardownResult
 
 _MIN_CONFIG = "agents:\n  - type: anthropic_api\n"
 
@@ -65,9 +66,11 @@ class FakeSession:
         self.calls.append("detect_cascade_tasks")
         return []  # no cascades in the happy-path fake
 
-    def teardown(self) -> bool:
+    def teardown(self, execution: object = None) -> TeardownResult:
         self.calls.append("teardown")
-        return self._tests_passed
+        return TeardownResult(
+            outcome=SuiteOutcome.PASSED if self._tests_passed else SuiteOutcome.FAILED
+        )
 
 
 def _builder(session: FakeSession) -> cli.SessionBuilder:
@@ -150,6 +153,10 @@ class TestMain:
         assert session.calls == [
             "initialize", "plan(review=True)", "run",
             "detect_cascade_tasks",  # cascade check after each wave
+            # …and once more after the loop, so the outcome can say whether it
+            # finished or merely stopped. That distinction is what tells a
+            # declined or wave-limited cascade from a clean one.
+            "detect_cascade_tasks",
             "teardown",
         ]
 

@@ -18,8 +18,9 @@ from rich.text import Text
 from cli.core.state import CliState, mode_summary
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from mak.session import SessionResult
+    from mak.execution_result import ExecutionResult
 from mak._version import __version_display__
+from mak.teardown import SuiteOutcome, TeardownResult
 
 ACCENT = "#bd93f9"
 DIM = "#6e7681"
@@ -169,15 +170,22 @@ def show_plan(console: Console, subtasks: list[Any]) -> None:
 # ── Result summary ─────────────────────────────────────────────────────────────
 
 def show_results(
-    console: Console, result: SessionResult, tests_passed: bool
+    console: Console, execution: ExecutionResult, teardown: TeardownResult
 ) -> None:
-    """Print the completed/failed/skipped/blocked tallies for a finished run."""
-    ok = len(result.completed)
-    bad = len(result.failed)
-    skp = len(result.skipped)
-    blk = len(result.blocked)
+    """Print a finished run's tallies — across every wave, not just the last.
 
-    ok_flag = result.ok and tests_passed
+    Takes the aggregate rather than one ``SessionResult`` because the TUI used to
+    be handed the *cascade's* result in place of the original, and reported an
+    initial wave's failures as a clean success. The headline symbol now follows
+    :attr:`ExecutionResult.request_satisfied` — did the user get what they asked
+    for — with the completed count kept beside it as the separate statistic it is.
+    """
+    ok = execution.tasks_completed
+    bad = len(execution.failed)
+    skp = len(execution.skipped)
+    blk = len(execution.blocked)
+
+    ok_flag = execution.request_satisfied and teardown.ok
     sym, style = ("✓", "bold green") if ok_flag else ("✗", "bold red")
 
     line = Text("  ")
@@ -185,27 +193,71 @@ def show_results(
     line.append(f" {ok} completed", style="green" if ok else "dim")
     # A task that reported "nothing needed changing" completed without changing a
     # line; folding it into the headline number overstates what the run did.
-    noop = len(getattr(result, "noop", ()))
+    noop = len(execution.noop)
     if noop:
         line.append(f" ({noop} no-op)", style="dim")
     if bad:
         line.append(f" · {bad} failed", style="red")
     if skp or blk:
         line.append(f" · {skp} skipped · {blk} blocked", style="dim")
+    if execution.wave_count > 1:
+        line.append(f" · {execution.wave_count} waves", style="dim")
     console.print()
     console.print(line)
 
-    if not tests_passed:
-        console.print("  [yellow]⚠ Test suite did not pass after changes.[/yellow]")
+    _show_test_outcome(console, teardown)
     # A run the kernel itself halted (today: the token budget) strands tasks that
     # have no failure of their own, so nothing below would explain them.
-    stopped = getattr(result, "stopped_reason", None)
-    if stopped:
-        console.print(f"  [yellow]⚠ Run stopped — {stopped}.[/yellow]")
-    for task_id in result.failed:
-        reason = result.failure_reasons.get(task_id, "")
-        console.print(f"    [red]✗ {task_id}[/red]  [dim]{reason}[/dim]")
+    for index, stopped in execution.stopped_reasons:
+        console.print(f"  [yellow]⚠ Wave {index + 1} stopped — {stopped}.[/yellow]")
+    for key in execution.failed:
+        reason = execution.failure_reasons.get(key, "")
+        wave, task_id = key
+        label = task_id if wave == 0 else f"{task_id} (wave {wave + 1})"
+        console.print(f"    [red]✗ {label}[/red]  [dim]{reason}[/dim]")
+    _show_cascade_state(console, execution)
     console.print()
+
+
+def _show_test_outcome(console: Console, teardown: TeardownResult) -> None:
+    """Name the test outcome rather than implying one from a tick.
+
+    "Tests passed" used to be a bool that started ``True``, so a project with no
+    suite and a teardown that raised both read as green. Each of the four
+    outcomes now says what it is.
+    """
+    if teardown.outcome is SuiteOutcome.FAILED:
+        console.print("  [yellow]⚠ Test suite did not pass after changes.[/yellow]")
+    elif teardown.outcome is SuiteOutcome.SKIPPED:
+        console.print(
+            "  [dim]No test_command configured — no suite ran.[/dim]"
+        )
+    elif teardown.outcome is SuiteOutcome.ERROR:
+        console.print(
+            f"  [red]✗ Test runner errored:[/red] [dim]{teardown.output}[/dim]"
+        )
+    if teardown.push_skipped_reason:
+        console.print(f"  [dim]{teardown.push_skipped_reason}.[/dim]")
+
+
+def _show_cascade_state(console: Console, execution: ExecutionResult) -> None:
+    """Say how the fix-up loop stopped, when it stopped short of finishing."""
+    cascade = execution.cascade
+    if cascade.declined:
+        console.print(
+            "  [yellow]⚠ A cascade wave was declined — callers may still be "
+            "broken.[/yellow]"
+        )
+    if cascade.limit_reached:
+        console.print(
+            "  [yellow]⚠ Cascade stopped at its wave limit with defects "
+            "remaining.[/yellow]"
+        )
+    if cascade.unresolved:
+        console.print(
+            f"  [dim]Unresolved cascade defects: "
+            f"{', '.join(cascade.unresolved)}[/dim]"
+        )
 
 
 # ── Git diff — one summary line per file, git-stat style ──────────────────────

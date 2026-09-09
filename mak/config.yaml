@@ -20,6 +20,17 @@ session:
   # is unbounded. On a breach the run stops dispatching, finishes what is in
   # flight, and fails naming the budget — it never interrupts a commit.
   # max_total_tokens: 2000000
+  # What to do with a file that changed since MAK last wrote it — a human's edit
+  # between two sessions. "adopt" (the default) takes the working tree as the
+  # newer truth and syncs the store to it, including deleted and renamed symbols.
+  # "conflict" refuses to continue, raising before planning so no agent is handed
+  # content the tree no longer holds.
+  # on_external_edit: "adopt"
+  # Whether a push may happen when no suite ran. "require_pass" (the default)
+  # means only a suite that ran and passed opens the push gate — with no
+  # test_command set, auto_push never fires, because "no tests ran" is not "the
+  # tests passed". "allow_skip" is the opt-out for a project with no suite.
+  # test_policy: "require_pass"
 
 planner:
   model: "claude-opus-5"
@@ -73,8 +84,15 @@ agents:
 
 git:
   auto_commit: true
+  # Pushes only when the whole run succeeded (every wave, no declined or
+  # wave-limited cascade) AND the test policy above is satisfied.
   auto_push: false
   commit_prefix: "[MAK]"
+  # Refuse to start when the working tree has uncommitted changes, so `git diff`
+  # after a run means exactly "what MAK did". Off by default: MAK's audit commits
+  # are path-scoped and never absorb your staged work either way, so this is a
+  # policy a project opts into rather than one MAK imposes.
+  # require_clean_tree: false
 
 node_store:
   include_patterns:

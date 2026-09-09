@@ -36,6 +36,8 @@ from cli.runner import (
 from cli.setup import run_setup
 from cli.ui import ACCENT, print_banner, show_diff, show_plan, show_results
 from mak.cascade import run_cascade_waves
+from mak.execution_result import ExecutionResult
+from mak.teardown import SuiteOutcome, TeardownResult
 
 _STYLE = Style.from_dict({
     "prompt":                                  f"{ACCENT} bold",
@@ -224,24 +226,30 @@ class MakCli:
         # each other's API. This used to run only from the command line, so the
         # same defect was reported or not depending on which front end you
         # launched.
-        cascade_result = run_cascade_waves(
+        cascade = run_cascade_waves(
             mak_session, self._cascade_approval(), announce=self._announce_cascade
         )
-        if cascade_result is not None:
-            run_result = cascade_result
+        # The aggregate, not the last wave — see mak.execution_result. Replacing
+        # run_result with the cascade's result reported an initial wave's
+        # failures as though a later successful wave had answered them.
+        execution = ExecutionResult(initial=run_result, cascade=cascade)
 
         # ── 7. Teardown ────────────────────────────────────────────────────────
-        tests_passed = True
         with console.status("[dim]Running tests…[/dim]", spinner="dots"):
             try:
-                tests_passed = mak_session.teardown()
+                teardown = mak_session.teardown(execution)
             except Exception as exc:  # noqa: BLE001
-                console.print(f"  [yellow]⚠[/yellow] Teardown error: {exc}")
+                # An exception here is an *error* outcome, not a warning over a
+                # run still reporting that its tests passed.
+                teardown = TeardownResult(
+                    outcome=SuiteOutcome.ERROR,
+                    output=f"teardown raised: {exc}",
+                )
 
         # ── 8. Results + diff ──────────────────────────────────────────────────
         self._session_tokens += session_tokens(mak_session)
 
-        show_results(console, run_result, tests_passed)
+        show_results(console, execution, teardown)
 
         diff = get_git_diff(state.work_dir, pre_hash)
         if diff.strip():

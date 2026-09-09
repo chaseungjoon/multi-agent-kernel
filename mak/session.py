@@ -64,11 +64,14 @@ from mak.conflict_detector.cross_module_check import (
     check_cross_module_api,
 )
 from mak.conflict_detector.detector import ConflictDetector, EditRound
+from mak.core.atomic import write_text_atomic
 from mak.core.exceptions import (
+    GitIntegrationError,
     NodeStoreError,
     SchedulingError,
     SessionError,
     UnsafeNodeIdError,
+    WorkTreeConflictError,
 )
 from mak.core.logging import EventType, SessionLogger
 from mak.core.paths import (
@@ -88,18 +91,28 @@ from mak.core.types import (
     TaskBundle,
     TaskResult,
 )
+from mak.execution_result import ExecutionResult
 from mak.git_integration.git import GitHelper
 from mak.lock_manager.deadlock_detector import DeadlockDetector
+from mak.lock_manager.project_lease import ProjectLease
 from mak.node_store.api_digest import public_api_digest
 from mak.node_store.ingestion import iter_source_files
 from mak.node_store.reconstruction import assemble_fragments, reconstruct_file
-from mak.node_store.store import NodeStore
+from mak.node_store.store import FileSyncReport, NodeStore
+from mak.node_store.transaction import (
+    finish,
+    install_files,
+    mark_installed,
+    render_affected,
+)
+from mak.node_store.transaction import recover as recover_commit
 from mak.planner.depgraph import dep_graph_from_store
 from mak.planner.planner import Planner
 from mak.planner.review import display_plan_for_review
 from mak.planner.validation import PlanFinding, validate_plan
 from mak.scheduler.dag import DAG
 from mak.scheduler.scheduler import Scheduler
+from mak.teardown import SuiteOutcome, TeardownResult, may_push
 
 # A test runner returns (passed, output) so teardown can gate the push.
 TestRunner = Callable[[], tuple[bool, str]]
@@ -343,6 +356,7 @@ class Session:
         agent_pool: list[str] | None = None,
         heartbeat_interval_s: float | None = None,
         collect_timeout_s: float = 300.0,
+        project_lease: ProjectLease | None = None,
     ) -> None:
         self.session_id = session_id
         self._config = config
@@ -361,6 +375,14 @@ class Session:
         self._logger = logger
         self._test_runner = test_runner
         self._max_attempts = max_attempts
+        # Exclusive ownership of this project's state, taken before anything
+        # reads or mutates it. ``None`` leaves a session unguarded, which is
+        # what the tests that build one directly want; every real front end
+        # supplies one.
+        self._project_lease = project_lease
+        # The most recent wave's result, kept so teardown can gate a push on
+        # something even when the caller has no aggregate to hand it.
+        self._last_result: SessionResult | None = None
 
         self._max_concurrent = max(1, config.session.max_concurrent_agents)
         self._collect_timeout = collect_timeout_s
@@ -443,6 +465,17 @@ class Session:
     def _mak_dir(self) -> Path:
         return Path(self._config.session.mak_dir)
 
+    @property
+    def _journal_dir(self) -> Path:
+        """Where a commit-in-flight records what it is about to overwrite.
+
+        One directory per project, not per transaction: only one commit is ever
+        in flight at a time (batch commits are applied serially under the store
+        lock), and a fixed location is what lets the *next process* find the
+        journal a killed one left behind.
+        """
+        return self._mak_dir / "journal"
+
     def _runner(self) -> _ConcurrentRunner:
         """Lazily build the thread-pool-backed runner (and its executor)."""
         if self._concurrent_runner is None:
@@ -486,19 +519,34 @@ class Session:
         shutdown = getattr(self._agent_runner, "shutdown", None)
         if callable(shutdown):
             shutdown()
+        # Ownership goes back last, so nothing else can claim the project while
+        # this session is still tearing its workers down.
+        if self._project_lease is not None:
+            self._project_lease.release()
 
     # -- phase 1: initialize ----------------------------------------------
 
     def initialize(self) -> list[NodeId]:
-        """Ingest the working directory's Python files into the node store."""
+        """Take ownership, recover any interrupted commit, and reconcile the tree."""
         if self.state is not SessionState.CREATED:
             raise SessionError(f"cannot initialize from state {self.state}")
+        # Ownership first, before anything reads or mutates project state. This is
+        # what makes the ``clear()`` below sound: without it, a second startup
+        # stripped a *live* session's leases, having established nothing about
+        # whether the prior owner was dead.
+        self._acquire_project()
+        # A crashed run can leave a commit half-installed. Resolve it before the
+        # store is read for anything else, so ingestion never reconciles against
+        # a working tree that is mid-transaction.
+        self._recover_journal()
         # A fresh session owns none of the leases a prior (possibly killed) run left
         # in the persisted lock table; drop them so they don't surface later as
         # spurious "lease expired" warnings. Crash recovery uses recover() instead.
         self._lock_table.clear()
         pruned = self.prune_excluded_nodes()
-        self._ingest_work_dir()
+        self._reconcile_work_dir()
+        if self._git is not None and self._config.git.require_clean_tree:
+            self._require_clean_tree()
         if self._git is not None and self._config.git.auto_commit:
             # Keep MAK's audit commits inside the project: if the work-dir is nested
             # in an outer repo (e.g. a home directory) or in none at all, give it its
@@ -518,8 +566,73 @@ class Session:
         )
         return inventory
 
-    def _ingest_work_dir(self) -> None:
-        """Parse every included, non-excluded Python file under the work dir.
+    def _acquire_project(self) -> None:
+        """Take the project's exclusive lease, if one was supplied."""
+        if self._project_lease is not None:
+            self._project_lease.acquire()
+
+    def _recover_journal(self) -> None:
+        """Resolve a commit journal an interrupted run left behind."""
+        outcome = recover_commit(
+            self._journal_dir,
+            self._node_store,
+            resolve=self._safe_output_path,
+            reaudit=self._reaudit,
+        )
+        if outcome is not None:
+            self._log(EventType.SESSION_STARTED, recovered_commit=outcome)
+            print(
+                f"mak: recovered an interrupted commit ({outcome}).",
+                file=sys.stderr,
+            )
+
+    def _reaudit(self, task_id: str, files: list[str]) -> None:
+        """Re-run an audit commit whose original run was killed mid-flight."""
+        if self._git is None or not self._config.git.auto_commit:
+            return
+        self._git.commit_task(
+            task_id=task_id,
+            files=files,
+            description="recovered interrupted commit",
+            agent_type="recovery",
+            session_id=self.session_id,
+        )
+
+    def _require_clean_tree(self) -> None:
+        """Refuse to start on a dirty tree, when the project asks for that.
+
+        Off by default. A clean-tree precondition is a legitimate product policy
+        — it makes ``git diff`` after a run mean exactly "what MAK did" — but it
+        is the project's call to make, not one MAK imposes, so it is opt-in via
+        ``git.require_clean_tree`` and this is the only thing that enforces it.
+        """
+        if self._git is None:
+            return
+        if not self._git.validate_clean_state():
+            raise GitIntegrationError(
+                "the working tree has uncommitted changes and "
+                "git.require_clean_tree is on; commit or stash them first"
+            )
+
+    def _reconcile_work_dir(self) -> None:
+        """Make the store agree with the working tree before anything runs.
+
+        Ingestion used to be one-directional and blind: it fed each file's
+        current source to a store method that *skipped* any file it already held
+        as a whole-file node, never removed a symbol that had disappeared, and
+        restamped every fragment at version 1. So a human's edit between two
+        sessions could be silently discarded, and a function they deleted kept
+        being reconstructed. Reconciliation is the fix, in both directions:
+
+        * every included file on disk is synchronized into the store, and
+        * every file the store still holds live nodes for that is **gone** from
+          disk has those nodes retired.
+
+        A file whose content differs from what MAK last materialized was edited
+        by someone else. Under the default ``on_external_edit="adopt"`` the disk
+        wins — it is the newer truth, and the store's job is to record it, not
+        overrule it. Under ``"conflict"`` the divergence raises *here*, before
+        planning, so no agent can be handed content the tree no longer holds.
 
         The file list comes from a walk that refuses to *descend* into an
         excluded directory. The previous ``glob(pattern)`` produced the same set
@@ -529,6 +642,9 @@ class Session:
         of ``initialize()``'s cost and every one of those paths is discarded.
         """
         ns_cfg = self._config.node_store
+        seen: set[str] = set()
+        adopted: list[str] = []
+        reports: list[FileSyncReport] = []
         for path in iter_source_files(
             self._work_dir,
             ns_cfg.include_patterns,
@@ -537,11 +653,82 @@ class Session:
         ):
             rel = str(path.relative_to(self._work_dir))
             try:
-                self._node_store.parse_file_into_nodes(
-                    rel, path.read_text(encoding="utf-8")
-                )
+                source = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            seen.add(rel)
+            if self._is_external_edit(rel, source):
+                self._on_external_edit(rel, source)
+                adopted.append(rel)
+            try:
+                reports.append(self._node_store.sync_file(rel, source))
             except (SyntaxError, OSError):
                 continue
+        reports.extend(self._retire_missing_files(seen))
+        self._report_reconciliation(reports, adopted)
+
+    def _is_external_edit(self, file_path: str, source: str) -> bool:
+        """Whether ``source`` differs from the content MAK last wrote there.
+
+        A file MAK has never materialized is not an external edit — it is simply
+        a file, and every file is one on the first run.
+        """
+        recorded = self._node_store.materialized_digest(file_path)
+        if recorded is None:
+            return False
+        return recorded != NodeStore.content_digest(source)
+
+    def _on_external_edit(self, file_path: str, source: str) -> None:
+        """Apply the configured policy to a file someone edited outside MAK."""
+        if self._config.session.on_external_edit == "conflict":
+            raise WorkTreeConflictError(
+                f"'{file_path}' has changed since MAK last wrote it "
+                f"(recorded {self._node_store.materialized_digest(file_path)}, "
+                f"found {NodeStore.content_digest(source)}); "
+                "session.on_external_edit is 'conflict'. Review the file, then "
+                "re-run with 'adopt' to take the working tree as authoritative."
+            )
+        self._log(
+            EventType.SESSION_STARTED, adopted_external_edit=file_path
+        )
+
+    def _retire_missing_files(self, seen: set[str]) -> list[FileSyncReport]:
+        """Retire the nodes of every file the store holds that disk no longer has."""
+        known = {
+            str(node_id).split("::", 1)[0]
+            for node_id in self._node_store.list_all_nodes()
+        }
+        reports: list[FileSyncReport] = []
+        for file_path in sorted(known - seen):
+            if (self._work_dir / file_path).exists():
+                # Present but not walked: excluded, unreadable, or not a source
+                # file under the current patterns. Not a deletion — exclusion
+                # pruning is a separate, deliberate operation.
+                continue
+            reports.append(self._node_store.sync_file(file_path, None))
+        return reports
+
+    def _report_reconciliation(
+        self, reports: list[FileSyncReport], adopted: list[str]
+    ) -> None:
+        """Say what reconciliation changed, when it changed anything."""
+        updated = sum(len(r.updated) for r in reports)
+        retired = sum(len(r.retired) for r in reports)
+        if not adopted and not retired and not updated:
+            return
+        self._log(
+            EventType.SESSION_STARTED,
+            reconciled_files=len(adopted),
+            reconciled_updated=updated,
+            reconciled_retired=retired,
+        )
+        if adopted or retired:
+            print(
+                f"mak: reconciled the node store with the working tree — "
+                f"{len(adopted)} file(s) edited outside MAK, "
+                f"{retired} node(s) retired.",
+                file=sys.stderr,
+            )
 
     def _mak_roots(self) -> tuple[Path, ...]:
         """Return the absolute location of MAK's own persistence directory.
@@ -950,7 +1137,7 @@ class Session:
             )
         metrics = self._plan_metrics()
         self._log(EventType.PLAN_METRICS, **metrics)
-        return SessionResult(
+        result = SessionResult(
             state=self.state,
             completed=tuple(self._completed),
             failed=tuple(self._failed),
@@ -965,6 +1152,12 @@ class Session:
             metrics=metrics,
             stopped_reason=self._budget_stop,
         )
+        # Retained so ``teardown`` has something to gate on when its caller does
+        # not supply an aggregate. ``install_plan`` resets the per-wave counters
+        # this was built from, so the result object is the only thing that
+        # survives the next wave being installed.
+        self._last_result = result
+        return result
 
     def _plan_metrics(self) -> dict[str, float]:
         """Realized-parallelism and rework metrics for the wave just run.
@@ -1473,28 +1666,53 @@ class Session:
             )
             return []
 
-        committed: list[NodeId] = []
-        for node_id in staged:
-            old_source = self._node_source(node_id)  # snapshot before commit
-            self._node_store.commit_node(node_id)
-            committed.append(node_id)
-            new_source = self._node_source(node_id)  # snapshot after commit
-            if new_source is not None:
-                self._wave_committed[node_id] = (old_source, new_source)
+        # Everything from here is one transaction. The store's snapshot covers
+        # the node versions, the superseded fragments, and the metadata; the
+        # journal covers the output files. The metadata save at the end of the
+        # ``with`` block is the commit point for both — before it, nothing
+        # durable has changed; after it, the change is recoverable in full.
+        wave_entries: dict[NodeId, tuple[str | None, str]] = {}
         try:
-            self._reconstruct_affected(staged)
-        except (SyntaxError, OSError, UnsafeNodeIdError) as exc:
-            # The store advanced but the file did not — undo the commits so disk
-            # and store stay consistent, and fail the task.
-            self._revert(committed)
+            with self._node_store.transaction():
+                for node_id in staged:
+                    old_source = self._node_source(node_id)  # before commit
+                    self._node_store.commit_node(node_id)
+                    new_source = self._node_source(node_id)  # after commit
+                    if new_source is not None:
+                        wave_entries[node_id] = (old_source, new_source)
+                installed = install_files(
+                    self._node_store,
+                    staged,
+                    resolve=self._safe_output_path,
+                    journal_dir=self._journal_dir,
+                    session_id=self.session_id,
+                    task_id=task_id,
+                )
+        except (SyntaxError, OSError, UnsafeNodeIdError, NodeStoreError) as exc:
+            # Store and files are both back where they started; the pending
+            # fragments are the only thing left to discard.
+            for node_id in staged:
+                self._node_store.rollback_node(node_id)
             self._log(
                 EventType.CONFLICT_DETECTED,
                 task_id=task_id,
-                reasons=[f"reconstruction failed after commit: {exc}"],
+                reasons=[f"commit transaction rolled back: {exc}"],
+                files=sorted({str(n).split("::", 1)[0] for n in staged}),
             )
+            self._record_failure(task_id, f"commit transaction rolled back: {exc}")
             return []
+
+        # Past the commit point. Only now is any of this recorded as work that
+        # happened: ``_wave_committed`` used to be written before the file step,
+        # so a rolled-back transaction left entries behind and the wave's cascade
+        # analysis went on to inspect "reverted" work as if it were real.
+        self._wave_committed.update(wave_entries)
+        for file_path, content in installed.contents.items():
+            self._node_store.record_materialized(file_path, content)
+        mark_installed(installed)
         self._audit_commit(task_id, staged)
-        return committed
+        finish(installed)
+        return list(staged)
 
     def _reject(self, task_id: str, staged: list[NodeId], reasons: list[str]) -> None:
         """Log a rejection and discard the staged (pending) fragments."""
@@ -1504,16 +1722,6 @@ class Session:
             self._record_failure(task_id, "; ".join(reasons))
         for node_id in staged:
             self._node_store.rollback_node(node_id)
-
-    def _revert(self, committed: list[NodeId]) -> None:
-        """Best-effort roll committed nodes back to their previous version."""
-        for node_id in committed:
-            try:
-                self._node_store.revert_node(node_id)
-            except NodeStoreError:
-                # A brand-new node has no prior version to revert to (documented
-                # limitation); leave it and let the loud log surface the desync.
-                continue
 
     def _preview_is_valid(self, staged: list[NodeId]) -> bool:
         """Assemble each affected file with staged versions and check it parses."""
@@ -1601,19 +1809,21 @@ class Session:
         return resolved
 
     def _reconstruct_affected(self, nodes: list[NodeId]) -> list[str]:
-        """Rewrite each file touched by ``nodes`` from its committed fragments."""
-        files = sorted({str(n).split("::", 1)[0] for n in nodes})
+        """Rewrite each file touched by ``nodes`` from its committed fragments.
+
+        The *non-transactional* materialization path: bringing an already-committed
+        file back into agreement with the store, as ``_accept_noop`` does when a
+        node's on-disk file pre-dates its committed version. The edit path does
+        not come through here — it goes through ``install_files``, which journals
+        what it is about to overwrite. Nothing is committed by this call, so
+        there is nothing for a journal to roll back; every write is still atomic.
+        """
+        files, contents, destinations = render_affected(
+            self._node_store, nodes, self._safe_output_path
+        )
         for file_path in files:
-            output_path = self._safe_output_path(file_path)
-            fragments = self._node_store.get_committed_fragments(file_path)
-            if not fragments:
-                # A committed node that yields no fragments would leave nothing on
-                # disk yet still be reported as written — fail loudly (the caller
-                # reverts the commit) instead of failing later at `git add`.
-                raise OSError(
-                    f"no committed fragments for '{file_path}'; nothing to write"
-                )
-            reconstruct_file(fragments, output_path=output_path)
+            write_text_atomic(destinations[file_path], contents[file_path])
+            self._node_store.record_materialized(file_path, contents[file_path])
         return files
 
     def _audit_commit(self, task_id: str, nodes: list[NodeId]) -> None:
@@ -2249,6 +2459,11 @@ class Session:
         each interval so a slow-but-alive agent keeps its grants.
         """
         while not stop.wait(self._heartbeat_interval):
+            # The project lease is renewed on the same tick as the task leases:
+            # both answer "is this session still alive?", and a run that renews
+            # one but not the other can be reported as abandoned mid-wave.
+            if self._project_lease is not None:
+                self._project_lease.heartbeat()
             scheduler = self._scheduler
             if scheduler is None:
                 continue
@@ -2294,22 +2509,83 @@ class Session:
 
     # -- phase 4: teardown -------------------------------------------------
 
-    def teardown(self) -> bool:
-        """Run the test suite; push if green and auto_push is enabled."""
-        passed = True
-        output = ""
-        if self._test_runner is not None:
-            passed, output = self._test_runner()
-        if passed and self._config.git.auto_push and self._git is not None:
-            self._git.push()
+    def teardown(self, execution: ExecutionResult | None = None) -> TeardownResult:
+        """Run the test suite and decide, honestly, whether to push.
+
+        Returns a :class:`~mak.teardown.TeardownResult` rather than a bool. The
+        bool started at ``True`` and stayed there when no test runner was
+        configured, so a project with no ``test_command`` reported "tests passed"
+        and — with ``auto_push`` on — pushed, every run. It also never looked at
+        the run: failed, blocked, and skipped tasks all pushed too.
+
+        Both are now gates. The suite's outcome is one of four
+        (:class:`~mak.teardown.SuiteOutcome`), a runner that raises is an ``ERROR``
+        rather than an unnoticed pass, and the push additionally requires the
+        **aggregate** execution outcome to be satisfied — ``execution`` when the
+        caller has one (it knows about cascade waves; the session does not), else
+        this session's own last result.
+        """
+        outcome, output = self._run_tests()
+        aggregate = execution or ExecutionResult(
+            initial=self._last_result or self._empty_result()
+        )
+        pushed, skip_reason = self._maybe_push(outcome, aggregate)
+        result = TeardownResult(
+            outcome=outcome,
+            output=output,
+            pushed=pushed,
+            push_skipped_reason=skip_reason,
+        )
         self._log(
             EventType.SESSION_ENDED,
-            tests_passed=passed,
+            test_outcome=str(outcome),
+            tests_passed=outcome is SuiteOutcome.PASSED,
+            pushed=pushed,
+            push_skipped=skip_reason,
             completed=len(self._completed),
             failed=len(self._failed),
             output=output[:500],
         )
-        return passed
+        return result
+
+    def _run_tests(self) -> tuple[SuiteOutcome, str]:
+        """Run the configured suite, if there is one, and classify the result."""
+        if self._test_runner is None:
+            return SuiteOutcome.SKIPPED, "no test_command configured; nothing ran"
+        try:
+            passed, output = self._test_runner()
+        except Exception as exc:  # noqa: BLE001 - any runner defect is an outcome
+            # Deliberately not re-raised: teardown's job is to report, and a
+            # runner that blew up is a report, not a reason to lose the run's
+            # results. It is an ERROR, never a pass — which is what the TUI's
+            # warning-and-carry-on used to turn it into.
+            self._log(EventType.SESSION_ENDED, test_runner_error=str(exc))
+            return SuiteOutcome.ERROR, f"the test runner raised: {exc}"
+        return (SuiteOutcome.PASSED if passed else SuiteOutcome.FAILED), output
+
+    def _maybe_push(
+        self, outcome: SuiteOutcome, execution: ExecutionResult
+    ) -> tuple[bool, str | None]:
+        """Apply the push gate; return ``(pushed, why_not)``."""
+        if not self._config.git.auto_push or self._git is None:
+            return False, None
+        if not execution.request_satisfied:
+            return False, (
+                "the run did not fully succeed "
+                f"({execution.summary_line()}); nothing was pushed"
+            )
+        if not may_push(outcome, self._config.session.test_policy):
+            return False, (
+                f"tests {outcome.value} and session.test_policy is "
+                f"'{self._config.session.test_policy}'; nothing was pushed"
+            )
+        self._git.push()
+        return True, None
+
+    @staticmethod
+    def _empty_result() -> SessionResult:
+        """Stand in for a session that never ran, so teardown has a verdict."""
+        return SessionResult(state=SessionState.CREATED, completed=(), failed=())
 
     # -- crash recovery ----------------------------------------------------
 
@@ -2326,6 +2602,10 @@ class Session:
         precisely the crash it exists to handle: a kill mid-write is what
         truncates that file in the first place.
         """
+        # Same ordering rule as ``initialize``: ownership, then any commit the
+        # crash left in flight, and only then the state that depends on both.
+        self._acquire_project()
+        self._recover_journal()
         expired = self._lock_table.expire_stale()
         graph_path = self._mak_dir / "task_graph.json"
         if graph_path.exists():
