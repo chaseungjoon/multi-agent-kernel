@@ -48,9 +48,20 @@ def print_banner(console: Console, state: CliState) -> None:
     body.append("/status", style=ACCENT)
     body.append(" for session info", style="dim")
     body.append(f"\n\n  cwd: {state.work_dir_display()}", style="dim")
+    # The byline rides the bottom border rather than taking a line inside the
+    # box: it stays visible without adding to the block of text above it.
+    byline = Text("made by Seungjoon Cha", style=DIM)
     console.print()
     console.print(
-        Panel(body, border_style=ACCENT, box=ROUNDED, padding=(0, 1), expand=False)
+        Panel(
+            body,
+            border_style=ACCENT,
+            box=ROUNDED,
+            padding=(0, 1),
+            expand=False,
+            subtitle=byline,
+            subtitle_align="right",
+        )
     )
     console.print()
 
