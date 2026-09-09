@@ -50,7 +50,7 @@ def print_banner(console: Console, state: CliState) -> None:
     body.append(f"\n\n  cwd: {state.work_dir_display()}", style="dim")
     # The byline rides the bottom border rather than taking a line inside the
     # box: it stays visible without adding to the block of text above it.
-    byline = Text("made by Seungjoon Cha", style=DIM)
+    byline = Text("made by Seungjoon Cha", style=ACCENT)
     console.print()
     console.print(
         Panel(
