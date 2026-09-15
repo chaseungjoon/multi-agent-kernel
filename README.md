@@ -302,7 +302,16 @@ immediately.
 the same workload with the same agents (3× `claude-sonnet-4-6`). Every operation **must
 edit one shared registry function**. The numbers below are the **mean of 10 independent runs**
 
-- [`benchmark/project_template_2/`](benchmark/project_template_2/) — 90 operations, 9 modules
+- Real world scenario [`benchmark/project_template_3/`](benchmark/project_template_3/) — 58 tasks
+
+| | MAK | Git worktrees |
+|---|---|---|
+| Avg. Tokens | **13,911** | 16,291 |
+| Avg. Time | **57.07s** | 74.12s |
+| Avg. Accuracy | **75%** (111.4/148) | 63% (93.7/148) |
+| Avg. Merge conflicts | **0** | 4 |
+
+- Worst case scenario for MAK [`benchmark/project_template_2/`](benchmark/project_template_2/) —  90 operations, 9 modules
 
   | | MAK | Git worktrees |
   |---|---|---|
@@ -311,18 +320,15 @@ edit one shared registry function**. The numbers below are the **mean of 10 inde
   | Avg. Accuracy | **94%** (253.1/270) | 93% (251.6/270) |
   | Avg. Merge conflicts | **0** | 2 |
 
-> MAK spends **23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a slight edge in accuracy.
+> MAK spends **15%~23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a notable edge in accuracy.
 >
 > [More statistics](/benchmark/STATS.md)
 
-Both sides got a few of the harder algorithms wrong, but the worktree side
-additionally resulted in **2 merge conflicts.**
+- For real-world situations (`project_template_3`), where contention is spread out over the codebase, MAK is by design faster than traditional worktree based operations.
 
-MAK can be **slower** than traditional worktree based operations because on some codebases, task can contend on one symbol, so MAK
-serializes those writes while the worktrees edit in parallel and reconcile afterward.
+- In a worst case scenario (`project_template_2`), where tasks contend to **one symbol**, MAK can be more than 2 times slower than traditional worktree based operations.
 
-In those cases, the trade is **correctness by construction** and **token efficiency** for execution time on a deliberately
-maximally-contended workload.
+In both cases, MAK is both more token efficient and more accurate than traditional worktree based operations.
 
 Run it yourself (all targets) with
 
