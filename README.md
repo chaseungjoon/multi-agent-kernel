@@ -299,12 +299,11 @@ immediately.
 ## Benchmark
 
 [`benchmark/`](benchmark/) pits MAK against a traditional git-worktree multi-agent workflow on
-the same workload with the same agents (3× `claude-sonnet-4-6`). Every operation **must
-edit one shared registry function**. The numbers below are the **mean of 10 independent runs**
+the same workload with the same agents.
 
 - **Real world scenario** [`benchmark/project_template_3/`](benchmark/project_template_3/) — 58 tasks
 
-  | | MAK | Git worktrees |
+  | | MAK | Traditional |
   |---|---|---|
   | Avg. Tokens | **13,911** | 16,291 |
   | Avg. Time | **57.07s** | 74.12s |
@@ -313,7 +312,7 @@ edit one shared registry function**. The numbers below are the **mean of 10 inde
 
 - **Worst case scenario for MAK** [`benchmark/project_template_2/`](benchmark/project_template_2/) —  90 operations, 9 modules
 
-  | | MAK | Git worktrees |
+  | | MAK | Traditional |
   |---|---|---|
   | Avg. Tokens | **18,339** | 23,760 |
   | Avg. Time | 226.5s | **99.5s** |
@@ -324,17 +323,17 @@ edit one shared registry function**. The numbers below are the **mean of 10 inde
 >
 > [More statistics](/benchmark/STATS.md)
 
-- For real-world situations (`project_template_3`), where contention is spread out over the codebase, MAK is by design faster than traditional worktree based operations.
+- For **real-world situations** (`project_template_3`), where contention is spread out over the codebase, MAK is by design faster than Traditional operations.
 
-- In a worst case scenario (`project_template_2`), where tasks contend to **one symbol**, MAK can be more than 2 times slower than traditional worktree based operations.
+- In a **worst case scenario** (`project_template_2`), where tasks contend to **one symbol**, MAK can be more than 2 times slower than Traditional operations.
 
-In both cases, MAK is both more token efficient and more accurate than traditional worktree based operations.
+> In both cases, MAK uses less tokens while being more accurate than Traditional operations.
 
 Run it yourself (all targets) with
 
 ```bash
 python3 benchmark/run_benchmark.py --mode real \
-  --models anthropic:claude-sonnet-5 --max-agents 3
+  --models anthropic:claude-opus-5 --max-agents 3
 ```
 
 ## Contribute
