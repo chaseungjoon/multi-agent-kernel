@@ -287,7 +287,7 @@ difference in the numbers is attributable to that.
 
 ### The workloads
 
-Two targets, both the same shape — a `toolkit` library of unimplemented stubs plus a
+The original two targets share a shape — a `toolkit` library of stubs plus a
 shared dispatch table, `registry._register_all`, that **every** operation must add one
 line to — at two sizes:
 
@@ -307,7 +307,87 @@ touch. Under MAK a node-level write lock serializes those edits and none are los
 under worktrees every branch edits it independently, so every merge after the first
 collides there and must be reconciled. Module files are assigned one-agent-per-module
 so they merge cleanly — the conflict is isolated to exactly the contended symbol. Pick a
-target with `--project basic|2|all` (default `all`).
+target with `--project basic|2|3|4|all` (default `all`).
+
+### Template 4: multi-tenant job service
+
+`benchmark/project_template_4/` adds 24 function tasks across `tenancy`, `submission`,
+`scheduling`, `leasing`, `lifecycle`, and `operations`. Its 152-test oracle comprises
+112 contract/boundary checks, 30 wiring checks across `routes`, `events`, and
+`policies`, and ten full service workflows. It covers tenant isolation, quotas,
+JSON normalization, idempotency conflicts, retry/backpressure policy, stale leases,
+worker recovery, cancellation, dead-letter replay, pagination, retention, and metrics.
+`Job` and `Submission` are immutable dataclasses; timestamps are explicit inputs.
+
+Implementation and maintenance:
+
+- `benchmark/harness/template4_spec.py` owns public contracts, mock references, and
+  explicitly specified expected results. `template4_workflows.py` owns independent
+  integration scenarios. `benchmark/tools/gen_template4.py` regenerates the fixture;
+  edit these sources rather than generated Python files.
+- `benchmark/harness/planner.py` produces one validated plan using
+  `anthropic:claude-opus-5` per repetition. It exposes only public contracts, model definitions, and wiring targets.
+  The strict JSON plan assigns every module exactly once, uses every worker, and
+  provides guidance. Literal line breaks in JSON strings are accepted; invalid
+  control characters and incomplete JSON remain rejected. Validation failures get
+  up to three attempts with corrective feedback, then stop before workers run.
+  Anthropic planners use an 8,192-token response budget; workers retain 2,048.
+  Every attempt contributes to planner time/token/call totals. `PlanAttempt` records
+  raw responses, usage, and errors, written immediately to
+  `.runs/4/planner-N/attempt-M.json` and retained in successful saved plans.
+  `apply_plan` returns a new workload so guidance cannot accumulate between repeats.
+- Three uniquely named `anthropic:claude-opus-5` workers are the Template 4 default.
+  `--models` overrides workers and `--planner-model` overrides its planner. Other
+  targets retain their previous defaults. `--agents` selects the default worker count;
+  an explicit model list overrides the count. Template 4 permits one to six workers.
+- Both runners receive identical ownership and guidance. They use the existing
+  function-edit adapter and deterministic registrations. Template 4 tables construct
+  local dictionaries; `registration_source`, `add_registration`, and the mock merge
+  resolver preserve that scaffold while retaining the old tables' behavior.
+- `RunResult` now records `planning_usage` and `planning_seconds`; `RunMeta` records
+  `planner_model`. Totals include the shared planning cost once on each side, with
+  separate subset rows in reports. Legacy JSON loads with zero planning cost.
+  `.last_run.4.json` retains every plan and its actual usage, alongside aggregates and
+  per-repeat samples. `--keep` retains `.runs/4/plan-N.json` and final working copies.
+- Report ordering includes Template 4 after the three existing targets. Runs and
+  `--render-only` update `benchmark/README.md` and `benchmark/STATS.md` with an exact
+  `## Template 4` heading. Earlier saved project results remain included. The CLI
+  rejects nonpositive repeats and empty model lists instead of silently adjusting them.
+
+From the repository root, with the development dependencies installed:
+
+```bash
+python benchmark/tools/gen_template4.py
+python -m pytest tests/test_benchmark_template4.py tests/test_benchmark_traditional.py -q
+python benchmark/run_benchmark.py --mode mock --project 4 --keep
+# Requires ANTHROPIC_API_KEY; one Opus 5 planner plus three Opus 5 workers:
+python benchmark/run_benchmark.py --mode real --project 4 --repeat 10
+```
+
+Regression tests verify deterministic regeneration, full baseline collection with
+all checks failing, all four workloads passing through both mock runners, malformed
+planner rejection, reference isolation, real-planner call accounting through a test
+double, identical ownership/guidance, legacy report loading, saved plans, and the
+repeated-run CLI/report flow. The checked-in Template 4 statistics are explicitly
+labelled mock results; no paid model calls were used to validate this change.
+
+Initial validation on Python 3.13: all 26 benchmark tests passed, and the full
+repository suite had 1,694 passes with three existing `src/**` ingestion/glob
+failures. Those same three failures were reproduced from an unmodified `HEAD`
+archive; they are outside the benchmark changes.
+
+The planner-response fix adds seven regression cases for literal line breaks,
+truncation, invalid controls, retry exhaustion, diagnostic persistence, accumulated
+usage, and planner/worker token-budget separation. All 33 benchmark tests pass.
+
+**Interpretation limits:** this is a controlled coordination benchmark with predefined
+function tasks, not MAK's production planner or an autonomous repository migration.
+Workflows test the final combined service; worker tasks do not introduce execution
+dependencies. Pure service logic does not model database durability or network races.
+The traditional baseline invokes worker calls sequentially but reports simulated
+parallel call time plus measured merge time; MAK uses measured execution time.
+Setup/tests are excluded, planner cost is included, and stochastic implementations
+can differ even with identical prompts. Mock timing says nothing about Opus speed.
 
 ### Fairness controls
 
