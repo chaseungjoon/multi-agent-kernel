@@ -5,13 +5,16 @@ Usage (from the repository root)::
     python benchmark/run_benchmark.py --mode mock                 # keyless self-test (all projects)
     python benchmark/run_benchmark.py --mode real                 # real models, all projects
     python benchmark/run_benchmark.py --mode real --project 3      # just the real-world project
+    python benchmark/run_benchmark.py --mode real --project 4      # Opus 5 planner + 3 workers
     python benchmark/run_benchmark.py --mode real --models anthropic:claude-sonnet-5 \\
         openai:gpt-5.6-sol gemini:gemini-3.5-flash
 
-There are three workloads: ``basic`` (9 ops, 3 modules) and ``2`` (90 ops, 9 modules
+There are four workloads: ``basic`` (9 ops, 3 modules) and ``2`` (90 ops, 9 modules
 of real-utility-style functions) are *maximally contended* (one shared registry every
 task edits); ``3`` (58 feature tasks, 8 modules, 4 shared tables) is the *partially
-contended* real-world target. Each runs both coordination models — MAK and git
+contended* storefront target. ``4`` (24 tasks, 6 modules, 3 tables) adds a planned
+multi-tenant job-service release with boundary and lifecycle acceptance tests.
+Each runs both coordination models — MAK and git
 worktrees — on a fresh copy with the *same* agents and assignment; only coordination
 differs.
 Every project's last run is saved separately, so the reports
@@ -61,6 +64,9 @@ from harness.accuracy import ensure_pytest_available  # noqa: E402
 from harness.agents import AgentSpec, Usage, make_backends  # noqa: E402
 from harness.mak_runner import run_mak  # noqa: E402
 from harness.metrics import RunResult  # noqa: E402
+from harness.planner import (  # noqa: E402
+    DEFAULT_PLANNER, BenchmarkPlan, apply_plan, make_plan,
+)
 from harness.report import (  # noqa: E402
     ProjectRun,
     RunMeta,
@@ -71,8 +77,8 @@ from harness.report import (  # noqa: E402
 from harness.traditional import run_traditional  # noqa: E402
 from harness.workload import WORKLOADS, Workload, assign  # noqa: E402
 
-# Render order: lighter projects first, the real-world target last.
-_PROJECT_ORDER = ["basic", "2", "3"]
+# Preserve the established report order as new templates are added.
+_PROJECT_ORDER = ["basic", "2", "3", "4"]
 _LEGACY_RUN = BENCH / ".last_run.json"
 _PROVIDER_PACKAGES = {
     "anthropic": "anthropic",
@@ -91,12 +97,14 @@ def _save_run(
     trad: RunResult,
     meta: RunMeta,
     samples: list[dict] | None = None,
+    plans: list[BenchmarkPlan] | None = None,
 ) -> None:
     _run_path(project).write_text(json.dumps({
         "meta": dataclasses.asdict(meta),
         "mak": dataclasses.asdict(mak),
         "trad": dataclasses.asdict(trad),
         "samples": samples,
+        "plans": [dataclasses.asdict(plan) for plan in plans] if plans else None,
     }, indent=2))
 
 
@@ -107,6 +115,7 @@ def _load_run(path: Path) -> ProjectRun:
     def _result(d: dict) -> RunResult:
         d = dict(d)
         d["usage"] = Usage(**d.pop("usage"))
+        d["planning_usage"] = Usage(**d.pop("planning_usage", {}))
         d.setdefault("total", meta.tests)  # legacy runs stored no per-result total
         d.pop("accuracy", None)
         return RunResult(**d)
@@ -154,6 +163,12 @@ def _aggregate(results: list[RunResult]) -> RunResult:
             for a in agents
         },
         notes=notes,
+        planning_usage=Usage(
+            tokens_in=round(_mean([r.planning_usage.tokens_in for r in results])),
+            tokens_out=round(_mean([r.planning_usage.tokens_out for r in results])),
+            calls=round(_mean([r.planning_usage.calls for r in results])),
+        ),
+        planning_seconds=_mean([r.planning_seconds for r in results]),
     )
 
 
@@ -211,9 +226,15 @@ _DEFAULT_SPECS = [
 ]
 
 
-def _parse_specs(raw: list[str] | None, num_agents: int) -> list[AgentSpec]:
+def _parse_specs(
+    raw: list[str] | None, num_agents: int, project: str = "basic",
+) -> list[AgentSpec]:
     if not raw:
-        pairs = [(s.provider, s.model) for s in _DEFAULT_SPECS[:num_agents]]
+        defaults = [DEFAULT_PLANNER] if project == "4" else _DEFAULT_SPECS
+        pairs = [
+            (defaults[i % len(defaults)].provider, defaults[i % len(defaults)].model)
+            for i in range(num_agents)
+        ]
     else:
         pairs = []
         for item in raw:
@@ -260,10 +281,13 @@ def _fresh_copy(template: Path, dest: Path) -> Path:
 
 
 def _one_pass(
-    workload: Workload, specs: list[AgentSpec], mode: str, runs_root: Path
+    workload: Workload, specs: list[AgentSpec], mode: str, runs_root: Path,
+    plan: BenchmarkPlan | None = None,
 ) -> tuple[RunResult, RunResult]:
     """Run MAK and Traditional once over the workload on fresh copies."""
     assignment = assign(workload, len(specs))
+    if plan is not None:
+        workload, assignment = apply_plan(workload, plan)
     mock = mode == "mock"
     template = BENCH / workload.template
 
@@ -288,6 +312,12 @@ def _one_pass(
     )
     print(f"[benchmark]   Traditional: {trad_result.accuracy:.0%} accuracy, "
           f"{trad_result.usage.calls} calls, {trad_result.conflicts} conflicts")
+    if plan is not None:
+        for result in (mak_result, trad_result):
+            result.planning_usage = plan.usage
+            result.planning_seconds = plan.wall_seconds
+            result.usage = result.usage + plan.usage
+            result.wall_seconds += plan.wall_seconds
     return mak_result, trad_result
 
 
@@ -297,6 +327,7 @@ def _run_project(
     mode: str,
     runs_root: Path,
     repeats: int = 1,
+    planner_spec: AgentSpec = DEFAULT_PLANNER,
 ) -> None:
     num_agents = len(specs)
 
@@ -307,10 +338,25 @@ def _run_project(
     mak_runs: list[RunResult] = []
     trad_runs: list[RunResult] = []
     samples: list[dict] = []
+    plans: list[BenchmarkPlan] = []
     for i in range(repeats):
         print(f"\n[benchmark] --- {workload.name}: run {i + 1}/{repeats} ---",
               file=sys.stderr, flush=True)
-        mak_result, trad_result = _one_pass(workload, specs, mode, runs_root)
+        plan = None
+        if workload.name == "4":
+            print(f"[benchmark] planning via {planner_spec.model} ...", flush=True)
+            plan = make_plan(
+                workload, BENCH / workload.template, num_agents, planner_spec,
+                mock=mode == "mock",
+                diagnostics_dir=runs_root / workload.name / f"planner-{i + 1}",
+            )
+            plans.append(plan)
+            plan_dir = runs_root / workload.name
+            plan_dir.mkdir(parents=True, exist_ok=True)
+            (plan_dir / f"plan-{i + 1}.json").write_text(
+                json.dumps(dataclasses.asdict(plan), indent=2)
+            )
+        mak_result, trad_result = _one_pass(workload, specs, mode, runs_root, plan)
         mak_runs.append(mak_result)
         trad_runs.append(trad_result)
         samples.append(_sample(mak_result, trad_result))
@@ -334,9 +380,10 @@ def _run_project(
         modules=len(workload.modules),
         repeats=repeats,
         shared_functions=len(workload.shared_modules),
+        planner_model=plans[0].model if plans else "",
     )
     _save_run(workload.name, mak_agg, trad_agg, meta,
-              samples=samples if repeats > 1 else None)
+              samples=samples if repeats > 1 else None, plans=plans)
 
 
 def _tokens_int(r: RunResult) -> int:
@@ -347,12 +394,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="MAK vs git-worktree benchmark")
     parser.add_argument("--mode", choices=("mock", "real"), default="mock")
     parser.add_argument("--agents", type=int, default=3)
-    parser.add_argument("--project", choices=("basic", "2", "3", "all"), default="all",
+    parser.add_argument("--project", choices=("basic", "2", "3", "4", "all"), default="all",
                         help="which workload to run (default: all)")
     parser.add_argument("--repeat", type=int, default=1,
                         help="run each project N times and report the mean (default: 1)")
-    parser.add_argument("--models", nargs="*", default=None,
+    parser.add_argument("--models", nargs="+", default=None,
                         help="provider:model entries; overrides the defaults")
+    parser.add_argument("--planner-model", default="anthropic:claude-opus-5",
+                        help="Template 4 planner provider:model (default: anthropic:claude-opus-5)")
     parser.add_argument("--keep", action="store_true",
                         help="keep the .runs working copies for inspection")
     parser.add_argument("--render-only", action="store_true",
@@ -365,17 +414,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.agents < 1:
         parser.error("--agents must be at least 1")
 
-    specs = _parse_specs(args.models, args.agents)
+    if args.repeat < 1:
+        parser.error("--repeat must be at least 1")
+    planner_spec = _parse_specs([args.planner_model], 1)[0]
     ensure_pytest_available()
-    if args.mode == "real":
-        _ensure_real_provider_packages(specs)
     projects = _PROJECT_ORDER if args.project == "all" else [args.project]
+    project_specs = {
+        project: _parse_specs(args.models, args.agents, project) for project in projects
+    }
+    if "4" in projects and len(project_specs["4"]) > len(WORKLOADS["4"].modules):
+        parser.error("Template 4 supports at most six workers (one per feature module)")
+    if args.mode == "real":
+        all_specs = [spec for specs in project_specs.values() for spec in specs]
+        if "4" in projects:
+            all_specs.append(planner_spec)
+        _ensure_real_provider_packages(all_specs)
     runs_root = BENCH / ".runs"
     shutil.rmtree(runs_root, ignore_errors=True)  # clear any stale copies from a crash
 
     for project in projects:
-        _run_project(WORKLOADS[project], specs, args.mode, runs_root,
-                     repeats=max(1, args.repeat))
+        _run_project(WORKLOADS[project], project_specs[project], args.mode, runs_root,
+                     repeats=args.repeat, planner_spec=planner_spec)
 
     _write_reports()
 

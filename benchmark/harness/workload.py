@@ -3,7 +3,7 @@
 A :class:`Workload` bundles everything project-specific — the template directory,
 the operation list, the modules, and the expected test count — so the runners and
 the mock backend stay a single source of truth and the projects can never drift
-apart. Three workloads ship:
+apart. Four workloads ship:
 
 - ``basic`` — the original 9-operation ``toolkit`` (3 modules).
 - ``2`` — a larger, harder 90-operation ``toolkit`` (9 modules), several of them
@@ -12,6 +12,8 @@ apart. Three workloads ship:
   58 feature tasks across 8 feature modules and **four** cross-cutting shared
   tables (``routes``/``events``/``errors``/``settings``), each task registering
   into zero, one, or two of them.
+- ``4`` — a planned multi-tenant job service with 24 function tasks, six feature
+  modules, three stateless wiring tables, and 152 acceptance checks.
 
 ``basic`` and ``2`` share the *maximally contended* shape — one shared dispatch
 function, ``registry._register_all``, that every operation adds one line to.
@@ -31,6 +33,11 @@ from harness.template2_spec import modules as _t2_modules
 from harness.template3_spec import OPS as _T3_SPEC
 from harness.template3_spec import expected_tests as _t3_tests
 from harness.template3_spec import modules as _t3_modules
+from harness.template4_spec import CONTEXT as _T4_CONTEXT
+from harness.template4_spec import SHARED_TABLES as _T4_TABLES
+from harness.template4_spec import TASKS as _T4_TASKS
+from harness.template4_spec import expected_tests as _t4_tests
+from harness.template4_spec import modules as _t4_modules
 
 REGISTRY_NODE = "toolkit/registry.py::function::_register_all"
 
@@ -53,6 +60,7 @@ class Operation:
     reference: str  # a correct implementation, used by the mock backend
     package: str = "toolkit"  # top-level package directory of the template
     registrations: tuple[Registration, ...] = ()  # shared-table edits (may be empty)
+    context: str = ""  # public project context and optional planner guidance
 
     @property
     def func_node(self) -> str:
@@ -183,7 +191,7 @@ _TEMPLATE3_OPERATIONS: list[Operation] = [
 class Workload:
     """A complete benchmark target: its template, operations, and oracle size."""
 
-    name: str  # "basic" | "2" | "3"
+    name: str  # "basic" | "2" | "3" | "4"
     template: str  # template directory name under benchmark/
     label: str  # human label for reports
     blurb: str  # one-line description for reports
@@ -199,6 +207,29 @@ class Workload:
 
 
 WORKLOADS: dict[str, Workload] = {
+    "4": Workload(
+        name="4",
+        template="project_template_4",
+        label="Template 4",
+        blurb="Multi-tenant background-job service: 24 tasks, 6 feature modules, "
+        "3 shared tables; tenant isolation, idempotency, retries, leases and recovery.",
+        operations=[
+            Operation(
+                task.name, task.module, task.name, task.reference,
+                package="service",
+                registrations=tuple(
+                    Registration(table, f"    register({task.name!r}, {task.module}.{task.name})")
+                    for table in task.tables
+                ),
+                context=_T4_CONTEXT,
+            )
+            for task in _T4_TASKS
+        ],
+        modules=list(_t4_modules()),
+        expected_tests=_t4_tests(),
+        package="service",
+        shared_modules=_T4_TABLES,
+    ),
     "basic": Workload(
         name="basic",
         template="project_template",
@@ -270,12 +301,26 @@ def add_registration(current_source: str, register_line: str) -> str:
     what differs is only *when* it is applied (serialized under MAK vs in parallel
     worktrees that must be merged).
     """
-    header = "def _register_all() -> None:"
-    doc = '    """Register every operation."""'
     existing = [
         line for line in current_source.splitlines() if line.strip().startswith("register(")
     ]
     if register_line.strip() not in {line.strip() for line in existing}:
         existing.append(register_line)
-    body = "\n".join(existing) if existing else "    pass"
-    return f"{header}\n{doc}\n{body}\n"
+    return registration_source(
+        existing, local_table="entries: dict[str, object]" in current_source
+    )
+
+
+def registration_source(lines: list[str], *, local_table: bool = False) -> str:
+    """Build shared wiring, preserving Template 4's local, stateless table."""
+    if local_table:
+        return (
+            "def _register_all() -> dict[str, object]:\n"
+            '    """Register feature handlers in a local table."""\n'
+            "    entries: dict[str, object] = {}\n"
+            "    register = entries.__setitem__\n"
+            + "".join(f"    {line.strip()}\n" for line in lines)
+            + "    return entries\n"
+        )
+    body = "\n".join(lines) if lines else "    pass"
+    return f'def _register_all() -> None:\n    """Register every operation."""\n{body}\n'

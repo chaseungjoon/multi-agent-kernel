@@ -20,6 +20,8 @@ class RunResult:
     resolutions: float  # conflict-resolution model calls made (0 for MAK)
     per_agent_calls: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    planning_usage: Usage = field(default_factory=Usage)
+    planning_seconds: float = 0.0
 
     @property
     def accuracy(self) -> float:

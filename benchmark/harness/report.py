@@ -30,6 +30,7 @@ class RunMeta:
     modules: int = 3  # module count of the workload
     repeats: int = 1  # how many runs the numbers are averaged over
     shared_functions: int = 1  # contended `_register_all` tables in the workload
+    planner_model: str = ""  # absent for the legacy fixed-assignment benchmarks
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,16 @@ def _summary_table(mak: RunResult, trad: RunResult) -> str:
         ("Registry merge conflicts", _num(mak.conflicts), _num(trad.conflicts)),
         ("Conflict-resolution calls", _num(mak.resolutions), _num(trad.resolutions)),
     ]
+    if mak.planning_usage.calls or trad.planning_usage.calls:
+        rows.extend([
+            ("Planner time (included above)", _fmt_secs(mak.planning_seconds),
+             _fmt_secs(trad.planning_seconds)),
+            ("Planner tokens (included above)",
+             _num(mak.planning_usage.tokens_in + mak.planning_usage.tokens_out),
+             _num(trad.planning_usage.tokens_in + trad.planning_usage.tokens_out)),
+            ("Planner calls (included above)", _num(mak.planning_usage.calls),
+             _num(trad.planning_usage.calls)),
+        ])
     lines = ["| Metric | MAK | Traditional (worktrees) |", "|---|---|---|"]
     lines += [f"| {m} | {a} | {b} |" for m, a, b in rows]
     return "\n".join(lines)
@@ -76,6 +87,8 @@ def _summary_table(mak: RunResult, trad: RunResult) -> str:
 
 def _takeaway(mak: RunResult, trad: RunResult, meta: RunMeta) -> str:
     """An honest, computed reading of the numbers (no hard-coded conclusions)."""
+    if meta.project == "4":
+        return _template4_takeaway(mak, trad, meta)
     mt, tt = _tokens(mak), _tokens(trad)
     fully_contended = meta.shared_functions <= 1
     lines: list[str] = []
@@ -144,6 +157,31 @@ def _takeaway(mak: RunResult, trad: RunResult, meta: RunMeta) -> str:
     return "\n".join(lines)
 
 
+def _template4_takeaway(mak: RunResult, trad: RunResult, meta: RunMeta) -> str:
+    lines = [
+        f"- **Accuracy:** MAK {_num(mak.passed)}/{mak.total}; "
+        f"Traditional {_num(trad.passed)}/{trad.total}. The oracle covers function "
+        "contracts, shared wiring, and complete service workflows.",
+        f"- **Coordination:** MAK {_num(mak.conflicts)} merge conflicts; "
+        f"Traditional {_num(trad.conflicts)} conflicted files and "
+        f"{_num(trad.resolutions)} resolution calls across three shared tables.",
+        "- **Planner:** the same validated ownership and guidance are reused by "
+        "both sides; each total includes the measured planner cost once.",
+    ]
+    if meta.mode == "mock":
+        lines.append("- **Interpretation:** this is a deterministic harness self-test; "
+                     "its timing and token counts do not measure Opus 5 performance.")
+    else:
+        lines.append(
+            f"- **Resources:** MAK {_tokens(mak):,} tokens / {mak.wall_seconds:.2f}s; "
+            f"Traditional {_tokens(trad):,} tokens / {trad.wall_seconds:.2f}s. "
+            "Traditional time uses simulated parallel worker calls plus the measured "
+            "merge phase; MAK time measures actual execution. Model outputs can "
+            "differ, so score differences alone do not identify a merge failure."
+        )
+    return "\n".join(lines)
+
+
 def _mode_note(meta: RunMeta) -> str:
     if meta.mode == "mock":
         return (
@@ -161,6 +199,8 @@ def _mode_note(meta: RunMeta) -> str:
         f"> **Mode: `real`.** {meta.num_agents} agents "
         f"({', '.join(meta.models)}) implementing {meta.operations} operations "
         f"(verified by {meta.tests} tests).{averaged}"
+        + (f" Planner: `{meta.planner_model}`; one plan reused for both sides, "
+           "with its cost included equally in both totals." if meta.planner_model else "")
     )
 
 
@@ -264,6 +304,16 @@ def _stats_section(run: ProjectRun) -> list[str]:
         "| Agent | MAK | Traditional |",
         "|---|---|---|",
     ]
+    if meta.planner_model:
+        lines[6:6] = [
+            f"- **Planner:** `{meta.planner_model}` (one shared plan per repetition).",
+            "- **Accounting:** planner time/tokens/calls are included once per side; "
+            "the planner detail rows are subsets, not additional charges.",
+            "- **Plan artifact:** `.last_run.4.json` records module ownership, "
+            "guidance, and planner usage for every repetition.",
+            "- **Timing:** MAK uses measured execution wall time; Traditional uses "
+            "maximum worker call time plus measured sequential merge time.",
+        ]
     agents = sorted(set(mak.per_agent_calls) | set(trad.per_agent_calls))
     for agent in agents:
         lines.append(

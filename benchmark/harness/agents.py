@@ -22,7 +22,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from harness.workload import Operation, add_registration
+from harness.workload import Operation, add_registration, registration_source
 
 _FENCE = re.compile(r"^```[a-zA-Z]*\n|\n```$", re.MULTILINE)
 
@@ -76,7 +76,9 @@ def _strip_fence(text: str) -> str:
 
 def _union_registry(versions: list[str]) -> str:
     """Deterministically merge ``_register_all`` versions by unioning their lines."""
-    merged = "def _register_all() -> None:\n    pass\n"
+    merged = registration_source(
+        [], local_table=any("entries: dict[str, object]" in v for v in versions)
+    )
     for version in versions:
         for line in version.splitlines():
             if line.strip().startswith("register("):
@@ -118,21 +120,39 @@ _RESOLVE_SYS = (
 class RealBackend:
     """Calls a hosted model and reports real token usage."""
 
-    def __init__(self, name: str, provider: str, model: str, client: Any = None) -> None:
+    def __init__(
+        self, name: str, provider: str, model: str, client: Any = None,
+        *, max_tokens: int = 2048,
+    ) -> None:
         self.name = name
         self.provider = provider
         self.model = model
         self._client = client
+        self._max_tokens = max_tokens
 
     def implement(self, op: Operation, stub_source: str) -> tuple[str, Usage]:
         prompt = f"Implement this function:\n\n{stub_source}"
+        if op.context:
+            prompt = f"{op.context}\n\n{prompt}"
         text, usage = self._call(_IMPLEMENT_SYS, prompt)
         _log(f"implement {op.name} via {self.name}", usage)
         return _strip_fence(text), usage
 
+    def plan(self, system: str, prompt: str) -> tuple[str, Usage]:
+        """Request a benchmark plan and report its actual provider usage."""
+        text, usage = self._call(system, prompt)
+        _log(f"plan via {self.name}", usage)
+        return text, usage
+
     def resolve(self, versions: list[str]) -> tuple[str, Usage]:
         joined = "\n\n# ---- version ----\n".join(versions)
-        text, usage = self._call(_RESOLVE_SYS, joined)
+        system = _RESOLVE_SYS
+        if "entries: dict[str, object]" in joined:
+            system += (
+                " Preserve the local entries dictionary initialization, register alias, "
+                "return entries, and dict[str, object] return annotation."
+            )
+        text, usage = self._call(system, joined)
         _log(f"resolve registry via {self.name}", usage)
         return _strip_fence(text), usage
 
@@ -157,7 +177,7 @@ class RealBackend:
     def _call_anthropic(self, system: str, prompt: str) -> tuple[str, Usage]:
         resp = self._anthropic().messages.create(
             model=self.model,
-            max_tokens=2048,
+            max_tokens=self._max_tokens,
             system=system,
             messages=[{"role": "user", "content": prompt}],
         )

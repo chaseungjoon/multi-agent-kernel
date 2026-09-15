@@ -192,3 +192,78 @@ Each row is one independent run; the headline above is the mean of these.
 
 #### Traditional notes
 - 179 agent-output note(s) across 10 runs (malformed/failed calls isolated per the parse gate; see per-run rows).
+
+---
+
+## Template 4
+
+- **Run at:** 2026-09-15T17:07:28 (mean of 10 runs)
+- **Mode:** `real`
+- **Agents:** 3 (claude-opus-5, claude-opus-5, claude-opus-5)
+- **Workload:** 24 operations across 6 modules + 3 shared registry functions; 152 tests as the accuracy oracle.
+- **Planner:** `anthropic:claude-opus-5` (one shared plan per repetition).
+- **Accounting:** planner time/tokens/calls are included once per side; the planner detail rows are subsets, not additional charges.
+- **Plan artifact:** `.last_run.4.json` records module ownership, guidance, and planner usage for every repetition.
+- **Timing:** MAK uses measured execution wall time; Traditional uses maximum worker call time plus measured sequential merge time.
+
+> **Mode: `real`.** 3 agents (claude-opus-5, claude-opus-5, claude-opus-5) implementing 24 operations (verified by 152 tests). Figures are the **mean of 10 runs** (per-run breakdown below). Planner: `anthropic:claude-opus-5`; one plan reused for both sides, with its cost included equally in both totals.
+
+### Headline
+
+| Metric | MAK | Traditional (worktrees) |
+|---|---|---|
+| Implementation time | 89.40s | 98.51s |
+| Total tokens | 36,366 | 40,787 |
+| Model calls | 25 | 31 |
+| Accuracy (tests passed) | 151.9/152 (100%) | 151.9/152 (100%) |
+| Registry merge conflicts | 0 | 6 |
+| Conflict-resolution calls | 0 | 6 |
+| Planner time (included above) | 29.26s | 29.26s |
+| Planner tokens (included above) | 6,132 | 6,132 |
+| Planner calls (included above) | 1 | 1 |
+
+### Reading the numbers
+
+- **Accuracy:** MAK 151.9/152; Traditional 151.9/152. The oracle covers function contracts, shared wiring, and complete service workflows.
+- **Coordination:** MAK 0 merge conflicts; Traditional 6 conflicted files and 6 resolution calls across three shared tables.
+- **Planner:** the same validated ownership and guidance are reused by both sides; each total includes the measured planner cost once.
+- **Resources:** MAK 36,366 tokens / 89.40s; Traditional 40,787 tokens / 98.51s. Traditional time uses simulated parallel worker calls plus the measured merge phase; MAK time measures actual execution. Model outputs can differ, so score differences alone do not identify a merge failure.
+
+### Token detail
+
+| | MAK | Traditional |
+|---|---|---|
+| Input tokens | 25,115 | 28,063 |
+| Output tokens | 11,251 | 12,724 |
+| Total tokens | 36,366 | 40,787 |
+| Model calls | 25 | 31 |
+
+### Model calls per agent
+
+| Agent | MAK | Traditional |
+|---|---|---|
+| agent0-claude-opus-5 | 8 | 14 |
+| agent1-claude-opus-5 | 8 | 8 |
+| agent2-claude-opus-5 | 8 | 8 |
+### Per-run breakdown (10 runs)
+
+Each row is one independent run; the headline above is the mean of these.
+
+| Run | MAK tokens | MAK passed | MAK time | Trad tokens | Trad passed | Trad time | Trad conflicts |
+|---|---|---|---|---|---|---|---|
+| 1 | 35,976 | 152/152 | 87.4s | 40,333 | 152/152 | 96.7s | 6 |
+| 2 | 37,433 | 152/152 | 99.8s | 41,815 | 152/152 | 106.2s | 6 |
+| 3 | 37,004 | 152/152 | 95.9s | 41,876 | 152/152 | 108.0s | 6 |
+| 4 | 35,972 | 152/152 | 81.7s | 40,563 | 152/152 | 94.1s | 6 |
+| 5 | 35,526 | 152/152 | 85.7s | 40,086 | 152/152 | 92.1s | 6 |
+| 6 | 36,368 | 152/152 | 85.0s | 40,677 | 152/152 | 99.2s | 6 |
+| 7 | 36,683 | 152/152 | 92.4s | 40,840 | 152/152 | 100.6s | 6 |
+| 8 | 35,912 | 152/152 | 84.4s | 40,207 | 152/152 | 90.7s | 6 |
+| 9 | 36,212 | 151/152 | 93.1s | 40,301 | 151/152 | 96.0s | 6 |
+| 10 | 36,567 | 152/152 | 88.5s | 41,171 | 152/152 | 101.6s | 6 |
+
+
+### Coordination
+
+- **MAK** held node-level write locks on the 3 shared `_register_all` tables, serializing only same-table registry edits: **0 conflicts**, **0 resolution calls**.
+- **Traditional** merged 3 branches that all edited the 3 shared `_register_all` tables: **6 conflicted files**, **6 resolution calls**.
