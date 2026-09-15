@@ -327,9 +327,9 @@ the same workload with the same agents.
 
 ### Time
 
-For **real-world situations** (`project_template_3`), where contention is spread out over the codebase, MAK is by design **faster** than Traditional operations.
+- For **real-world situations** (`project_template_3`), where contention is spread out over the codebase, MAK is by design **faster** than Traditional operations.
 
-In a **worst case scenario** (`project_template_2`), where tasks contend to **one symbol**, MAK can be **more than 2 times slower** than Traditional operations.
+- In a **worst case scenario** (`project_template_2`), where tasks contend to **one symbol**, MAK can be **more than 2 times slower** than Traditional operations.
 
 ### Reproduce results
 
