@@ -319,15 +319,19 @@ the same workload with the same agents.
   | Avg. Accuracy | **94%** (253.1/270) | 93% (251.6/270) |
   | Avg. Merge conflicts | **0** | 2 |
 
-> MAK spends **15%~23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a notable edge in accuracy.
->
 > [More statistics](/benchmark/STATS.md)
 
-- For **real-world situations** (`project_template_3`), where contention is spread out over the codebase, MAK is by design faster than Traditional operations.
+### Tokens & Accuracy
 
-- In a **worst case scenario** (`project_template_2`), where tasks contend to **one symbol**, MAK can be more than 2 times slower than Traditional operations.
+MAK spends **15%~23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a notable edge (up to **19%**) in accuracy.
 
-> In both cases, MAK uses less tokens while being more accurate than Traditional operations.
+### Time
+
+For **real-world situations** (`project_template_3`), where contention is spread out over the codebase, MAK is by design faster than Traditional operations.
+
+In a **worst case scenario** (`project_template_2`), where tasks contend to **one symbol**, MAK can be more than 2 times slower than Traditional operations.
+
+### Reproduce results
 
 Run it yourself (all targets) with
 
