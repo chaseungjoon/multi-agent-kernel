@@ -302,16 +302,16 @@ immediately.
 the same workload with the same agents (3× `claude-sonnet-4-6`). Every operation **must
 edit one shared registry function**. The numbers below are the **mean of 10 independent runs**
 
-- Real world scenario [`benchmark/project_template_3/`](benchmark/project_template_3/) — 58 tasks
+- **Real world scenario** [`benchmark/project_template_3/`](benchmark/project_template_3/) — 58 tasks
 
-| | MAK | Git worktrees |
-|---|---|---|
-| Avg. Tokens | **13,911** | 16,291 |
-| Avg. Time | **57.07s** | 74.12s |
-| Avg. Accuracy | **75%** (111.4/148) | 63% (93.7/148) |
-| Avg. Merge conflicts | **0** | 4 |
+  | | MAK | Git worktrees |
+  |---|---|---|
+  | Avg. Tokens | **13,911** | 16,291 |
+  | Avg. Time | **57.07s** | 74.12s |
+  | Avg. Accuracy | **75%** (111.4/148) | 63% (93.7/148) |
+  | Avg. Merge conflicts | **0** | 4 |
 
-- Worst case scenario for MAK [`benchmark/project_template_2/`](benchmark/project_template_2/) —  90 operations, 9 modules
+- **Worst case scenario for MAK** [`benchmark/project_template_2/`](benchmark/project_template_2/) —  90 operations, 9 modules
 
   | | MAK | Git worktrees |
   |---|---|---|
