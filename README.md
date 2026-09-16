@@ -20,6 +20,8 @@ No worktrees, no merge step, no late-stage reconciliation.
 The Multi Agent Kernel arbitrates concurrent access the way an OS
 arbitrates shared memory between threads.
 
+![](graphics/02-shared-memory.png)
+
 </div>
 
 </br>
@@ -46,17 +48,19 @@ Traditional **multi-agent coding systems** give each agent a Git branch and merg
 a **message-passing** model where conflicts surface late, after the dependency
 information needed to resolve them is gone.
 
+![](graphics/04-worktrees-vs-mak.png)
+
 ### Multi-Agent Kernel
 
 **MAK** takes the **shared-memory** approach instead: the codebase is decomposed into
 independently lockable `AST nodes` (functions, methods, classes, headers), making it possible for multiple agents to edit the same file at the same time.
 
-![](screenshots/comparison.png)
-
 Files
 on disk are derived artifacts reconstructed from a `versioned node store`. A `symbol-level lock table` resolves conflicts at ***scheduling*** time, while the
 dependency graph is still explicit, so each agent edits only the nodes it holds
 write locks on and the kernel reassembles the file. 
+
+![](graphics/01-shared-file.png)
 
 ### Waves
 
@@ -66,6 +70,8 @@ Before dispatching the agents, the planner's proposed
 plan is cross-checked against the dependency graph. After a
 wave, MAK re-checks what it left behind and offers any fix-ups as another
 reviewable plan.
+
+![](graphics/03-inside-the-kernel.png)
 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full architecture, or the
