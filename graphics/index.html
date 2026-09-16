@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAK, illustrated</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#141827;color:#eeeaf5;font:15px/1.5 ui-monospace,monospace}main{max-width:1200px;margin:auto;padding:28px 20px 48px}nav{display:flex;justify-content:space-between;padding:8px 0 32px;color:#b5a0ff}a{color:inherit;text-underline-offset:4px}figure{margin:0 0 48px}img{display:block;width:100%;height:auto;border-radius:8px}figcaption{display:flex;justify-content:space-between;gap:20px;padding:15px 2px;color:#c4bdd8}a:focus-visible{outline:2px solid #91f5bc;outline-offset:4px}@media(max-width:600px){main{padding:20px 12px}nav,figcaption{font-size:12px}figure{margin-bottom:24px}}
+</style>
+</head>
+<body><main>
+<nav><span>MAK, illustrated</span><a href="README.md">Files &amp; notes</a></nav>
+<figure><a href="01-shared-file.png"><img src="01-shared-file.png" alt="Three agents edit separate locked symbols; the kernel rebuilds one shared file."></a><figcaption><span>Same file, different symbols.</span><a href="01-shared-file.png" download>PNG ↓</a></figcaption></figure>
+<figure><a href="02-shared-memory.png"><img src="02-shared-memory.png" alt="The inspiration: threads share protected memory; MAK agents share protected source nodes."></a><figcaption><span>Inspired by shared memory.</span><a href="02-shared-memory.png" download>PNG ↓</a></figcaption></figure>
+<figure><a href="03-inside-the-kernel.png"><img src="03-inside-the-kernel.png" alt="Task to planner, scheduler and locks, agents, validation, node store, and reconstructed files."></a><figcaption><span>Inside the kernel.</span><a href="03-inside-the-kernel.png" download>PNG ↓</a></figcaption></figure>
+<figure><a href="04-worktrees-vs-mak.png"><img src="04-worktrees-vs-mak.png" alt="Separate worktree copies merge later; MAK coordinates access to shared nodes before editing."></a><figcaption><span>Worktrees versus shared nodes.</span><a href="04-worktrees-vs-mak.png" download>PNG ↓</a></figcaption></figure>
+<figure><a href="05-waves.png"><img src="05-waves.png" alt="Independent parse and render tasks run together; integration waits for both results."></a><figcaption><span>Work in waves.</span><a href="05-waves.png" download>PNG ↓</a></figcaption></figure>
+</main></body></html>
