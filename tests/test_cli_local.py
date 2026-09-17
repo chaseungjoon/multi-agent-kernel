@@ -21,7 +21,6 @@ from cli.runner import _apply_state_to_config, _resolve_planner_api_key
 from cli.ui import print_status
 from rich.console import Console
 
-from mak.core.exceptions import ConfigError
 from mak.local import LocalRuntime, OllamaError, OllamaModel, PullProgress
 from mak.local.runtime import KIND_OLLAMA, KIND_OPENAI_COMPATIBLE
 
@@ -388,6 +387,97 @@ class TestMode:
         handle_command("/mode hybrid", state, _console())
         assert state.mode == MODE_HYBRID
 
+    def test_hybrid_with_cloud_agents_offers_local_agents(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = _local_state(
+            api_keys={"ANTHROPIC_API_KEY": "sk-x"},
+            selected_models=["anthropic:claude-opus-5"],
+        )
+        state.mode = MODE_CLOUD
+        asked = _answers(monkeypatch, ["y", "1"])
+        handle_command("/mode hybrid", state, _console())
+        assert len(asked) == 2  # confirm + agents; the cloud planner already fits
+        assert state.selected_models == [f"ollama:{_MODEL}@{_URL}"]
+        assert state.planner_model == "claude-opus-5"
+        assert state.mode == MODE_HYBRID
+
+    def test_local_with_cloud_planner_and_agents_offers_both(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = _local_state(
+            api_keys={"ANTHROPIC_API_KEY": "sk-x"},
+            selected_models=["anthropic:claude-opus-5"],
+        )
+        state.mode = MODE_CLOUD
+        _answers(monkeypatch, ["", "1", "1"])  # Enter = yes
+        handle_command("/mode local", state, _console())
+        assert state.selected_models == [f"ollama:{_MODEL}@{_URL}"]
+        assert state.planner_model == _MODEL
+        assert state.planner_base_url == _URL
+        assert state.mode == MODE_LOCAL
+
+    def test_cloud_with_local_models_offers_cloud_ones(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = _local_state(
+            api_keys={"ANTHROPIC_API_KEY": "sk-x"},
+            selected_models=[f"ollama:{_MODEL}@{_URL}"],
+        )
+        state.planner_model = _MODEL
+        state.planner_backend = "ollama"
+        state.planner_base_url = _URL
+        _answers(monkeypatch, ["y", "1", "1"])
+        handle_command("/mode cloud", state, _console())
+        assert state.selected_models[0].startswith("anthropic:")
+        assert state.planner_base_url == ""
+        assert state.planner_backend == ""
+        assert state.mode == MODE_CLOUD
+
+    def test_declining_keeps_the_combination_but_sets_the_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = _local_state(
+            api_keys={"ANTHROPIC_API_KEY": "sk-x"},
+            selected_models=["anthropic:claude-opus-5"],
+        )
+        state.planner_model = _MODEL
+        state.planner_base_url = _URL
+        state.mode = MODE_CLOUD
+        _answers(monkeypatch, ["n"])
+        console = _console()
+        handle_command("/mode local", state, console)
+        assert state.selected_models == ["anthropic:claude-opus-5"]
+        assert state.planner_model == _MODEL
+        assert state.mode == MODE_LOCAL
+        assert "Keeping the current models" in _output(console)
+
+    def test_skipping_a_pick_keeps_that_part(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = _local_state(
+            api_keys={"ANTHROPIC_API_KEY": "sk-x"},
+            selected_models=["anthropic:claude-opus-5"],
+        )
+        state.mode = MODE_CLOUD
+        _answers(monkeypatch, ["y", "", "1"])  # keep agents, pick a planner
+        handle_command("/mode local", state, _console())
+        assert state.selected_models == ["anthropic:claude-opus-5"]
+        assert state.planner_base_url == _URL
+
+    def test_a_fitting_combination_never_asks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = _local_state(
+            api_keys={"ANTHROPIC_API_KEY": "sk-x"},
+            selected_models=[f"ollama:{_MODEL}@{_URL}"],
+        )
+        monkeypatch.setattr(
+            local_mod, "_ask", lambda *_a, **_k: pytest.fail("must not ask")
+        )
+        handle_command("/mode hybrid", state, _console())
+        assert state.mode == MODE_HYBRID
+
     def test_an_unknown_mode_is_rejected(self) -> None:
         state = CliState()
         console = _console()
@@ -560,12 +650,13 @@ class TestStatusAndThreading:
         assert [a.type for a in config.agents] == ["anthropic_api"]
         assert config.agents[0].base_url is None
 
-    def test_local_mode_refuses_a_hosted_roster(self) -> None:
+    def test_a_mismatched_roster_is_honored_not_refused(self) -> None:
+        # /mode offers to fix a mismatch; a user who declined chose it.
         from mak.config import MakConfig
 
         state = _local_state(selected_models=["anthropic:claude-opus-5"])
-        with pytest.raises(ConfigError, match="hosted agents"):
-            _apply_state_to_config(MakConfig(), state)
+        config = _apply_state_to_config(MakConfig(), state)
+        assert [a.type for a in config.agents] == ["anthropic_api"]
 
     def test_a_local_planner_resolves_to_no_api_key(self) -> None:
         state = _local_state(api_keys={"ANTHROPIC_API_KEY": "sk-real"})

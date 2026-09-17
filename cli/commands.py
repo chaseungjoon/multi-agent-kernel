@@ -404,6 +404,206 @@ def _cmd_mode(args: list[str], state: CliState, console: Console) -> None:
         return
     state.mode = target
     print_ok(console, f"Mode: {target}  [dim]{mode_summary(target)}[/dim]")
+    _reconcile_with_mode(target, state, console)
+
+
+# What each mode expects of (planner, agents): True = local, False = cloud.
+_MODE_EXPECTS: dict[str, tuple[bool, bool]] = {
+    MODE_CLOUD:  (False, False),
+    MODE_LOCAL:  (True, True),
+    MODE_HYBRID: (False, True),
+}
+
+
+def _where(is_local: bool) -> str:
+    return "local" if is_local else "cloud"
+
+
+def _planner_is_local(state: CliState) -> bool:
+    return bool(state.planner_base_url)
+
+
+def _agents_are_local(state: CliState) -> bool | None:
+    """Return True/False for an all-local/all-cloud roster, None otherwise.
+
+    An empty roster (the config file's agents) or a mixed one has no single
+    answer, and is left alone rather than second-guessed.
+    """
+    if not state.selected_models:
+        return None
+    local = [spec.startswith(_LOCAL_SPEC_PREFIXES) for spec in state.selected_models]
+    if all(local):
+        return True
+    if not any(local):
+        return False
+    return None
+
+
+def _mode_mismatches(mode: str, state: CliState) -> tuple[bool, bool]:
+    """Return ``(planner_wrong, agents_wrong)`` for ``mode``."""
+    want_planner, want_agents = _MODE_EXPECTS[mode]
+    agents = _agents_are_local(state)
+    return (
+        _planner_is_local(state) != want_planner,
+        agents is not None and agents != want_agents,
+    )
+
+
+def _reconcile_with_mode(mode: str, state: CliState, console: Console) -> None:
+    """Offer to replace whichever of planner/agents does not fit ``mode``.
+
+    Never forced: declining (or skipping a pick) keeps the current models, so
+    an unusual combination such as a local planner with cloud agents stays
+    possible. The mode is set either way.
+    """
+    import cli.local as local_mod
+
+    planner_wrong, agents_wrong = _mode_mismatches(mode, state)
+    if not (planner_wrong or agents_wrong):
+        return
+    want_planner, want_agents = _MODE_EXPECTS[mode]
+    console.print(
+        f"\n  [dim]{mode} mode expects a {_where(want_planner)} planner and "
+        f"{_where(want_agents)} agents. Currently:[/dim]"
+    )
+    console.print(
+        f"    [dim]planner[/dim] {state.planner_model}  "
+        f"[dim]({_where(_planner_is_local(state))})[/dim]"
+    )
+    console.print(
+        f"    [dim]agents [/dim] {state.models_display()}  "
+        f"[dim]({_where(not want_agents) if agents_wrong else _where(want_agents)})"
+        "[/dim]"
+    )
+    parts = " and ".join(
+        name
+        for name, wrong in (("planner", planner_wrong), ("agents", agents_wrong))
+        if wrong
+    )
+    answer = local_mod._ask(console, f"Choose new {parts} now? [Y/n]: ").lower()
+    if answer in ("n", "no"):
+        print_warn(
+            console,
+            f"Keeping the current models. [dim]{mode} mode is set; "
+            "/models and /planner change them anytime.[/dim]",
+        )
+        return
+
+    if agents_wrong:
+        _pick_agents(want_agents, state, console)
+    if planner_wrong:
+        _pick_planner(want_planner, state, console)
+    # Applying a planner re-derives the mode (apply_cloud_planner → hybrid,
+    # apply_local_planner → local); the user asked for this one explicitly.
+    state.mode = mode
+    console.print(
+        f"\n  [dim]planner[/dim] {state.planner_model}   "
+        f"[dim]agents[/dim] {state.models_display()}"
+    )
+
+
+def _numbered(console: Console, options: list[str]) -> None:
+    console.print()
+    for index, option in enumerate(options, 1):
+        console.print(f"    [dim]{index:>3})[/dim]  {option}")
+    console.print()
+
+
+def _parse_picks(raw: str, count: int) -> list[int] | None:
+    """Parse ``"1"`` / ``"1,3"`` / ``"1 3"`` into 0-based indexes; None if invalid."""
+    picks: list[int] = []
+    for token in raw.replace(",", " ").split():
+        if not token.isdigit() or not 1 <= int(token) <= count:
+            return None
+        if int(token) - 1 not in picks:
+            picks.append(int(token) - 1)
+    return picks or None
+
+
+def _local_choices(state: CliState) -> list[tuple[LocalHost, str]]:
+    return [(host, name) for host in state.all_local_hosts() for name in host.models]
+
+
+def _cloud_choices(state: CliState, *, for_planner: bool) -> list[tuple[str, str]]:
+    """Return ``(provider, model_id)`` for every offered model with a key."""
+    choices: list[tuple[str, str]] = []
+    for provider in PROVIDER_ORDER:
+        if not state.api_keys.get(_KEY_ENV[provider], "").strip():
+            continue
+        entries = [m for m in models_for_provider(provider) if not m.retired]
+        entries.sort(
+            key=lambda m: not (m.planner_ok if for_planner else m.recommended)
+        )
+        choices += [(provider, m.model_id) for m in entries]
+    return choices
+
+
+def _pick_agents(local: bool, state: CliState, console: Console) -> None:
+    import cli.local as local_mod
+
+    if local:
+        local_opts = _local_choices(state)
+        specs = [f"{h.provider()}:{name}@{h.url}" for h, name in local_opts]
+        labels = [f"{h.provider()}:{name}  [dim]{h.host_display()}[/dim]"
+                  for h, name in local_opts]
+        empty = "No local models known — /local url or /refresh-models first."
+    else:
+        cloud_opts = _cloud_choices(state, for_planner=False)
+        specs = labels = [f"{provider}:{model}" for provider, model in cloud_opts]
+        empty = "No cloud models available — /apikey adds a provider key."
+    if not specs:
+        print_error(console, f"{empty} Agents unchanged.")
+        return
+    console.print(f"\n  [bold]Agent model(s)[/bold] [dim]({_where(local)})[/dim]")
+    _numbered(console, labels)
+    raw = local_mod._ask(console, "Agents (e.g. 1 or 1,3; Enter keeps current): ")
+    if not raw:
+        return
+    picks = _parse_picks(raw, len(specs))
+    if picks is None:
+        print_error(console, f"Not a choice: {raw} — agents unchanged.")
+        return
+    if len(picks) > state.max_agents:
+        print_error(
+            console,
+            f"max-agents ({state.max_agents}) < {len(picks)} models — "
+            "agents unchanged; run /max-agents first.",
+        )
+        return
+    state.selected_models = [specs[i] for i in picks]
+
+
+def _pick_planner(local: bool, state: CliState, console: Console) -> None:
+    import cli.local as local_mod
+
+    local_opts = _local_choices(state) if local else []
+    cloud_opts = [] if local else _cloud_choices(state, for_planner=True)
+    if local:
+        labels = [f"{name}  [dim]{h.host_display()}[/dim]" for h, name in local_opts]
+    else:
+        labels = [model for _provider, model in cloud_opts]
+    if not labels:
+        where = (
+            "No local models known — /local url or /refresh-models first."
+            if local else "No cloud models available — /apikey adds a provider key."
+        )
+        print_error(console, f"{where} Planner unchanged.")
+        return
+    console.print(f"\n  [bold]Planner model[/bold] [dim]({_where(local)})[/dim]")
+    _numbered(console, labels)
+    raw = local_mod._ask(console, "Planner (number; Enter keeps current): ")
+    if not raw:
+        return
+    picks = _parse_picks(raw, len(labels))
+    if picks is None or len(picks) != 1:
+        print_error(console, f"Not a choice: {raw} — planner unchanged.")
+        return
+    if local:
+        host, name = local_opts[picks[0]]
+        activate_host(state, host.url, host.kind)
+        apply_local_planner(state, name)
+    else:
+        apply_cloud_planner(state, cloud_opts[picks[0]][1])
 
 
 def _mode_requirement(mode: str) -> str:

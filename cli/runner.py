@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from cli.core.state import MODE_LOCAL, CliState
+from cli.core.state import CliState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mak.config import MakConfig
@@ -38,9 +38,8 @@ def _apply_state_to_config(config: MakConfig, state: CliState) -> MakConfig:
     All overrides are in-memory only — this function never writes to
     mak/config.yaml or any other file.
     """
-    from mak.bootstrap import LOCAL_AGENT_TYPES, agents_from_specs
+    from mak.bootstrap import agents_from_specs
     from mak.config import anchor_mak_dir
-    from mak.core.exceptions import ConfigError
 
     if state.work_dir and state.work_dir != ".":
         config = replace(
@@ -56,18 +55,11 @@ def _apply_state_to_config(config: MakConfig, state: CliState) -> MakConfig:
     config = anchor_mak_dir(config)
     if state.selected_models:
         # The specs already carry '@<url>' for a local runtime and
-        # agents_from_specs parses that, so local mode needs no branch here —
-        # only the assurance that the roster actually is local, which is a
-        # property of how /local and /models fill it.
+        # agents_from_specs parses that, so no mode needs a branch here. The
+        # roster is honored as selected even when it does not match the mode:
+        # /mode offers to change a mismatched combination, and a user who
+        # declines has chosen it (e.g. a local planner with cloud agents).
         config = replace(config, agents=agents_from_specs(state.selected_models))
-        if state.mode == MODE_LOCAL and any(
-            agent.type not in LOCAL_AGENT_TYPES for agent in config.agents
-        ):
-            raise ConfigError(
-                "local mode produced a roster with hosted agents "
-                f"({state.models_display()}); run /local to set it, or /mode "
-                "hybrid if a cloud agent is intended"
-            )
     config = replace(
         config, session=replace(config.session, max_concurrent_agents=state.max_agents)
     )
