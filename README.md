@@ -75,8 +75,7 @@ reviewable plan.
 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full architecture, or the
-[knowledge graph](https://mak-kg.vercel.app) (built with
-[graphify](https://github.com/safishamsi/graphify)).
+[git diagram](https://gitdiagram.com/chaseungjoon/multi-agent-kernel).
 
 ## Install
 
