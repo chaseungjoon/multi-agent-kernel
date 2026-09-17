@@ -1,0 +1,74 @@
+---
+config:
+  layout: elk
+---
+%% Component architecture. Arrows show calls or data flow; dotted lines show support.
+flowchart TB
+    user([Developer / task])
+
+    subgraph entry["ENTRY POINTS AND CONFIGURATION"]
+        direction LR
+        cli["Interactive CLI / scripted CLI<br/>cli/ · mak/__main__.py"]
+        setup["Configuration + adapter factories<br/>mak/config.py · mak/bootstrap.py"]
+        models["Model catalog + local discovery<br/>mak/models/ · mak/local/"]
+        cli --> setup
+        models -. model selection .-> setup
+    end
+
+    subgraph kernel["MAK KERNEL · one Python process"]
+        session["Session orchestration<br/>mak/session.py<br/>Ownership · recovery · token budget"]
+        planner["Planner + plan validation + review<br/>mak/planner/<br/>Code dependency graph → subtask DAG"]
+        scheduler["DAG scheduler<br/>mak/scheduler/<br/>Ready queue · bounded concurrency"]
+        locks["Symbol reader / writer locks<br/>mak/lock_manager/<br/>Atomic grants · leases · deadlock checks"]
+        runner["Agent runner + adapter registry<br/>mak/agent_runner/<br/>TaskBundle → TaskResult"]
+        detector["Conflict detector<br/>mak/conflict_detector/<br/>Compile · names · imports · signatures"]
+        store[("Versioned AST node store<br/>mak/node_store/<br/>Committed + staged fragments")]
+        materialize["Reconstruction + transaction journal<br/>mak/node_store/<br/>Render · validate · atomic file replacement"]
+        cascade["Post-wave fix-up loop<br/>mak/cascade.py<br/>Detect defects → review another plan"]
+        teardown["Tests + aggregate outcome + push gate<br/>mak/test_runner.py · mak/teardown.py<br/>mak/execution_result.py"]
+        core["Shared types · exceptions · budget · event log<br/>mak/core/"]
+
+        session --> planner
+        planner -->|validated plan| scheduler
+        scheduler -->|acquire all grants before dispatch| locks
+        scheduler -->|dispatch ready tasks| runner
+        store -->|target source + read context| runner
+        session -->|validate staged edits| detector
+        session -->|stage / commit / roll back| store
+        store -->|validated versions| materialize
+        session --> teardown
+        session -->|post-wave checks| cascade
+        session -. shared support .-> core
+    end
+
+    subgraph backends["AGENT AND PLANNER BACKENDS"]
+        api["Hosted APIs<br/>Anthropic · OpenAI · Gemini"]
+        local["Local APIs<br/>Native Ollama · OpenAI-compatible server"]
+        subprocess["Agent CLI subprocesses<br/>Claude Code · Codex · Copilot<br/>Optional Docker sandbox"]
+    end
+
+    subgraph project["ONE SHARED PROJECT DIRECTORY"]
+        files["Python source files<br/>Ingested at startup; reconstructed after edits"]
+        state[(".mak/ runtime state<br/>Node versions · task graph · lock state<br/>Commit journal · session logs")]
+        git["Git audit history<br/>mak/git_integration/<br/>Optional per-task commits and gated push"]
+    end
+
+    user --> cli
+    setup --> session
+    runner --> api & local & subprocess
+    planner -. planning calls .-> api & local
+    materialize -->|derived output| files
+    session -. persistence / recovery .-> state
+    session -->|after successful transaction| git
+    teardown -->|push only if configured and gates pass| git
+
+    classDef entry_style fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+    classDef control fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    classDef data fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef external fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef support fill:#f1f5f9,stroke:#64748b,color:#334155
+    class user,cli,setup,models entry_style
+    class session,planner,scheduler,locks,runner,detector,cascade,teardown control
+    class store,materialize,files,state data
+    class api,local,subprocess,git external
+    class core support

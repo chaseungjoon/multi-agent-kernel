@@ -110,6 +110,11 @@ reconstruction, conflict detection — is deterministic and stays that way.
 
 ## Architecture at a glance
 
+See [`diagram/`](diagram/README.md) for the component architecture and execution
+sequence as editable Mermaid sources and PNG exports, including recovery,
+transactional writes, and post-wave fix-ups. Rendering instructions and the
+shared Mermaid style configuration live alongside the diagrams.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                            MAK KERNEL                               │

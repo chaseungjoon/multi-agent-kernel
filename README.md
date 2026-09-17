@@ -75,7 +75,7 @@ reviewable plan.
 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full architecture, or the
-[git diagram](https://gitdiagram.com/chaseungjoon/multi-agent-kernel).
+[diagrams](diagram/).
 
 ## Install
 

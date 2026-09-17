@@ -1,0 +1,90 @@
+%% Logical sequence, Store includes reconstruction, journaling, and project files.
+sequenceDiagram
+    autonumber
+    actor User as Developer
+    participant UI as CLI / cascade loop
+    participant S as Session
+    participant P as Planner / review
+    participant Q as Scheduler / locks
+    participant A as Runner / adapters
+    participant V as Conflict detector
+    participant N as Store / files / Git
+
+    User->>UI: Submit task (or --recover)
+    UI->>S: Initialize / recover
+    S->>S: Acquire exclusive project lease
+    S->>N: Recover interrupted commit journal
+    alt New task
+        S->>N: Ingest / reconcile source files and node store
+        S->>P: Build dependency context, request a subtask plan
+        P-->>S: Subtasks, dependencies, read / write targets
+        S->>S: Validate plan against code dependencies
+        opt Initial plan review enabled
+            S->>User: Display plan for approval / editing
+            User-->>S: Approve plan (abort ends run)
+        end
+        S->>Q: Install DAG and persist task graph
+    else Resume interrupted run
+        S->>Q: Clear stale leases, restore DAG and incomplete work
+    end
+
+    loop While runnable work remains and run limits permit
+        S->>Q: Tick ready queue
+        Q->>Q: Check worker capacity, acquire all required locks
+        Note over Q,A: Contended tasks wait, independent tasks run concurrently
+        Q->>A: Dispatch task through Session's bounded worker pool
+        A->>S: Enrich TaskBundle, check context and token budgets
+        S->>N: Read current targets and dependency context
+        N-->>S: Granted source fragments + read-only context
+        S-->>A: Enriched TaskBundle
+        A->>A: Call configured API or CLI adapter
+        Note over S,Q: Heartbeat renews in-flight leases, watchdog checks deadlocks
+        A-->>S: TaskResult with returned source fragments
+        Note over S,N: Collect completions in batches, apply in deterministic DAG order
+        S->>N: Stage returned fragments within task grants
+        S->>V: Check staged edits against batch peers
+        V-->>S: Compile and structural-check report
+        S->>N: Assemble and compile prospective affected files
+        S->>Q: Revalidate write-lock ownership
+        alt Validation passes and locks are held
+            S->>N: Begin transaction, advance node versions in memory
+            N->>N: Render all files, journal backups, replace files atomically
+            alt File installation and metadata save succeed
+                N-->>S: Durable transaction committed
+                S->>N: Record optional Git audit commit, finalize journal
+                S->>Q: Release completed grants, complete task or narrow remainder
+                Q->>Q: Persist progress, unblock dependent tasks
+            else Transaction fails before commit point
+                N->>N: Restore files and store snapshot
+                S->>Q: Release locks, retry within limits or mark failed
+            end
+        else Invalid result, conflict, or lost lock
+            S->>N: Discard staged versions
+            S->>Q: Release locks, retry within limits or mark failed
+        end
+        Note over S,Q: Agent / transport failures also enter bounded retry handling
+    end
+    S-->>UI: Initial wave result
+
+    loop Post-wave check, bounded by cascade wave limit
+        UI->>S: Detect broken callers and cross-module API defects
+        S-->>UI: Fix-up tasks, or none
+        opt Fix-up tasks found
+            UI->>User: Review proposed fix-up plan
+            User-->>UI: Approve / edit / decline
+            opt Plan approved
+                UI->>S: Install approved plan and run the same execution loop
+                S-->>UI: Fix-up wave result
+            end
+        end
+        Note over UI,S: Stop when clean, declined, or limit reached, retain unresolved work
+    end
+
+    UI->>S: Teardown with aggregate execution outcome
+    S->>S: Run configured tests: passed / failed / skipped / error
+    opt auto_push enabled, request satisfied, and test policy met
+        S->>N: Push Git audit history
+    end
+    S-->>UI: Test outcome and push result
+    UI->>S: Close workers and release project lease
+    UI-->>User: Report completed, failed, blocked, and unresolved work
