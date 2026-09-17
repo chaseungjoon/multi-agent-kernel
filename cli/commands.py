@@ -25,14 +25,16 @@ from cli.core.state import (
     MODE_LOCAL,
     MODES,
     CliState,
+    LocalHost,
     mode_summary,
 )
 from cli.local import (
+    activate_host,
     apply_cloud_planner,
     apply_local_planner,
     cmd_local,
     refresh_local_models,
-    spec_for,
+    refresh_saved_host,
 )
 from cli.ui import ACCENT, print_error, print_ok, print_status, print_warn
 from mak.config import model_caveat
@@ -194,23 +196,27 @@ def _local_spec(spec: str, state: CliState, console: Console) -> str | None:
 
 
 def _print_local_group(
-    state: CliState, console: Console, is_active: Callable[[str], bool]
+    state: CliState, console: Console, is_active: Callable[[LocalHost, str], bool]
 ) -> None:
-    """Print the configured runtime's models as the "Local" group.
+    """Print every known host's models as the "Local" group, active host first.
 
-    Shown in every mode, from the list ``/local url`` or ``/refresh-models``
-    last fetched — listing never waits on the network.
+    Shown in every mode, from the lists ``/local`` or ``/refresh-models`` last
+    fetched — listing never waits on the network. Models on the active host
+    read ``provider:model``; on any other host the spec carries its ``@url``.
     """
-    if not state.has_local_runtime():
+    hosts = state.all_local_hosts()
+    if not hosts:
         return
-    console.print(
-        f"\n  [bold]Local[/bold]  [dim]{state.local_host_display()}[/dim]"
-    )
-    if not state.local_models:
-        console.print("    [dim]no models installed — /local pull <model>[/dim]")
-    for name in state.local_models:
-        active = "[green]●[/green]" if is_active(name) else "[dim]○[/dim]"
-        console.print(f"    {active} {state.local_provider()}:{name}")
+    for host in hosts:
+        is_current = host.url == state.local_base_url
+        tag = "" if is_current else "  [dim](not active — use the full spec)[/dim]"
+        console.print(f"\n  [bold]Local[/bold]  [dim]{host.host_display()}[/dim]{tag}")
+        if not host.models:
+            console.print("    [dim]no models known — /refresh-models[/dim]")
+        for name in host.models:
+            active = "[green]●[/green]" if is_active(host, name) else "[dim]○[/dim]"
+            suffix = "" if is_current else f"@{host.url}"
+            console.print(f"    {active} {host.provider()}:{name}{suffix}")
     console.print("\n  [bold]Cloud[/bold]")
 
 
@@ -218,7 +224,9 @@ def _list_models(state: CliState, console: Console) -> None:
     console.print("\n  [dim]Usage: /models provider:model \\[provider:model ...][/dim]")
     chosen = set(state.selected_models)
     _print_local_group(
-        state, console, lambda name: spec_for(state, name) in chosen
+        state,
+        console,
+        lambda host, name: f"{host.provider()}:{name}@{host.url}" in chosen,
     )
     for provider in PROVIDER_ORDER:
         has_key = bool(state.api_keys.get(_KEY_ENV[provider], "").strip())
@@ -356,13 +364,11 @@ def _set_local_planner(raw: str, state: CliState, console: Console) -> None:
     is_prefixed = spec.startswith(_LOCAL_SPEC_PREFIXES)
     model = spec.partition(":")[2] if is_prefixed else spec
     if url:
-        state.local_base_url = url
-        if not state.local_kind:
-            state.local_kind = (
-                KIND_OLLAMA
-                if spec.startswith("ollama:")
-                else KIND_OPENAI_COMPATIBLE
-            )
+        activate_host(
+            state,
+            url.rstrip("/"),
+            KIND_OLLAMA if spec.startswith("ollama:") else KIND_OPENAI_COMPATIBLE,
+        )
     if not state.has_local_runtime():
         print_error(
             console,
@@ -429,7 +435,9 @@ def _list_planner_models(state: CliState, console: Console) -> None:
     _print_local_group(
         state,
         console,
-        lambda name: bool(state.planner_base_url) and name == state.planner_model,
+        lambda host, name: (
+            host.url == state.planner_base_url and name == state.planner_model
+        ),
     )
     for provider in PROVIDER_ORDER:
         has_key = bool(state.api_keys.get(_KEY_ENV[provider], "").strip())
@@ -460,8 +468,7 @@ def _cmd_refresh_models(state: CliState, console: Console) -> None:
     the catalog updates in-session, so the new model is immediately selectable.
     """
     console.print("\n  [dim]Fetching model lists…[/dim]")
-    if state.has_local_runtime():
-        _refresh_local(state, console)
+    _refresh_local(state, console)
     try:
         report = registry().refresh_now(state.api_keys)
     except Exception as exc:  # noqa: BLE001 - a refresh must never kill the prompt
@@ -501,25 +508,40 @@ def _cmd_refresh_models(state: CliState, console: Console) -> None:
 
 
 def _refresh_local(state: CliState, console: Console) -> None:
-    """Re-list the connected runtime's models, reporting like a cloud provider."""
-    label = f"Local [dim]({state.local_host_display()})[/dim]"
-    try:
-        added, removed = refresh_local_models(state)
-    except OllamaError as exc:
+    """Re-list every known host's models, reporting like a cloud provider."""
+    for host in state.all_local_hosts():
+        label = f"Local [dim]({host.host_display()})[/dim]"
+        if host.url == state.local_base_url:
+            try:
+                changes: tuple[list[str], list[str]] | None = (
+                    refresh_local_models(state)
+                )
+                note = ""
+            except OllamaError as exc:
+                changes, note = None, str(exc)
+            total = len(state.local_models)
+        else:
+            changes = refresh_saved_host(state, host)
+            note = f"cannot reach {host.url}"
+            total = len(host.models)
+        if changes is None:
+            console.print(
+                f"    [dim]○[/dim] [bold]{label}[/bold]  "
+                f"[dim]{note} — keeping cached list[/dim]"
+            )
+            continue
+        added, removed = changes
+        delta = ""
+        if added or removed:
+            delta = f"  [dim](+{len(added)} −{len(removed)})[/dim]"
         console.print(
-            f"    [dim]○[/dim] [bold]{label}[/bold]  "
-            f"[dim]{exc} — keeping cached list[/dim]"
+            f"    [green]●[/green] [bold]{label}[/bold]  "
+            f"[dim]{total} models[/dim]{delta}"
         )
-        return
-    delta = f"  [dim](+{len(added)} −{len(removed)})[/dim]" if added or removed else ""
-    console.print(
-        f"    [green]●[/green] [bold]{label}[/bold]  "
-        f"[dim]{len(state.local_models)} models[/dim]{delta}"
-    )
-    for model_id in added:
-        console.print(f"        [green]+ {model_id}[/green]")
-    for model_id in removed:
-        console.print(f"        [red]- {model_id}[/red]")
+        for model_id in added:
+            console.print(f"        [green]+ {model_id}[/green]")
+        for model_id in removed:
+            console.print(f"        [red]- {model_id}[/red]")
 
 
 def _warn_retired_selections(state: CliState, console: Console) -> None:

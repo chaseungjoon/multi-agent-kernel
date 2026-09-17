@@ -25,6 +25,7 @@ from cli.core.models import (
     registry,
 )
 from cli.core.state import CliState
+from cli.local import restore_saved_hosts
 from cli.runner import (
     build_session,
     get_git_diff,
@@ -345,6 +346,9 @@ class MakCli:
         # opted out; it never prints — results show up in /models and /status.
         registry().maybe_auto_refresh(keys, enabled=_auto_refresh_enabled())
         state = CliState(api_keys=keys)
+        # Reconnect to the hosts a previous session used (``/local url``);
+        # offline, from the cached model lists.
+        restore_saved_hosts(state)
         avail = providers_with_keys(keys)
         if avail:
             first = avail[0]

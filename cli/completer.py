@@ -43,7 +43,8 @@ _LOCAL_SUBCOMMANDS: list[tuple[str, str]] = [
     ("use",     "set the agent model(s)"),
     ("planner", "set the planner to a local model"),
     ("pull",    "download a model with a progress bar"),
-    ("url",     "point MAK at a custom endpoint"),
+    ("url",     "connect to a (remote) endpoint and remember it"),
+    ("forget",  "remove a remembered host"),
     ("off",     "drop back to cloud mode"),
 ]
 
@@ -180,30 +181,31 @@ class MakCompleter(Completer):
         )
 
     def _complete_local(self, partial: str) -> list[Completion]:
-        """Complete the models the configured local runtime reported.
+        """Complete the models every known local host reported.
 
-        Offered in every mode: a runtime named with ``/local url`` is usable
-        from ``/models`` and ``/planner`` whether or not the session is in
-        local or hybrid mode. The inserted ``provider:model`` spec picks up the
-        runtime's endpoint when the command runs.
+        Offered in every mode: a host connected with ``/local url`` (now or in
+        an earlier session) is usable from ``/models`` and ``/planner`` whether
+        or not the session is in local or hybrid mode. Models on the active host
+        insert ``provider:model`` (the endpoint is attached when the command
+        runs); models on another host insert the full ``provider:model@url``.
         """
-        if not self._state.has_local_runtime():
-            return []
-        provider = self._state.local_provider()
-        meta     = f"Local · {self._state.local_host_display()}"
         results: list[Completion] = []
-        for name in self._state.local_models:
-            spec = f"{provider}:{name}"
-            if not (spec.startswith(partial) or name.startswith(partial)):
-                continue
-            results.append(
-                Completion(
-                    spec,
-                    start_position=-len(partial),
-                    display=spec,
-                    display_meta=meta,
+        for host in self._state.all_local_hosts():
+            is_current = host.url == self._state.local_base_url
+            meta       = f"Local · {host.host_display()}"
+            for name in host.models:
+                spec = f"{host.provider()}:{name}"
+                if not (spec.startswith(partial) or name.startswith(partial)):
+                    continue
+                text = spec if is_current else f"{spec}@{host.url}"
+                results.append(
+                    Completion(
+                        text,
+                        start_position=-len(partial),
+                        display=spec,
+                        display_meta=meta,
+                    )
                 )
-            )
         return results
 
     def _grouped(
@@ -212,10 +214,7 @@ class MakCompleter(Completer):
         """Order completions as Local then Cloud, titled when local ones exist."""
         if not local:
             return cloud
-        results = [
-            self._group_header("Local", self._state.local_host_display()),
-            *local,
-        ]
+        results = [self._group_header("Local"), *local]
         if cloud:
             results += [self._group_header("Cloud"), *cloud]
         return results

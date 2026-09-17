@@ -17,6 +17,9 @@ Two rules govern the whole module:
   model (CONTRIBUTING §11); an interactive "Save this setup? [y/N]" is that rule,
   not an exception to it. Declining leaves a session-only setting, which is all
   ``CliState`` ever was.
+  The one thing remembered without asking is *which hosts* were connected
+  (``~/.config/mak/local_hosts.json``, a cache like ``models.json``), so a
+  ``/local url`` survives a restart; ``/local forget`` removes one.
 
 Every sub-command must survive an unreachable server: an ``OllamaError`` becomes
 one red line naming the endpoint, never a traceback and never a crash of the
@@ -26,14 +29,17 @@ prompt loop.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 
 from rich.console import Console
 
+from cli.core.local_hosts import load_hosts, save_hosts
 from cli.core.state import (
     MODE_CLOUD,
     MODE_HYBRID,
     MODE_LOCAL,
     CliState,
+    LocalHost,
 )
 from cli.ui import ACCENT, print_error, print_ok, print_warn
 from mak.config import normalize_base_url
@@ -47,12 +53,21 @@ from mak.local import (
     discover,
     recommended_for,
 )
-from mak.local.runtime import KIND_OLLAMA
+from mak.local.runtime import (
+    KIND_OLLAMA,
+    probe_ollama,
+    probe_openai_compatible,
+)
 
 # Injectable seams. Module-level so tests replace them once, and so the wizard
 # and every sub-command go through the same two functions.
 DiscoverFn = Callable[[], list[LocalRuntime]]
 ClientFactory = Callable[[str], OllamaClient]
+HostProbe = Callable[[LocalHost], "LocalRuntime | None"]
+
+# A saved remote host is asked whether it is up on a UI path, so the answer
+# must come back in seconds rather than after the client's generation timeout.
+_HOST_PROBE_TIMEOUT_S = 2.0
 
 _INSTALL_GUIDANCE = (
     "  No local runtime is listening.\n\n"
@@ -75,7 +90,8 @@ _SUBCOMMANDS = (
     ("use <model> …", "set the agent model(s)"),
     ("planner <model>", "set the planner to a local model"),
     ("pull <model>", "download a model with a progress bar"),
-    ("url <base_url>", "point MAK at a custom endpoint"),
+    ("url <base_url>", "connect to a (remote) endpoint and remember it"),
+    ("forget <base_url>", "remove a remembered host"),
     ("off", "drop back to cloud mode (keeps your API keys)"),
 )
 
@@ -90,28 +106,85 @@ def default_client(base_url: str) -> OllamaClient:
     return OllamaClient(base_url)
 
 
+def default_probe_host(host: LocalHost) -> LocalRuntime | None:
+    """Ask a saved host whether it is up and what it has. Never raises."""
+    if host.kind == KIND_OLLAMA:
+        return probe_ollama(host.url, timeout=_HOST_PROBE_TIMEOUT_S)
+    return probe_openai_compatible(
+        host.url, timeout=_HOST_PROBE_TIMEOUT_S, name="OpenAI-compatible server"
+    )
+
+
 _discover_fn: DiscoverFn = default_discover
 _client_factory: ClientFactory = default_client
+_probe_host_fn: HostProbe = default_probe_host
 
 
 def set_seams(
     *,
     discover_fn: DiscoverFn | None = None,
     client_factory: ClientFactory | None = None,
+    probe_host_fn: HostProbe | None = None,
 ) -> None:
-    """Replace the discovery / client seams (tests only)."""
-    global _discover_fn, _client_factory
+    """Replace the discovery / client / host-probe seams (tests only)."""
+    global _discover_fn, _client_factory, _probe_host_fn
     if discover_fn is not None:
         _discover_fn = discover_fn
     if client_factory is not None:
         _client_factory = client_factory
+    if probe_host_fn is not None:
+        _probe_host_fn = probe_host_fn
 
 
 def reset_seams() -> None:
-    """Restore the real discovery and client factory."""
-    global _discover_fn, _client_factory
+    """Restore the real discovery, client factory, and host probe."""
+    global _discover_fn, _client_factory, _probe_host_fn
     _discover_fn = default_discover
     _client_factory = default_client
+    _probe_host_fn = default_probe_host
+
+
+# ── remembered hosts ──────────────────────────────────────────────────────────
+
+
+def restore_saved_hosts(state: CliState) -> None:
+    """Load remembered hosts onto ``state``, reconnecting the active one.
+
+    Offline by design: the cached model lists are used as-is, so a host that
+    is down cannot slow startup. ``/refresh-models`` or ``/local`` re-asks.
+    """
+    active_url, hosts = load_hosts()
+    state.local_hosts = hosts
+    for host in hosts:
+        if host.url == active_url:
+            state.local_kind = host.kind
+            state.local_base_url = host.url
+            state.local_models = list(host.models)
+
+
+def remember_hosts(state: CliState) -> None:
+    """Record the active host among the known ones and save them all."""
+    active = state.active_local_host()
+    if active is not None:
+        state.local_hosts = [
+            active,
+            *(h for h in state.local_hosts if h.url != active.url),
+        ]
+    save_hosts(state.local_base_url, state.local_hosts)
+
+
+def activate_host(state: CliState, url: str, kind: str = "") -> None:
+    """Make ``url`` the active runtime, reusing what is known about it."""
+    if url == state.local_base_url:
+        if kind:
+            state.local_kind = kind
+        return
+    remember_hosts(state)  # keep the outgoing host's latest model list
+    known = next((h for h in state.local_hosts if h.url == url), None)
+    state.local_base_url = url
+    state.local_kind = kind or (known.kind if known else KIND_OLLAMA)
+    state.local_models = list(known.models) if known else []
+    remember_hosts(state)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -168,16 +241,34 @@ def refresh_local_models(state: CliState) -> tuple[list[str], list[str]]:
     previous = list(state.local_models)
     current = [model.name for model in _client(state).list_models()]
     state.local_models = current
+    remember_hosts(state)
     added = [name for name in current if name not in previous]
     removed = [name for name in previous if name not in current]
     return added, removed
 
 
+def refresh_saved_host(
+    state: CliState, host: LocalHost
+) -> tuple[list[str], list[str]] | None:
+    """Re-list a remembered, inactive host; None when it did not answer."""
+    runtime = _probe_host_fn(host)
+    if runtime is None:
+        return None
+    current = list(runtime.models)
+    added = [name for name in current if name not in host.models]
+    removed = [name for name in host.models if name not in current]
+    for known in state.local_hosts:
+        if known.url == host.url:
+            known.models = current
+    remember_hosts(state)
+    return added, removed
+
+
 def adopt_runtime(state: CliState, runtime: LocalRuntime) -> None:
     """Record a detected runtime on the state, without choosing a model."""
-    state.local_kind = runtime.kind
-    state.local_base_url = runtime.base_url
+    activate_host(state, runtime.base_url, runtime.kind)
     state.local_models = list(runtime.models)
+    remember_hosts(state)
 
 
 def apply_agent_models(state: CliState, models: Sequence[str]) -> None:
@@ -209,6 +300,14 @@ def apply_cloud_planner(state: CliState, model: str) -> None:
 def go_cloud(state: CliState) -> None:
     """Drop back to cloud mode, forgetting the local roster but keeping keys."""
     state.mode = MODE_CLOUD
+    # The host stays remembered (``/local forget`` removes it); it just stops
+    # being the one a new session connects to.
+    active = state.active_local_host()
+    if active is not None:
+        state.local_hosts = [
+            active,
+            *(h for h in state.local_hosts if h.url != active.url),
+        ]
     state.local_kind = ""
     state.local_base_url = ""
     state.local_models = []
@@ -218,6 +317,7 @@ def go_cloud(state: CliState) -> None:
         spec for spec in state.selected_models
         if not spec.startswith(("local:", "ollama:"))
     ]
+    save_hosts("", state.local_hosts)
 
 
 # ── the dispatcher ────────────────────────────────────────────────────────────
@@ -241,6 +341,8 @@ def cmd_local(args: list[str], state: CliState, console: Console) -> None:
         _sub_pull(rest, state, console)
     elif sub == "url":
         _sub_url(rest, state, console)
+    elif sub == "forget":
+        _sub_forget(rest, state, console)
     elif sub == "off":
         _sub_off(state, console)
     else:
@@ -296,6 +398,7 @@ def _sub_models(state: CliState, console: Console) -> None:
     if installed is None:
         return
     state.local_models = [model.name for model in installed]
+    remember_hosts(state)
     if not installed:
         console.print("\n  [dim]No models installed. /local pull <model>[/dim]")
         _print_recommendations(console)
@@ -392,15 +495,32 @@ def _sub_url(args: list[str], state: CliState, console: Console) -> None:
     except OllamaError as exc:
         print_error(console, str(exc))
         return
-    state.local_kind = KIND_OLLAMA
-    state.local_base_url = url
+    activate_host(state, url, KIND_OLLAMA)
     state.local_models = models
+    remember_hosts(state)
     if state.mode == MODE_CLOUD:
         state.mode = MODE_LOCAL
     print_ok(
         console,
-        f"Runtime: {url}  [dim]v{version or '?'} · {len(models)} model(s)[/dim]",
+        f"Runtime: {url}  [dim]v{version or '?'} · {len(models)} model(s) · "
+        "remembered for next time[/dim]",
     )
+
+
+def _sub_forget(args: list[str], state: CliState, console: Console) -> None:
+    if not args:
+        console.print("  [dim]Usage: /local forget http://host:port[/dim]")
+        return
+    url = args[0].rstrip("/")
+    known = {h.url for h in state.all_local_hosts()}
+    if url not in known:
+        print_error(console, f"not a remembered host: {url}")
+        return
+    if url == state.local_base_url:
+        go_cloud(state)
+    state.local_hosts = [h for h in state.local_hosts if h.url != url]
+    save_hosts(state.local_base_url, state.local_hosts)
+    print_ok(console, f"Forgot {url}")
 
 
 def _sub_off(state: CliState, console: Console) -> None:
@@ -469,6 +589,7 @@ def pull_model(state: CliState, model: str, console: Console) -> bool:
     print_ok(console, f"Pulled {model}")
     if model not in state.local_models:
         state.local_models = [*state.local_models, model]
+        remember_hosts(state)
     return True
 
 
@@ -515,18 +636,18 @@ def _yes(console: Console, question: str) -> bool:
 
 def run_wizard(state: CliState, console: Console) -> bool:
     """Detect → choose → check → confirm. Returns whether a runtime was set up."""
-    console.print("\n  [dim]Looking for a local model runtime…[/dim]")
-    runtimes = _discover_fn()
+    console.print("\n  [dim]Looking for local model runtimes…[/dim]")
+    local_runtimes, remotes = survey_hosts(state)
+    print_host_overview(state, console, local_runtimes, remotes)
+    runtimes = [
+        *local_runtimes,
+        *(runtime for _host, runtime in remotes if runtime is not None),
+    ]
     if not runtimes:
-        console.print()
         console.print(_INSTALL_GUIDANCE)
         console.print()
         return False
 
-    console.print()
-    for runtime in runtimes:
-        console.print(f"    [green]●[/green] {runtime.describe()}")
-    console.print()
     runtime = runtimes[0]
     if len(runtimes) > 1:
         runtime = runtimes[
@@ -552,6 +673,82 @@ def run_wizard(state: CliState, console: Console) -> bool:
     else:
         print_ok(console, "Kept for this session only.")
     return True
+
+
+def survey_hosts(
+    state: CliState,
+) -> tuple[list[LocalRuntime], list[tuple[LocalHost, LocalRuntime | None]]]:
+    """Scan this machine and probe every remembered remote host, concurrently.
+
+    Returns ``(this_machine, remotes)``; a remote whose probe failed is paired
+    with None so it can still be listed as unreachable.
+    """
+    remote_hosts = [h for h in state.all_local_hosts() if not h.is_this_machine()]
+    with ThreadPoolExecutor(max_workers=len(remote_hosts) + 1) as pool:
+        local_future = pool.submit(_discover_fn)
+        probes = [pool.submit(_safe_probe, host) for host in remote_hosts]
+        local_runtimes = local_future.result()
+        remotes = [
+            (host, future.result())
+            for host, future in zip(remote_hosts, probes, strict=True)
+        ]
+    remote_urls = {host.url for host in remote_hosts}
+    local_runtimes = [r for r in local_runtimes if r.base_url not in remote_urls]
+    for host, runtime in remotes:
+        if runtime is not None:
+            # Keep the remembered list current while we have the answer.
+            for known in state.local_hosts:
+                if known.url == host.url:
+                    known.models = list(runtime.models)
+            if host.url == state.local_base_url:
+                state.local_models = list(runtime.models)
+    if remotes:
+        remember_hosts(state)
+    return local_runtimes, remotes
+
+
+def _safe_probe(host: LocalHost) -> LocalRuntime | None:
+    try:
+        return _probe_host_fn(host)
+    except Exception:  # noqa: BLE001 - a probe on a UI path must not raise
+        return None
+
+
+def print_host_overview(
+    state: CliState,
+    console: Console,
+    local_runtimes: Sequence[LocalRuntime],
+    remotes: Sequence[tuple[LocalHost, LocalRuntime | None]],
+) -> None:
+    """Print this machine's runtimes, then each remote host's status and models."""
+    console.print("\n  [bold]This machine[/bold]")
+    if not local_runtimes:
+        console.print("    [dim]○ no runtime running[/dim]")
+    for found in local_runtimes:
+        _print_runtime(state, console, found)
+
+    console.print("\n  [bold]Remote hosts[/bold]")
+    if not remotes:
+        console.print(
+            "    [dim]none — /local url http://host:port connects one[/dim]"
+        )
+    for host, runtime in remotes:
+        if runtime is None:
+            active = "  [dim](active)[/dim]" if host.url == state.local_base_url else ""
+            console.print(
+                f"    [red]○[/red] {host.url}  [dim]unreachable · "
+                f"{len(host.models)} model(s) cached[/dim]{active}"
+            )
+            continue
+        _print_runtime(state, console, runtime)
+    console.print()
+
+
+def _print_runtime(state: CliState, console: Console, runtime: LocalRuntime) -> None:
+    active = "  [dim](active)[/dim]" if runtime.base_url == state.local_base_url else ""
+    console.print(f"    [green]●[/green] {runtime.describe()}{active}")
+    for model in runtime.models:
+        console.print(f"        [dim]·[/dim] {model}")
 
 
 def _choose_agent_model(state: CliState, console: Console) -> str | None:

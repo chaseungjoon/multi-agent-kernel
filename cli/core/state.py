@@ -21,6 +21,30 @@ _MODE_SUMMARY: dict[str, str] = {
 }
 
 
+@dataclass
+class LocalHost:
+    """A model server MAK has connected to, with the models it last reported."""
+
+    url: str
+    kind: str = "ollama"          # "ollama" | "openai_compatible"
+    models: list[str] = field(default_factory=list)
+
+    def provider(self) -> str:
+        """Return the spec prefix for this host's models (``ollama`` / ``local``)."""
+        return "ollama" if self.kind == "ollama" else "local"
+
+    def host_display(self) -> str:
+        """Return the endpoint without its scheme, for compact menus."""
+        return self.url.split("://", 1)[-1]
+
+    def is_this_machine(self) -> bool:
+        """Return whether the endpoint names the loopback interface."""
+        from urllib.parse import urlparse
+
+        hostname = urlparse(self.url).hostname or ""
+        return hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+
+
 def mode_summary(mode: str) -> str:
     """Return the one-line description of a mode, for menus and /mode."""
     return _MODE_SUMMARY.get(mode, "")
@@ -52,6 +76,9 @@ class CliState:
     local_kind: str = ""          # "ollama" | "openai_compatible"
     local_base_url: str = ""
     local_models: list[str] = field(default_factory=list)
+    # Every host connected to before, remembered across sessions. The active
+    # one is the ``local_*`` fields above; its entry here may be stale.
+    local_hosts: list[LocalHost] = field(default_factory=list)
     planner_backend: str = ""     # "" = infer from the model id
     planner_base_url: str = ""
 
@@ -62,6 +89,22 @@ class CliState:
     def has_local_runtime(self) -> bool:
         """Whether a local runtime has actually been configured (not just named)."""
         return bool(self.local_base_url)
+
+    def active_local_host(self) -> LocalHost | None:
+        """Return the active runtime as a ``LocalHost`` (None when unset)."""
+        if not self.local_base_url:
+            return None
+        return LocalHost(
+            url=self.local_base_url,
+            kind=self.local_kind or "ollama",
+            models=list(self.local_models),
+        )
+
+    def all_local_hosts(self) -> list[LocalHost]:
+        """Return every known host, the active one first and current."""
+        active = self.active_local_host()
+        others = [h for h in self.local_hosts if h.url != self.local_base_url]
+        return [active, *others] if active else others
 
     def local_provider(self) -> str:
         """Return the spec prefix for the configured runtime's models.

@@ -714,3 +714,163 @@ def test_the_app_no_longer_exits_when_no_key_is_set() -> None:
     # of the prompt entirely.
     assert len(exits) == 1
     assert "has_local_runtime" in source
+
+
+# ── remembered hosts ──────────────────────────────────────────────────────────
+
+_REMOTE = "http://100.124.220.35:11434"
+_OTHER = "http://gpu-box:11434"
+
+
+def _remote_runtime(url: str, models: tuple[str, ...]) -> LocalRuntime:
+    return LocalRuntime(
+        kind=KIND_OLLAMA, name="Ollama", base_url=url, version="0.20.2", models=models
+    )
+
+
+class TestRememberedHosts:
+    def test_url_is_remembered_and_restored_next_session(self) -> None:
+        from cli.local import restore_saved_hosts
+
+        _install(FakeClient(models=("remote-a:7b",)))
+        cmd_local(["url", _REMOTE], CliState(), _console())
+
+        fresh = CliState()
+        restore_saved_hosts(fresh)
+        assert fresh.local_base_url == _REMOTE
+        assert fresh.local_models == ["remote-a:7b"]
+        assert fresh.has_local_runtime()
+
+    def test_a_second_url_keeps_both_hosts(self) -> None:
+        from cli.local import restore_saved_hosts
+
+        state = CliState()
+        _install(FakeClient(models=("remote-a:7b",)))
+        cmd_local(["url", _REMOTE], state, _console())
+        _install(FakeClient(models=("other-b:14b",)))
+        cmd_local(["url", _OTHER], state, _console())
+
+        fresh = CliState()
+        restore_saved_hosts(fresh)
+        assert fresh.local_base_url == _OTHER
+        assert [h.url for h in fresh.all_local_hosts()] == [_OTHER, _REMOTE]
+
+    def test_off_disconnects_but_forget_removes(self) -> None:
+        from cli.local import restore_saved_hosts
+
+        state = CliState()
+        _install(FakeClient())
+        cmd_local(["url", _REMOTE], state, _console())
+        cmd_local(["off"], state, _console())
+
+        fresh = CliState()
+        restore_saved_hosts(fresh)
+        assert fresh.local_base_url == ""
+        assert [h.url for h in fresh.local_hosts] == [_REMOTE]
+
+        cmd_local(["forget", _REMOTE], fresh, _console())
+        again = CliState()
+        restore_saved_hosts(again)
+        assert again.local_hosts == []
+
+    def test_a_corrupt_file_is_no_saved_hosts(self) -> None:
+        from cli.core.local_hosts import hosts_path
+        from cli.local import restore_saved_hosts
+
+        hosts_path().parent.mkdir(parents=True, exist_ok=True)
+        hosts_path().write_text("{not json", encoding="utf-8")
+        state = CliState()
+        restore_saved_hosts(state)
+        assert state.local_hosts == []
+        assert state.local_base_url == ""
+
+    def test_bare_local_lists_this_machine_then_every_remote_host(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from cli.core.state import LocalHost
+
+        monkeypatch.chdir(tmp_path)
+        _install(FakeClient(), [_ollama()])
+        local_mod.set_seams(
+            probe_host_fn=lambda host: (
+                _remote_runtime(_REMOTE, ("remote-a:7b",))
+                if host.url == _REMOTE
+                else None
+            )
+        )
+        state = CliState(
+            local_hosts=[
+                LocalHost(url=_REMOTE, models=["remote-a:7b"]),
+                LocalHost(url=_OTHER, models=["other-b:14b"]),
+            ]
+        )
+        # runtime 1 (this machine) · model 1 · planner same · no save
+        _answers(monkeypatch, ["1", "1", "1", "n"])
+        console = _console()
+        cmd_local([], state, console)
+        text = _output(console)
+
+        assert text.index("This machine") < text.index(_MODEL)
+        assert text.index(_MODEL) < text.index("Remote hosts")
+        assert text.index("Remote hosts") < text.index("remote-a:7b")
+        assert f"{_OTHER}  unreachable" in text
+
+    def test_models_and_completions_cover_every_known_host(self) -> None:
+        from cli.completer import MakCompleter
+        from cli.core.state import LocalHost
+        from prompt_toolkit.completion import CompleteEvent
+        from prompt_toolkit.document import Document
+
+        state = _local_state(
+            local_hosts=[LocalHost(url=_REMOTE, models=["remote-a:7b"])]
+        )
+        state.mode = MODE_CLOUD
+        line = "/models "
+        texts = [
+            row.text
+            for row in MakCompleter(state).get_completions(
+                Document(line, len(line)), CompleteEvent()
+            )
+        ]
+        assert f"ollama:{_MODEL}" in texts
+        assert f"ollama:remote-a:7b@{_REMOTE}" in texts
+
+        handle_command(f"/models ollama:remote-a:7b@{_REMOTE}", state, _console())
+        assert state.selected_models == [f"ollama:remote-a:7b@{_REMOTE}"]
+
+    def test_refresh_models_refreshes_inactive_hosts_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import cli.commands as commands_mod
+        from cli.core.state import LocalHost
+
+        class FakeRegistry:
+            def refresh_now(self, _keys: dict[str, str]) -> Any:
+                raise RuntimeError("offline")
+
+        monkeypatch.setattr(commands_mod, "registry", FakeRegistry)
+        _install(FakeClient())
+        local_mod.set_seams(
+            probe_host_fn=lambda _host: _remote_runtime(
+                _REMOTE, ("remote-a:7b", "remote-new:3b")
+            )
+        )
+        state = _local_state(
+            local_hosts=[LocalHost(url=_REMOTE, models=["remote-a:7b"])]
+        )
+        console = _console()
+        handle_command("/refresh-models", state, console)
+        remote = next(h for h in state.local_hosts if h.url == _REMOTE)
+        assert remote.models == ["remote-a:7b", "remote-new:3b"]
+        assert "+ remote-new:3b" in _output(console)
+
+    def test_planner_on_a_remembered_host_switches_to_it(self) -> None:
+        from cli.core.state import LocalHost
+
+        state = _local_state(
+            local_hosts=[LocalHost(url=_REMOTE, models=["remote-a:7b"])]
+        )
+        handle_command(f"/planner ollama:remote-a:7b@{_REMOTE}", state, _console())
+        assert state.planner_base_url == _REMOTE
+        assert state.local_models == ["remote-a:7b"]
+        assert _URL in {h.url for h in state.local_hosts}
