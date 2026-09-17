@@ -785,11 +785,10 @@ class TestRememberedHosts:
         assert state.local_base_url == ""
 
     def test_bare_local_lists_this_machine_then_every_remote_host(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from cli.core.state import LocalHost
 
-        monkeypatch.chdir(tmp_path)
         _install(FakeClient(), [_ollama()])
         local_mod.set_seams(
             probe_host_fn=lambda host: (
@@ -804,11 +803,14 @@ class TestRememberedHosts:
                 LocalHost(url=_OTHER, models=["other-b:14b"]),
             ]
         )
-        # runtime 1 (this machine) · model 1 · planner same · no save
-        _answers(monkeypatch, ["1", "1", "1", "n"])
+        # An overview only: it must never prompt.
+        monkeypatch.setattr(
+            local_mod, "_ask", lambda *_a, **_k: pytest.fail("/local must not ask")
+        )
         console = _console()
         cmd_local([], state, console)
         text = _output(console)
+        assert state.selected_models == []
 
         assert text.index("This machine") < text.index(_MODEL)
         assert text.index(_MODEL) < text.index("Remote hosts")

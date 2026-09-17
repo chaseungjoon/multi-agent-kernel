@@ -147,7 +147,7 @@ mak
 * `/models <provider-1>:<model> <provider-2>:<model> ...` - Set agent models
 * `/planner <provider>:<model>` - Set planner model
 * `/refresh-models` - Re-fetch the model list from each provider right now
-* `/local` - Detect a local runtime, pull a model, run fully offline (see [Local Models](#local-models))
+* `/local` - Overview of this machine's runtimes and connected remote hosts; `/local url <host:port>` connects (and remembers) one (see [Local Models](#local-models))
 * `/mode [cloud|local|hybrid]` - Show or switch how this session gets its models
 * `/max-agents <int>` - Set number of concurrently running agents
 * `/config` - Returns to auto-discovery (see [Configuration & API Keys](#configuration--api-keys))
@@ -233,7 +233,7 @@ update. Run `/refresh-models` to fetch immediately instead of waiting.
 MAK supports local LLMs via an OpenAI-compatible server.
 
 ```bash
-mak       #  /local detects a runtime, pulls a model if none is installed
+mak       #  choose "local" at first-run setup, or /local url http://host:port
 ```
 
 Or non-interactively:
@@ -258,7 +258,7 @@ answer.
 
 If your local model plans worse than it edits, pair it with a hosted
 planner — `mak.yaml` naming a cloud `planner.model` beside local `agents:` — the
-`/local` wizard recommends this automatically for smaller models. 
+first-run local setup recommends this automatically for smaller models. 
 
 See
 [mak/examples/](mak/examples/) for ready-made configs and [CONTRIBUTING.md §7.7/§14](CONTRIBUTING.md) for

@@ -20,7 +20,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/models",     "Select agent models"),
     ("/planner",    "Switch the planner model"),
     ("/refresh-models", "Re-fetch cloud and local model lists"),
-    ("/local",      "Set up a local model runtime (Ollama, vLLM, LM Studio)"),
+    ("/local",      "Show local runtimes and remote hosts (Ollama, vLLM, LM Studio)"),
     ("/mode",       "Switch between cloud, local, and hybrid"),
     ("/max-agents", "Set how many agents run in parallel"),
     ("/work-dir",   "Set the working directory MAK edits"),
@@ -46,6 +46,7 @@ _LOCAL_SUBCOMMANDS: list[tuple[str, str]] = [
     ("url",     "connect to a (remote) endpoint and remember it"),
     ("forget",  "remove a remembered host"),
     ("off",     "drop back to cloud mode"),
+    ("help",    "list the /local sub-commands"),
 ]
 
 _KEY_ENV = {

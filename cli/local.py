@@ -1,10 +1,12 @@
 """The ``/local`` command: detect a runtime, install a model, point MAK at it.
 
 Nothing about running a local model should require hand-editing YAML, which is
-what this module is for. Bare ``/local`` runs a wizard — detect → choose runtime
-→ choose model (pulling one if none is installed) → choose planner → check the
-context window → confirm; the sub-commands are the individual steps of it, so a
-user who knows what they want can skip straight to it.
+what this module is for. Bare ``/local`` is a read-only overview — this
+machine's runtimes, then every remembered remote host, each with its status and
+models; it asks nothing. The first-run setup's wizard (detect → choose runtime →
+choose model, pulling one if none is installed → choose planner → check the
+context window → confirm) lives here too, and the sub-commands are its
+individual steps.
 
 Two rules govern the whole module:
 
@@ -326,7 +328,7 @@ def go_cloud(state: CliState) -> None:
 def cmd_local(args: list[str], state: CliState, console: Console) -> None:
     """Handle ``/local`` and its sub-commands."""
     if not args:
-        run_wizard(state, console)
+        show_overview(state, console)
         return
     sub, rest = args[0].lower(), args[1:]
     if sub == "status":
@@ -345,6 +347,8 @@ def cmd_local(args: list[str], state: CliState, console: Console) -> None:
         _sub_forget(rest, state, console)
     elif sub == "off":
         _sub_off(state, console)
+    elif sub == "help":
+        print_local_help(console)
     else:
         print_error(console, f"Unknown /local sub-command: {sub}")
         print_local_help(console)
@@ -353,7 +357,7 @@ def cmd_local(args: list[str], state: CliState, console: Console) -> None:
 def print_local_help(console: Console) -> None:
     """List the ``/local`` sub-commands."""
     console.print()
-    console.print("  [dim]/local[/dim]  runs the setup wizard. Sub-commands:")
+    console.print("  [dim]/local[/dim]  shows every runtime and host. Sub-commands:")
     width = max(len(name) for name, _ in _SUBCOMMANDS)
     for name, desc in _SUBCOMMANDS:
         console.print(
@@ -673,6 +677,22 @@ def run_wizard(state: CliState, console: Console) -> bool:
     else:
         print_ok(console, "Kept for this session only.")
     return True
+
+
+def show_overview(state: CliState, console: Console) -> None:
+    """Print this machine's runtimes and every remote host. Asks nothing."""
+    console.print("\n  [dim]Looking for local model runtimes…[/dim]")
+    local_runtimes, remotes = survey_hosts(state)
+    print_host_overview(state, console, local_runtimes, remotes)
+    if not local_runtimes and not remotes:
+        console.print(_INSTALL_GUIDANCE)
+        console.print()
+        return
+    console.print(
+        "  [dim]/models or /planner to pick one · /local url http://host:port "
+        "to add a host · /local help for more[/dim]"
+    )
+    console.print()
 
 
 def survey_hosts(
