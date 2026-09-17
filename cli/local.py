@@ -124,8 +124,7 @@ def spec_for(state: CliState, model: str) -> str:
     otherwise — the same grammar ``mak run --models`` takes, so the TUI and the
     command line configure a run identically.
     """
-    provider = "ollama" if state.local_kind == KIND_OLLAMA else "local"
-    return f"{provider}:{model}@{state.local_base_url}"
+    return f"{state.local_provider()}:{model}@{state.local_base_url}"
 
 
 def _client(state: CliState) -> OllamaClient:
@@ -157,6 +156,21 @@ def _describe_model(model: OllamaModel) -> str:
     """Return a model's one-line form: tag, parameter size, quantization."""
     bits = [bit for bit in (model.parameter_size, model.quantization) if bit]
     return f"{model.name}" + (f"  [dim]{' · '.join(bits)}[/dim]" if bits else "")
+
+
+def refresh_local_models(state: CliState) -> tuple[list[str], list[str]]:
+    """Re-list the configured runtime's models onto ``state``.
+
+    Returns ``(added, removed)`` relative to the previously known list. Raises
+    ``OllamaError`` when the runtime cannot be reached, leaving the cached
+    list untouched.
+    """
+    previous = list(state.local_models)
+    current = [model.name for model in _client(state).list_models()]
+    state.local_models = current
+    added = [name for name in current if name not in previous]
+    removed = [name for name in previous if name not in current]
+    return added, removed
 
 
 def adopt_runtime(state: CliState, runtime: LocalRuntime) -> None:

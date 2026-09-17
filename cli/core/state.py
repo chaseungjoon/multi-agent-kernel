@@ -63,6 +63,18 @@ class CliState:
         """Whether a local runtime has actually been configured (not just named)."""
         return bool(self.local_base_url)
 
+    def local_provider(self) -> str:
+        """Return the spec prefix for the configured runtime's models.
+
+        ``ollama`` for the native runtime, ``local`` for an OpenAI-compatible
+        one — the same names ``/models`` and ``mak run --models`` accept.
+        """
+        return "ollama" if self.local_kind == "ollama" else "local"
+
+    def local_host_display(self) -> str:
+        """Return the runtime endpoint without its scheme, for compact menus."""
+        return self.local_base_url.split("://", 1)[-1]
+
     def mode_display(self) -> str:
         """Return the mode for the toolbar and /status."""
         return self.mode

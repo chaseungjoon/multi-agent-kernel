@@ -6,6 +6,7 @@ is a single ✓/✗ line — live settings are always visible in the prompt tool
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.console import Console
@@ -26,9 +27,16 @@ from cli.core.state import (
     CliState,
     mode_summary,
 )
-from cli.local import apply_cloud_planner, apply_local_planner, cmd_local
+from cli.local import (
+    apply_cloud_planner,
+    apply_local_planner,
+    cmd_local,
+    refresh_local_models,
+    spec_for,
+)
 from cli.ui import ACCENT, print_error, print_ok, print_status, print_warn
 from mak.config import model_caveat
+from mak.local import OllamaError
 from mak.local.runtime import KIND_OLLAMA, KIND_OPENAI_COMPATIBLE
 
 _KEY_ENV = {
@@ -114,11 +122,13 @@ _LOCAL_SPEC_PREFIXES = tuple(f"{name}:" for name in _LOCAL_PROVIDERS)
 
 def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
     if not args:
-        if state.uses_local_agents():
-            # In local mode the cloud catalog is the wrong list: what matters is
-            # what this machine actually has, which only the server knows.
-            cmd_local(["models"], state, console)
-            return
+        if state.uses_local_agents() and state.has_local_runtime():
+            # The running server is the authority on what is installed, so a
+            # local session lists it live; otherwise the cached list is shown.
+            try:
+                refresh_local_models(state)
+            except OllamaError as exc:
+                print_error(console, f"{exc} — showing the cached local list")
         _list_models(state, console)
         return
 
@@ -183,8 +193,33 @@ def _local_spec(spec: str, state: CliState, console: Console) -> str | None:
     return f"{spec}@{state.local_base_url}"
 
 
+def _print_local_group(
+    state: CliState, console: Console, is_active: Callable[[str], bool]
+) -> None:
+    """Print the configured runtime's models as the "Local" group.
+
+    Shown in every mode, from the list ``/local url`` or ``/refresh-models``
+    last fetched — listing never waits on the network.
+    """
+    if not state.has_local_runtime():
+        return
+    console.print(
+        f"\n  [bold]Local[/bold]  [dim]{state.local_host_display()}[/dim]"
+    )
+    if not state.local_models:
+        console.print("    [dim]no models installed — /local pull <model>[/dim]")
+    for name in state.local_models:
+        active = "[green]●[/green]" if is_active(name) else "[dim]○[/dim]"
+        console.print(f"    {active} {state.local_provider()}:{name}")
+    console.print("\n  [bold]Cloud[/bold]")
+
+
 def _list_models(state: CliState, console: Console) -> None:
     console.print("\n  [dim]Usage: /models provider:model \\[provider:model ...][/dim]")
+    chosen = set(state.selected_models)
+    _print_local_group(
+        state, console, lambda name: spec_for(state, name) in chosen
+    )
     for provider in PROVIDER_ORDER:
         has_key = bool(state.api_keys.get(_KEY_ENV[provider], "").strip())
         console.print(
@@ -391,6 +426,11 @@ def _list_planner_models(state: CliState, console: Console) -> None:
         "\n  [dim]Usage: /planner <model>  —  models below claude-sonnet-4-6 capability"
         " are not recommended.[/dim]"
     )
+    _print_local_group(
+        state,
+        console,
+        lambda name: bool(state.planner_base_url) and name == state.planner_model,
+    )
     for provider in PROVIDER_ORDER:
         has_key = bool(state.api_keys.get(_KEY_ENV[provider], "").strip())
         console.print(
@@ -419,14 +459,9 @@ def _cmd_refresh_models(state: CliState, console: Console) -> None:
     This is the escape hatch for a model that ships between scheduled refreshes:
     the catalog updates in-session, so the new model is immediately selectable.
     """
-    if state.uses_local_agents():
-        # Otherwise this appears to do nothing in local mode, which is worse
-        # than saying plainly that it is the wrong list.
-        console.print(
-            "\n  [dim]This refreshes the *cloud* model catalog. "
-            "/local models lists what this machine has.[/dim]"
-        )
     console.print("\n  [dim]Fetching model lists…[/dim]")
+    if state.has_local_runtime():
+        _refresh_local(state, console)
     try:
         report = registry().refresh_now(state.api_keys)
     except Exception as exc:  # noqa: BLE001 - a refresh must never kill the prompt
@@ -463,6 +498,28 @@ def _cmd_refresh_models(state: CliState, console: Console) -> None:
     # A model the user is actively using may have just been retired. Say so —
     # but change nothing: MAK never re-picks a model on the user's behalf.
     _warn_retired_selections(state, console)
+
+
+def _refresh_local(state: CliState, console: Console) -> None:
+    """Re-list the connected runtime's models, reporting like a cloud provider."""
+    label = f"Local [dim]({state.local_host_display()})[/dim]"
+    try:
+        added, removed = refresh_local_models(state)
+    except OllamaError as exc:
+        console.print(
+            f"    [dim]○[/dim] [bold]{label}[/bold]  "
+            f"[dim]{exc} — keeping cached list[/dim]"
+        )
+        return
+    delta = f"  [dim](+{len(added)} −{len(removed)})[/dim]" if added or removed else ""
+    console.print(
+        f"    [green]●[/green] [bold]{label}[/bold]  "
+        f"[dim]{len(state.local_models)} models[/dim]{delta}"
+    )
+    for model_id in added:
+        console.print(f"        [green]+ {model_id}[/green]")
+    for model_id in removed:
+        console.print(f"        [red]- {model_id}[/red]")
 
 
 def _warn_retired_selections(state: CliState, console: Console) -> None:

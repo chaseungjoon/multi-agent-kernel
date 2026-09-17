@@ -435,7 +435,7 @@ class TestLocalAwareCommands:
         handle_command(f"/planner {_MODEL}", state, _console())
         assert state.planner_backend == "ollama"
 
-    def test_refresh_models_says_it_is_the_cloud_catalog(
+    def test_refresh_models_also_refreshes_the_local_runtime(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import cli.commands as commands_mod
@@ -445,10 +445,72 @@ class TestLocalAwareCommands:
                 raise RuntimeError("offline")
 
         monkeypatch.setattr(commands_mod, "registry", FakeRegistry)
+        _install(FakeClient(models=(_MODEL, "llama3.1:8b")))
+        # Cloud mode: a runtime named with /local url still gets refreshed.
+        state = _local_state()
+        state.mode = MODE_CLOUD
         console = _console()
-        handle_command("/refresh-models", _local_state(), console)
-        assert "cloud" in _output(console)
-        assert "/local models" in _output(console)
+        handle_command("/refresh-models", state, console)
+        assert state.local_models == [_MODEL, "llama3.1:8b"]
+        assert "+ llama3.1:8b" in _output(console)
+
+    def test_refresh_models_keeps_the_cached_list_when_the_runtime_is_down(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import cli.commands as commands_mod
+
+        class FakeRegistry:
+            def refresh_now(self, _keys: dict[str, str]) -> Any:
+                raise RuntimeError("offline")
+
+        monkeypatch.setattr(commands_mod, "registry", FakeRegistry)
+        _install(FakeClient(down=True))
+        state = _local_state()
+        console = _console()
+        handle_command("/refresh-models", state, console)
+        assert state.local_models == [_MODEL]
+        assert "keeping cached list" in _output(console)
+
+    def test_models_and_planner_list_local_models_in_cloud_mode(self) -> None:
+        state = _local_state()
+        state.mode = MODE_CLOUD
+        for command in ("/models", "/planner"):
+            console = _console()
+            handle_command(command, state, console)
+            text = _output(console)
+            assert f"ollama:{_MODEL}" in text
+            assert text.index("Local") < text.index("Cloud")
+
+    def test_completer_groups_local_models_before_cloud_in_any_mode(self) -> None:
+        from cli.completer import MakCompleter
+        from prompt_toolkit.completion import CompleteEvent
+        from prompt_toolkit.document import Document
+
+        state = _local_state()
+        state.mode = MODE_CLOUD
+        completer = MakCompleter(state)
+        for line in ("/models ", "/planner "):
+            rows = completer.get_completions(
+                Document(line, len(line)), CompleteEvent()
+            )
+            texts = [row.text for row in rows]
+            displays = [row.display_text for row in rows]
+            assert displays[0] == "── Local ──"
+            assert texts[1] == f"ollama:{_MODEL}"
+            assert "── Cloud ──" in displays
+        typed = "/models qwen"
+        rows = completer.get_completions(Document(typed, len(typed)), CompleteEvent())
+        assert f"ollama:{_MODEL}" in [row.text for row in rows]
+
+    def test_completer_has_no_local_group_without_a_runtime(self) -> None:
+        from cli.completer import MakCompleter
+        from prompt_toolkit.completion import CompleteEvent
+        from prompt_toolkit.document import Document
+
+        rows = MakCompleter(CliState()).get_completions(
+            Document("/models ", 8), CompleteEvent()
+        )
+        assert all("Local" not in row.display_text for row in rows)
 
     def test_the_completer_offers_the_two_new_commands(self) -> None:
         names = {name for name, _ in COMMANDS}

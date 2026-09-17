@@ -19,7 +19,7 @@ from cli.core.state import MODES, CliState, mode_summary
 COMMANDS: list[tuple[str, str]] = [
     ("/models",     "Select agent models"),
     ("/planner",    "Switch the planner model"),
-    ("/refresh-models", "Re-fetch the cloud model list from each provider"),
+    ("/refresh-models", "Re-fetch cloud and local model lists"),
     ("/local",      "Set up a local model runtime (Ollama, vLLM, LM Studio)"),
     ("/mode",       "Switch between cloud, local, and hybrid"),
     ("/max-agents", "Set how many agents run in parallel"),
@@ -170,6 +170,56 @@ class MakCompleter(Completer):
 
     # ── Model completions ──────────────────────────────────────────────────────
 
+    def _group_header(self, label: str, meta: str = "") -> Completion:
+        """Return a non-inserting row that titles a group in the completion menu."""
+        return Completion(
+            "",
+            start_position=0,
+            display=f"── {label} ──",
+            display_meta=meta,
+        )
+
+    def _complete_local(self, partial: str) -> list[Completion]:
+        """Complete the models the configured local runtime reported.
+
+        Offered in every mode: a runtime named with ``/local url`` is usable
+        from ``/models`` and ``/planner`` whether or not the session is in
+        local or hybrid mode. The inserted ``provider:model`` spec picks up the
+        runtime's endpoint when the command runs.
+        """
+        if not self._state.has_local_runtime():
+            return []
+        provider = self._state.local_provider()
+        meta     = f"Local · {self._state.local_host_display()}"
+        results: list[Completion] = []
+        for name in self._state.local_models:
+            spec = f"{provider}:{name}"
+            if not (spec.startswith(partial) or name.startswith(partial)):
+                continue
+            results.append(
+                Completion(
+                    spec,
+                    start_position=-len(partial),
+                    display=spec,
+                    display_meta=meta,
+                )
+            )
+        return results
+
+    def _grouped(
+        self, local: list[Completion], cloud: list[Completion]
+    ) -> list[Completion]:
+        """Order completions as Local then Cloud, titled when local ones exist."""
+        if not local:
+            return cloud
+        results = [
+            self._group_header("Local", self._state.local_host_display()),
+            *local,
+        ]
+        if cloud:
+            results += [self._group_header("Cloud"), *cloud]
+        return results
+
     def _complete_models(self, arg: str) -> list[Completion]:
         # The user may have typed multiple specs; complete the last token.
         tokens  = arg.split()
@@ -194,7 +244,7 @@ class MakCompleter(Completer):
                         display_meta=PROVIDER_DISPLAY[provider] + key_note,
                     )
                 )
-        return results
+        return self._grouped(self._complete_local(partial), results)
 
     # ── Planner model completions ─────────────────────────────────────────────
 
@@ -218,7 +268,7 @@ class MakCompleter(Completer):
                         display_meta=PROVIDER_DISPLAY[provider] + warn + key_note,
                     )
                 )
-        return results
+        return self._grouped(self._complete_local(partial), results)
 
     # ── Directory path completions ─────────────────────────────────────────────
 
