@@ -310,6 +310,7 @@ def iter_source_files(
     exclude_patterns: tuple[str, ...] = (),
     *,
     skip: Callable[[Path], bool] | None = None,
+    ignore: Callable[[str, bool], bool] | None = None,
 ) -> list[Path]:
     """Return the files an ingest should read, without walking what it discards.
 
@@ -326,7 +327,9 @@ def iter_source_files(
     does not either) — is preserved, so the returned list is what the
     glob-then-filter produced. ``skip`` is an extra, non-negotiable predicate for
     paths that are never project source whatever the patterns say (the session's
-    own ``.mak`` store).
+    own ``.mak`` store). ``ignore`` is the project's ``.makignore``: called with
+    the work-dir-relative path and whether it is a directory, and an ignored
+    directory is pruned like an excluded one.
     """
     matchers = [(pattern, _include_regex(pattern)) for pattern in include_patterns]
     matched: dict[str, list[Path]] = {pattern: [] for pattern in include_patterns}
@@ -340,12 +343,16 @@ def iter_source_files(
             if skip is not None and skip(entry):
                 continue
             if entry.is_dir():
-                if not entry.is_symlink() and not _dir_is_excluded(
-                    rel, exclude_patterns
+                if (
+                    not entry.is_symlink()
+                    and not _dir_is_excluded(rel, exclude_patterns)
+                    and not (ignore is not None and ignore(rel, True))
                 ):
                     stack.append(entry)
                 continue
             if not entry.is_file() or _is_excluded(rel, exclude_patterns):
+                continue
+            if ignore is not None and ignore(rel, False):
                 continue
             for pattern, regex in matchers:
                 if regex.match(rel):
@@ -375,11 +382,15 @@ def walk_and_parse(
     root: Path,
     include_patterns: tuple[str, ...] = ("**/*.py",),
     exclude_patterns: tuple[str, ...] = (),
+    *,
+    ignore: Callable[[str, bool], bool] | None = None,
 ) -> dict[str, list[NodeFragment]]:
     """Walk a directory tree and parse all matching Python files."""
     result: dict[str, list[NodeFragment]] = {}
 
-    for path in iter_source_files(root, include_patterns, exclude_patterns):
+    for path in iter_source_files(
+        root, include_patterns, exclude_patterns, ignore=ignore
+    ):
         rel = str(path.relative_to(root))
         if rel in result:
             continue

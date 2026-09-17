@@ -97,6 +97,7 @@ from mak.lock_manager.deadlock_detector import DeadlockDetector
 from mak.lock_manager.project_lease import ProjectLease
 from mak.node_store.api_digest import public_api_digest
 from mak.node_store.ingestion import iter_source_files
+from mak.node_store.makignore import MakIgnore, ensure_makignore, load_makignore
 from mak.node_store.reconstruction import assemble_fragments, reconstruct_file
 from mak.node_store.store import FileSyncReport, NodeStore
 from mak.node_store.transaction import (
@@ -450,6 +451,9 @@ class Session:
         # Set when the token ceiling stopped the run, so ``_finalize`` can name
         # the budget instead of reporting an unexplained set of stranded tasks.
         self._budget_stop: str | None = None
+        # The project's ``.makignore``, read at ``initialize``. Empty until then,
+        # so a session driven without initialize ignores nothing extra.
+        self._makignore = MakIgnore()
 
     # -- logging helper ----------------------------------------------------
 
@@ -543,10 +547,15 @@ class Session:
         # in the persisted lock table; drop them so they don't surface later as
         # spurious "lease expired" warnings. Crash recovery uses recover() instead.
         self._lock_table.clear()
+        # Read before pruning and reconciling, so both honor it. When the file does
+        # not exist yet its defaults apply in memory; it is only written after the
+        # clean-tree check below, which a fresh untracked file would otherwise fail.
+        self._makignore = load_makignore(self._work_dir)
         pruned = self.prune_excluded_nodes()
         self._reconcile_work_dir()
         if self._git is not None and self._config.git.require_clean_tree:
             self._require_clean_tree()
+        ensure_makignore(self._work_dir)
         if self._git is not None and self._config.git.auto_commit:
             # Keep MAK's audit commits inside the project: if the work-dir is nested
             # in an outer repo (e.g. a home directory) or in none at all, give it its
@@ -650,6 +659,7 @@ class Session:
             ns_cfg.include_patterns,
             ns_cfg.exclude_patterns,
             skip=self._is_store_path,
+            ignore=self._makignore.matches,
         ):
             rel = str(path.relative_to(self._work_dir))
             try:
@@ -772,7 +782,8 @@ class Session:
         a fix-forward run would otherwise keep carrying every fragment MAK had
         ingested from its own ``.mak/`` directory (89% of the store in the run
         that motivated Wave 11). Deleting ``.mak/`` by hand is the blunt
-        alternative; this is the one that preserves real work.
+        alternative; this is the one that preserves real work. A path the user
+        adds to ``.makignore`` is dropped here the same way.
         """
         patterns = self._config.node_store.exclude_patterns
         doomed = [
@@ -785,7 +796,7 @@ class Session:
         if doomed:
             print(
                 f"mak: pruned {len(doomed)} node(s) that are no longer ingestable "
-                "(MAK's own .mak/ store, or an excluded path).",
+                "(MAK's own .mak/ store, an excluded path, or one in .makignore).",
                 file=sys.stderr,
             )
         return len(doomed)
@@ -793,8 +804,10 @@ class Session:
     def _is_excluded_node(self, node_id: str, patterns: tuple[str, ...]) -> bool:
         """Whether a node's file component is excluded from ingestion."""
         file_path = node_id.split("::", 1)[0]
-        return self._is_store_path(self._work_dir / file_path) or _is_excluded(
-            file_path, patterns
+        return (
+            self._is_store_path(self._work_dir / file_path)
+            or _is_excluded(file_path, patterns)
+            or self._makignore.is_ignored(file_path)
         )
 
     # -- phase 2: plan -----------------------------------------------------

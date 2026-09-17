@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.6.5 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.6.6 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -296,6 +296,24 @@ it
 session:
   max_total_tokens: 2000000   # unset (the default) is unbounded
 ```
+
+**Keeping files out of MAK.** On its first run in a project, MAK creates a
+`.makignore` next to your code with `.mak/` and `.git/` already listed. Edit it like a
+`.gitignore` to keep generated, vendored, or scratch code out of the node store:
+
+```gitignore
+.mak/
+.git/
+scratch/
+/legacy_script.py
+migrations/*.py
+!migrations/keep_me.py
+```
+
+A path you add is dropped from the node store on the next run; the file itself is not
+touched. MAK always skips its own `.mak/` folder, even if you remove that line. See
+[CONTRIBUTING.md §3.1.1](CONTRIBUTING.md#311-makignore--the-projects-own-ignore-list--makignorepy)
+for the full syntax.
 
 **One MAK per project.** A session takes an exclusive lease on the project's `.mak/`
 before it touches anything, so a second `mak` on the same checkout fails

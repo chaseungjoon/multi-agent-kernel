@@ -913,6 +913,61 @@ one whose every descendant the per-file check would have rejected anyway. The te
 are differential against the old glob-then-filter across nine pattern shapes and
 three exclusion sets, plus the repo itself.
 
+### 3.1.1 `.makignore` — the project's own ignore list — `makignore.py`
+
+`node_store.exclude_patterns` is MAK's config-level default list. `.makignore` is
+the project's own list: a gitignore-style file at the work-dir root that the user
+owns and edits, read on every `Session.initialize()`.
+
+**It is created automatically.** If the work dir has no `.makignore`, the first
+session writes one with MAK's own state and `.git` already listed:
+
+```gitignore
+# .makignore — paths MAK never ingests into its node store.
+.mak/
+.git/
+```
+
+MAK never overwrites an existing file, including an empty one. Until it is written,
+the same defaults apply in memory. It is written *after* the `git.require_clean_tree`
+check, so a brand-new untracked file cannot fail that check on the run that creates
+it; projects using that setting should commit `.makignore` afterwards.
+
+**Syntax** is gitignore's, restricted to one file at the root:
+
+| Pattern | Meaning |
+|---|---|
+| `# text` / blank line | ignored; `\#` for a literal leading `#` |
+| `name` | no `/` → matches a file or directory named `name` at **any depth** |
+| `dir/` | trailing `/` → matches **directories only** (and so everything under them) |
+| `/top.py`, `pkg/mod.py` | a `/` at the start or middle → **anchored** to the work-dir root |
+| `*`, `?`, `[a-z]` | wildcards that never cross `/` |
+| `**/x`, `a/**/b`, `a/**` | `**` spans zero or more whole path segments; `a/**` is everything *inside* `a` |
+| `!pattern` | re-includes what an earlier pattern ignored; `\!` for a literal `!` |
+
+The **last** matching pattern wins. As in git, a file cannot be re-included when a
+parent directory is ignored: with `gen/` followed by `!gen/keep.py`, `gen/keep.py`
+stays ignored (use `gen/*` + `!gen/keep.py` instead).
+
+**Where it applies.**
+
+- **Walk.** `iter_source_files(..., ignore=…)` takes a `(rel_path, is_dir) -> bool`
+  check. An ignored directory is pruned before it is entered, exactly like an
+  excluded one, so a large ignored tree costs nothing. The session passes
+  `MakIgnore.matches`, which checks a path on its own, because its parents were
+  already checked on the way down.
+- **Prune.** `prune_excluded_nodes()` also removes stored nodes whose file is now
+  ignored, using `MakIgnore.is_ignored`, which checks every parent directory too.
+  Adding a path to `.makignore` therefore removes it from the store on the next run;
+  the file on disk is untouched.
+
+**It is not the safety net.** The session's unconditional skip of its own `mak_dir`
+(`_is_store_path`, §10) and the default `exclude_patterns` both stay. Deleting
+`.mak/` from `.makignore`, or emptying the file, cannot reintroduce the
+self-ingestion loop (`.mak/node_store/.mak/node_store/…`) that motivated Wave 11.
+Tests: `tests/node_store/test_makignore.py` and `TestMakIgnore` in
+`tests/test_session.py`.
+
 ### 3.2 Fragment dispatch (node store → agent)
 
 When a task is dispatched, the session builds a `TaskBundle` and **enriches** it with
@@ -2094,7 +2149,10 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   overriding that list. `prune_excluded_nodes()` runs first and evicts stored nodes
   whose file is no longer ingestable — the migration for a store poisoned before the
   fix (deleting `.mak/` by hand is the blunt alternative). The count is reported on
-  `SESSION_STARTED` as `pruned_nodes` and printed to stderr. Exclusion pruning is a
+  `SESSION_STARTED` as `pruned_nodes` and printed to stderr. The project's
+  `.makignore` (§3.1.1) is loaded before the prune and honored by both the prune and
+  the walk; if missing, it is created with `.mak/` and `.git/` after the clean-tree
+  check. Exclusion pruning is a
   **migration sweep, not a deletion policy** — recording that a human deleted a
   symbol is `retire_node`'s job, below.
 
@@ -2669,6 +2727,10 @@ Rules and behaviors:
   `node_modules`, `.venv`, `__pycache__`) is an ordinary convenience default: paths
   that are generated, vendored, or not project source. Note that a path removed from
   ingestion is also *pruned* from the store on the next `initialize`.
+- **Per-project ignores belong in `.makignore`, not in `exclude_patterns` (§3.1.1).**
+  It adds to the config list rather than replacing it, lives with the project, and
+  uses gitignore syntax, so ignoring one directory does not mean re-listing every
+  default.
 - Type coercion is strict and wrapped in `ConfigError` (e.g. `"false"` parses to
   `False`, not Python's truthy `bool("false")`).
 - **The nine local-transport fields (Wave 15, §7.7, §14).** Six on `AgentConfig` —
@@ -3350,6 +3412,7 @@ mak/
 │
 ├── node_store/
 │   ├── ingestion.py       # file → raw-source span-tiled fragments
+│   ├── makignore.py       # .makignore: gitignore-style per-project ignore list
 │   ├── store.py           # NodeStore: versioned get/put/commit/rollback/revert,
 │   │                      #   transaction(), sync_file(), retire_node()
 │   ├── journal.py         # write-ahead commit journal + restart recovery
@@ -4132,6 +4195,8 @@ the grain.
 - **Wave** — a gated, parallelizable phase of the build-out (see Part IV).
 - **`.mak/`** — the gitignored runtime directory (node store, lock table, task graph,
   session log).
+- **`.makignore`** — the project-root, gitignore-style list of paths MAK never
+  ingests; created with `.mak/` and `.git/` on first run (§3.1.1).
 
 ---
 

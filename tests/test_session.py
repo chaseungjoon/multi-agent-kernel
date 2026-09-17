@@ -2541,3 +2541,57 @@ class TestSchemaSlipRetry:
         assert notes[1] is not None
         assert "modified_fragments" not in notes[1]
         assert "produced nothing usable" in notes[1]
+
+
+# --- .makignore -------------------------------------------------------------
+
+
+class TestMakIgnore:
+    """The project's .makignore keeps paths out of the node store."""
+
+    def test_initialize_creates_makignore_with_defaults(self, tmp_path: Path) -> None:
+        (tmp_path / "real.py").write_text("def real():\n    return 1\n")
+        store = NodeStore(tmp_path / ".mak" / "node_store")
+        session = _session(tmp_path, runner=StagingRunner(store), node_store=store)
+        session.initialize()
+        text = (tmp_path / ".makignore").read_text()
+        assert ".mak/" in text.splitlines()
+        assert ".git/" in text.splitlines()
+
+    def test_ignored_paths_are_not_ingested(self, tmp_path: Path) -> None:
+        (tmp_path / "real.py").write_text("def real():\n    return 1\n")
+        (tmp_path / "scratch").mkdir()
+        (tmp_path / "scratch" / "tmp.py").write_text("def tmp():\n    return 1\n")
+        (tmp_path / ".makignore").write_text("scratch/\n")
+        store = NodeStore(tmp_path / ".mak" / "node_store")
+        session = _session(tmp_path, runner=StagingRunner(store), node_store=store)
+        inventory = session.initialize()
+        assert any("real.py" in str(n) for n in inventory)
+        assert not any("scratch" in str(n) for n in store.list_all_nodes())
+
+    def test_newly_ignored_paths_are_pruned_from_the_store(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "real.py").write_text("def real():\n    return 1\n")
+        (tmp_path / "legacy.py").write_text("def old():\n    return 1\n")
+        store = NodeStore(tmp_path / ".mak" / "node_store")
+        _session(tmp_path, runner=StagingRunner(store), node_store=store).initialize()
+        assert any("legacy.py" in str(n) for n in store.list_all_nodes())
+
+        (tmp_path / ".makignore").write_text("legacy.py\n")
+        store = NodeStore(tmp_path / ".mak" / "node_store")
+        session = _session(tmp_path, runner=StagingRunner(store), node_store=store)
+        session.initialize()
+        assert not any("legacy.py" in str(n) for n in store.list_all_nodes())
+        assert (tmp_path / "legacy.py").exists()
+
+    def test_emptied_makignore_does_not_reenable_self_ingestion(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".makignore").write_text("")
+        (tmp_path / "real.py").write_text("def real():\n    return 1\n")
+        TestStoreSelfPollution._poison_store_dir(tmp_path)
+        store = NodeStore(tmp_path / ".mak" / "node_store")
+        session = _session(tmp_path, runner=StagingRunner(store), node_store=store)
+        session.initialize()
+        assert not any(str(n).startswith(".mak") for n in store.list_all_nodes())
