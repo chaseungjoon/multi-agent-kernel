@@ -9,7 +9,7 @@ from mak.core.logging import EventType
 from mak.core.types import NodeId, SubTask
 from mak.scheduler.lock_policy import LockPolicy
 from mak.semantic.contracts import soft_edges, visible_contracts
-from tests.semantic.helpers import ScriptRunner, events, make_session, task
+from tests.semantic.helpers import ScriptRunner, events, logged, make_session, task
 
 API = "api.py::function::fetch"
 USE = "use.py::function::go"
@@ -109,9 +109,14 @@ class TestContractDispatch:
         session, store, logger = make_session(
             tmp_path, runner, semantic=SemanticConfig(contract_dispatch=True)
         )
-        # The provider waits until the dependent has been dispatched: proof the
-        # dependent did not wait for the implementation.
-        runner._hold["p"] = lambda: runner.calls.get("d", 0) > 0
+        # Keep the provider in flight until the dependent has returned and its
+        # commit has actually been deferred. Merely waiting for the dependent to
+        # be dispatched leaves a race: both results can enter the same batch, in
+        # which case topological batch ordering commits the provider first and no
+        # deferral is needed.
+        runner._hold["p"] = logged(
+            logger, EventType.COMMIT_DEFERRED, task_id="d"
+        )
         session.initialize()
         session.install_plan(_plan(context=[API]))
         result = session.run()
