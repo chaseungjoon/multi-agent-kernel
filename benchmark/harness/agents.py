@@ -16,10 +16,14 @@ that varies between MAK and the worktree baseline is the coordination model.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import sys
 import threading
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from harness.workload import Operation, add_registration, registration_source
@@ -27,6 +31,7 @@ from harness.workload import Operation, add_registration, registration_source
 _FENCE = re.compile(r"^```[a-zA-Z]*\n|\n```$", re.MULTILINE)
 
 _log_lock = threading.Lock()
+_telemetry_lock = threading.Lock()
 _call_no = 0
 
 
@@ -36,8 +41,11 @@ def _log(label: str, usage: Usage) -> None:
     with _log_lock:
         _call_no += 1
         n = _call_no
-    print(f"[call {n:>3}] {label}  (in={usage.tokens_in} out={usage.tokens_out})",
-          file=sys.stderr, flush=True)
+    print(
+        f"[call {n:>3}] {label}  (in={usage.tokens_in} out={usage.tokens_out})",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 @dataclass(frozen=True)
@@ -121,26 +129,33 @@ class RealBackend:
     """Calls a hosted model and reports real token usage."""
 
     def __init__(
-        self, name: str, provider: str, model: str, client: Any = None,
-        *, max_tokens: int = 2048,
+        self,
+        name: str,
+        provider: str,
+        model: str,
+        client: Any = None,
+        *,
+        max_tokens: int = 2048,
     ) -> None:
         self.name = name
         self.provider = provider
         self.model = model
         self._client = client
         self._max_tokens = max_tokens
+        telemetry = os.environ.get("MAK_BENCH_CALLS_PATH")
+        self._telemetry_path = Path(telemetry) if telemetry else None
 
     def implement(self, op: Operation, stub_source: str) -> tuple[str, Usage]:
         prompt = f"Implement this function:\n\n{stub_source}"
         if op.context:
             prompt = f"{op.context}\n\n{prompt}"
-        text, usage = self._call(_IMPLEMENT_SYS, prompt)
+        text, usage = self._call(_IMPLEMENT_SYS, prompt, call_kind="implement")
         _log(f"implement {op.name} via {self.name}", usage)
         return _strip_fence(text), usage
 
     def plan(self, system: str, prompt: str) -> tuple[str, Usage]:
         """Request a benchmark plan and report its actual provider usage."""
-        text, usage = self._call(system, prompt)
+        text, usage = self._call(system, prompt, call_kind="plan")
         _log(f"plan via {self.name}", usage)
         return text, usage
 
@@ -152,20 +167,60 @@ class RealBackend:
                 " Preserve the local entries dictionary initialization, register alias, "
                 "return entries, and dict[str, object] return annotation."
             )
-        text, usage = self._call(system, joined)
+        text, usage = self._call(system, joined, call_kind="resolve")
         _log(f"resolve registry via {self.name}", usage)
         return _strip_fence(text), usage
 
     # -- provider dispatch -------------------------------------------------
 
-    def _call(self, system: str, prompt: str) -> tuple[str, Usage]:
+    def _call(
+        self, system: str, prompt: str, *, call_kind: str = "implement"
+    ) -> tuple[str, Usage]:
+        started = time.perf_counter()
         if self.provider == "anthropic":
-            return self._call_anthropic(system, prompt)
-        if self.provider == "openai":
-            return self._call_openai(system, prompt)
-        if self.provider == "gemini":
-            return self._call_gemini(system, prompt)
-        raise ValueError(f"unknown provider: {self.provider}")
+            result = self._call_anthropic(system, prompt)
+        elif self.provider == "openai":
+            result = self._call_openai(system, prompt)
+        elif self.provider == "gemini":
+            result = self._call_gemini(system, prompt)
+        else:
+            raise ValueError(f"unknown provider: {self.provider}")
+        text, usage = result
+        self._record_telemetry(
+            call_kind=call_kind,
+            latency_seconds=time.perf_counter() - started,
+            prompt_bytes=len(system.encode()) + len(prompt.encode()),
+            usage=usage,
+        )
+        return text, usage
+
+    def _record_telemetry(
+        self,
+        *,
+        call_kind: str,
+        latency_seconds: float,
+        prompt_bytes: int,
+        usage: Usage,
+    ) -> None:
+        """Append one provider call sample when telemetry is configured."""
+        if self._telemetry_path is None:
+            return
+        record = {
+            "call_kind": call_kind,
+            "latency_seconds": latency_seconds,
+            "tokens_in": usage.tokens_in,
+            "tokens_out": usage.tokens_out,
+            "prompt_bytes": prompt_bytes,
+            "provider": self.provider,
+            "model": self.model,
+            "agent": self.name,
+            "timestamp": time.time(),
+        }
+        line = json.dumps(record, sort_keys=True) + "\n"
+        with _telemetry_lock:
+            self._telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._telemetry_path.open("a") as output:
+                output.write(line)
 
     def _anthropic(self) -> Any:
         if self._client is None:
@@ -181,7 +236,9 @@ class RealBackend:
             system=system,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+        text = "".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        )
         usage = Usage(resp.usage.input_tokens, resp.usage.output_tokens, 1)
         return text, usage
 

@@ -1,0 +1,26 @@
+[
+  {
+    "agents": 1,
+    "contention": "uniform",
+    "margin_seconds": 3.2061343424138613,
+    "winner": "worktree"
+  },
+  {
+    "agents": 4,
+    "contention": "uniform",
+    "margin_seconds": 61.328955763360966,
+    "winner": "mak"
+  },
+  {
+    "agents": 1,
+    "contention": "zipf",
+    "margin_seconds": 6.142656799958786,
+    "winner": "worktree"
+  },
+  {
+    "agents": 4,
+    "contention": "zipf",
+    "margin_seconds": 42.93918366521987,
+    "winner": "mak"
+  }
+]

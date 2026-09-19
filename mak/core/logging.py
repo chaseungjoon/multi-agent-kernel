@@ -80,6 +80,10 @@ class EventType(StrEnum):
     # the agent. ``resumed`` marks the retry; ``released`` a parked task freed
     # to break a cycle of parked tasks.
     COMMIT_DEFERRED = "commit_deferred"
+    # Timed production spans used by the scaling benchmark and normal diagnosis.
+    # Durations use a monotonic performance clock; the event timestamp remains
+    # wall time so it composes with the rest of the audit stream.
+    PHASE_SPAN = "phase_span"
 
 
 @dataclass(frozen=True, slots=True)

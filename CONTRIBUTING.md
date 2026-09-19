@@ -4705,6 +4705,57 @@ and `ruff` clean over `mak` and `cli`.
 
 ---
 
+## Wave 21: zero-LLM simulated-agent scaling benchmark
+
+Wave 21 adds `benchmark/sweep.py` and the `benchmark/sim/` package. A sweep
+materializes a fresh synthetic Python target per arm, then drives the existing
+benchmark runners with `SimBackend`. MAK still executes the production session,
+lock table, node store, commit transaction, reconstruction, and conflict detector;
+the worktree baselines still execute real git. The simulator substitutes only the
+model-facing calls and uses a stable hash of `(seed, call kind, operation,
+attempt)` as its random seed. This common-random-number design makes arm
+comparisons paired instead of letting model-latency noise dominate them.
+
+`harness/synthetic_spec.py` is the source of truth for generated stubs, reference
+implementations, registration tables, dependency pairs, and oracle tests. It
+supports uniform or Zipf table popularity, zero/one/two registrations per task,
+commutative registry appends, exclusive same-node edits, same-file work, and
+caller/callee pairs. Assignment can be module-owned, round-robin, random,
+conflict-avoiding, or derived from a Wave 22 profile. Keep additions in that spec
+so target code and the oracle cannot drift.
+
+The worktree runner now supports `merge_at_end` and `merge_often` strategies and
+reports registration survival after real merges. The MAK runner can serialize
+file-sharing tasks for the file-granularity ablation. Both expose the expanded
+`RunResult` metrics. `Session` emits `phase_span` events around commit validation
+and reconstruction; the benchmark wraps the real lock table to measure wait
+distributions without changing lock semantics.
+
+Real provider calls write fitting telemetry when `MAK_BENCH_CALLS_PATH` is set.
+Fit it with `benchmark/sim/fit.py`; profiles contain log-normal latency parameters,
+an empirical bootstrap fallback, prompt-byte token regressions, and a Beta
+posterior for resolver line drops. The bundled default is deliberately labeled as
+a placeholder. Do not describe it as calibrated. `sim/calibrate.py` reports
+prediction error when matching real points at N = 3, 6, and 10 are available.
+
+The normal quick validation is:
+
+```bash
+python benchmark/sweep.py --config benchmark/sweeps/smoke.yaml
+python benchmark/analysis/scaling.py \
+  --input benchmark/results/simulated_agent_scaling_1_smoke.jsonl
+python -m pytest tests/test_wave21_benchmark.py -q
+```
+
+Sweeps append resumable JSONL records keyed by every case parameter, the MAK git
+SHA, and the profile hash. `--fresh` intentionally replaces one sweep's JSONL.
+Each completed sweep also writes
+`benchmark/simulated_agent_scaling_1_result.json`. Keep the report's real-versus-
+modeled boundary explicit, preserve negative H1-H5 verdicts, and never infer real
+model calibration from the keyless smoke data.
+
+---
+
 # Part V — Design decisions & rationale
 
 The decisions that shaped MAK, and why — useful when a change seems to cut against

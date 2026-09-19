@@ -61,6 +61,8 @@ class Operation:
     package: str = "toolkit"  # top-level package directory of the template
     registrations: tuple[Registration, ...] = ()  # shared-table edits (may be empty)
     context: str = ""  # public project context and optional planner guidance
+    depends_on: tuple[str, ...] = ()
+    commutative_registrations: bool = True
 
     @property
     def func_node(self) -> str:

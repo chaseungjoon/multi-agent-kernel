@@ -52,8 +52,9 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from functools import wraps
 from pathlib import Path
-from typing import Protocol, cast
+from typing import ParamSpec, Protocol, TypeVar, cast
 
 from mak.agent_runner.adapters.budget import TRUNCATION_STOP_REASONS
 from mak.agent_runner.protocol import map_returned_sources
@@ -167,6 +168,32 @@ from mak.teardown import SuiteOutcome, TeardownResult, may_push
 
 # A test runner returns (passed, output) so teardown can gate the push.
 TestRunner = Callable[[], tuple[bool, str]]
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _timed_phase(
+    phase: str,
+) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+    """Log the wall duration of a Session phase without changing its behavior."""
+    def decorate(function: Callable[_P, _R]) -> Callable[_P, _R]:
+        @wraps(function)
+        def measured(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            started = time.perf_counter()
+            try:
+                return function(*args, **kwargs)
+            finally:
+                owner = args[0] if args else None
+                logger = getattr(owner, "_log", None)
+                if callable(logger):
+                    logger(
+                        EventType.PHASE_SPAN,
+                        phase=phase,
+                        duration_seconds=time.perf_counter() - started,
+                    )
+        return measured
+    return decorate
 
 
 class _Assigner(Protocol):
@@ -1971,6 +1998,7 @@ class Session:
         except (SyntaxError, OSError, UnsafeNodeIdError):
             return False
 
+    @_timed_phase("validate_commit_reconstruct")
     def _validate_and_commit(
         self, task_id: str, staged: list[NodeId], peers: dict[str, str] | None = None
     ) -> list[NodeId]:
@@ -2725,6 +2753,7 @@ class Session:
             )
         return resolved
 
+    @_timed_phase("reconstruct")
     def _reconstruct_affected(self, nodes: list[NodeId]) -> list[str]:
         """Rewrite each file touched by ``nodes`` from its committed fragments.
 

@@ -1,0 +1,17 @@
+name: simulated_agent_scaling_1_kernel_only
+profile: sim/profiles/default.json
+time_scale: 0.0
+failure_rate: 0.0
+kernel_only: true
+grid:
+  agents: [1, 10, 50, 100, 200]
+  tasks: [200]
+  modules: [40]
+  shared_tables: [8]
+  popularity: [uniform, zipf]
+  zipf_exponent: [1.5]
+  assignment: [round_robin]
+  contention_kinds:
+    - [registry_append, same_file]
+  arms: [mak_node, mak_file]
+  seeds: [21]

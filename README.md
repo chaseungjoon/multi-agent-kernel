@@ -332,45 +332,65 @@ full mechanism and a worktree comparison.
 
 ## Benchmark
 
-[`benchmark/`](benchmark/) pits MAK against a traditional git-worktree multi-agent workflow on
-the same workload with the same agents.
+MAK has two complementary benchmark suites. The **real-model suite** measures
+end-to-end coding quality and cost on fixed projects. The **simulated suite** holds
+agent behavior constant to measure coordination as contention changes.
 
-- **Real world scenario** [`benchmark/project_template_3/`](benchmark/project_template_3/) — 58 tasks
+### Real-model benchmark
 
-  | | MAK | Traditional |
-  |---|---|---|
-  | Avg. Tokens | **13,911** | 16,291 |
-  | Avg. Time | **57.07s** | 74.12s |
-  | Avg. Accuracy | **75%** (111.4/148) | 63% (93.7/148) |
-  | Avg. Merge conflicts | **0** | 4 |
+> Both workflows receive the same workload, models, and task assignments.
 
-- **Worst case scenario for MAK** [`benchmark/project_template_2/`](benchmark/project_template_2/) —  90 operations, 9 modules
+#### Partially contended workload
 
-  | | MAK | Traditional |
-  |---|---|---|
-  | Avg. Tokens | **18,339** | 23,760 |
-  | Avg. Time | 226.5s | **99.5s** |
-  | Avg. Accuracy | **94%** (253.1/270) | 93% (251.6/270) |
-  | Avg. Merge conflicts | **0** | 2 |
+[`project_template_3`](benchmark/project_template_3/) — 58 tasks
 
-> [More statistics](/benchmark/STATS.md)
+| | MAK | Traditional |
+|---|---|---|
+| Avg. Tokens | **13,911** | 16,291 |
+| Avg. Time | **57.07s** | 74.12s |
+| Avg. Accuracy | **75%** (111.4/148) | 63% (93.7/148) |
+| Avg. Merge conflicts | **0** | 4 |
 
-### Tokens & Accuracy
+#### Single-hot-symbol stress test
 
-- MAK spends **15%~23% fewer tokens** and hits **zero merge conflicts** by construction. It also has a notable edge (up to **19%** more) in accuracy.
+[`project_template_2`](benchmark/project_template_2/) — 90 operations across 9 modules
 
-### Time
+| | MAK | Traditional |
+|---|---|---|
+| Avg. Tokens | **18,339** | 23,760 |
+| Avg. Time | 226.5s | **99.5s** |
+| Avg. Accuracy | **94%** (253.1/270) | 93% (251.6/270) |
+| Avg. Merge conflicts | **0** | 2 |
 
-- For **real-world situations** (`project_template_3`), where contention is spread out over the codebase, MAK is by design **faster** than Traditional operations.
+MAK used **15–23% fewer tokens** and avoided merge conflicts in both workloads. It
+was faster when contention was spread across the project, but slower when every
+task targeted one symbol, which is a limitation by design.
 
-- In a **worst case scenario** (`project_template_2`), where tasks contend to **one symbol**, MAK can be **more than 2 times slower** than Traditional operations.
+### Simulated scaling benchmark
+
+![Four-agent MAK and worktree makespan under uniform and Zipf contention.](graphics/06-simulated-scaling-results.png)
+
+The keyless smoke sweep uses real MAK coordination and real Git worktrees and
+merges; only agent latency, token use, correctness, and conflict resolution are
+modeled.
+
+With four agents, node-level MAK finished in about **21 seconds under**
+both contention shapes. File-level locking rose to 29 seconds for uniform and
+53 seconds for [Zipf contention](https://en.wikipedia.org/wiki/Zipf%27s_law), while merge-at-end lost one Zipf registration.
 
 ### Reproduce results
 
 ```bash
+# Real-model benchmark
 python3 benchmark/run_benchmark.py --mode real \
-  --models anthropic:claude-opus-5 --max-agents 3
+  --models anthropic:claude-opus-5 --agents 3
+
+# Keyless simulated smoke sweep
+python3 benchmark/sweep.py --config benchmark/sweeps/smoke.yaml --fresh
 ```
+
+[Benchmark details](benchmark/README.md) · [Real-model statistics](benchmark/STATS.md) ·
+[Scaling verdicts](benchmark/sim/RESULTS.md)
 
 ## Contribute
 

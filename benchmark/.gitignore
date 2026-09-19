@@ -1,6 +1,7 @@
 # Per-run working copies (project clones, MAK state, git worktrees).
 .runs/
 .mak/
+.calls/
 __pycache__/
 .last_run.json
 .last_run.*.json

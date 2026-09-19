@@ -1,0 +1,27 @@
+name: simulated_agent_scaling_1_paper
+profile: sim/profiles/default.json
+time_scale: 0.002
+failure_rate: 0.01
+kernel_only: false
+grid:
+  agents: [3, 6, 10, 25, 50, 100, 200]
+  tasks: [250, 1000]
+  modules: [40]
+  shared_tables: [1, 16]
+  popularity: [uniform, zipf]
+  zipf_exponent: [1.5]
+  assignment: [round_robin]
+  contention_kinds:
+    - [registry_append]
+    - [registry_append, same_file]
+    - [same_node, same_file, dependency_pair]
+  arms:
+    - sequential
+    - worktree_end
+    - worktree_often
+    - worktree_avoid
+    - mak_node
+    - mak_file
+    - mak_no_api
+    - mak_no_key
+  seeds: [21]

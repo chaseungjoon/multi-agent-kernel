@@ -30,6 +30,15 @@ Independent tasks run together; a dependent task waits for both results.
 
 ![Parse and render run in the first wave; integration starts after both complete.](05-waves.png)
 
+### Simulated scaling results
+
+Four-agent makespan across uniform and concentrated contention in the keyless
+Wave 21 smoke sweep.
+
+![MAK and worktree makespan under uniform and Zipf contention.](06-simulated-scaling-results.png)
+
 [Full-width preview](index.html) · [Generation prompts](prompts/)
 
-Built with the built-in image-generation tool. Based on the repository's architecture, scheduler, lock rules, and node-store documentation. These are conceptual illustrations: validation and file reconstruction participate in a transaction; review, retries, recovery, and Git auditing are omitted from the overview.
+The conceptual illustrations were built with the image-generation tool and are
+based on the repository's architecture, scheduler, lock rules, and node-store
+documentation. The scaling chart is rendered from the Wave 21 smoke results.

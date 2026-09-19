@@ -1,0 +1,25 @@
+{
+  "provider": "modeled",
+  "model": "default-agent-v1",
+  "source": "Documented conservative defaults; replace with fit.py output from .calls telemetry.",
+  "default_failure_rate": 0.0,
+  "resolver_drop_posterior": {"alpha": 1.0, "beta": 49.0},
+  "calls": {
+    "implement": {
+      "log_mean": 2.302585093,
+      "log_sigma": 0.35,
+      "fit_r2": 0.8,
+      "empirical_seconds": [7.5, 10.0, 13.0],
+      "tokens_in": {"intercept": 120.0, "per_prompt_byte": 0.27, "fit_r2": 0.9},
+      "tokens_out": {"intercept": 55.0, "per_prompt_byte": 0.12, "fit_r2": 0.75}
+    },
+    "resolve": {
+      "log_mean": 2.708050201,
+      "log_sigma": 0.4,
+      "fit_r2": 0.75,
+      "empirical_seconds": [10.0, 15.0, 22.0],
+      "tokens_in": {"intercept": 180.0, "per_prompt_byte": 0.3, "fit_r2": 0.9},
+      "tokens_out": {"intercept": 90.0, "per_prompt_byte": 0.1, "fit_r2": 0.7}
+    }
+  }
+}

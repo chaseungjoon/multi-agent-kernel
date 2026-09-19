@@ -1,0 +1,25 @@
+name: simulated_agent_scaling_1_smoke
+profile: sim/profiles/default.json
+time_scale: 0.01
+failure_rate: 0.0
+kernel_only: false
+grid:
+  agents: [1, 4]
+  tasks: [8]
+  modules: [4]
+  shared_tables: [3]
+  popularity: [uniform, zipf]
+  zipf_exponent: [1.2]
+  assignment: [round_robin]
+  contention_kinds:
+    - [registry_append, same_file]
+  arms:
+    - sequential
+    - worktree_end
+    - worktree_often
+    - worktree_avoid
+    - mak_node
+    - mak_file
+    - mak_no_api
+    - mak_no_key
+  seeds: [21]

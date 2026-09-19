@@ -22,11 +22,12 @@ import ast
 import sys
 import threading
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import cast
 
 from harness.agents import Backend, Usage
-from harness.metrics import RunResult
+from harness.metrics import RunResult, measure_registration_survival
 from harness.workload import Workload, add_registration, operation_by_func_node
 from mak.config import (
     GitConfig,
@@ -35,7 +36,8 @@ from mak.config import (
     SemanticConfig,
     SessionConfig,
 )
-from mak.core.types import NodeId, SubTask, TaskBundle, TaskResult
+from mak.core.logging import EventType, SessionLogger
+from mak.core.types import LockEntry, LockMode, NodeId, SubTask, TaskBundle, TaskResult
 from mak.lock_manager.lock_table import LockTable
 from mak.node_store.store import NodeStore
 from mak.session import Session
@@ -98,6 +100,54 @@ class _BenchmarkRunner:
         pass
 
 
+class _MeasuredLockTable:
+    """Measure scheduler lock delay while delegating to the real lock table."""
+
+    def __init__(self, inner: LockTable) -> None:
+        self._inner = inner
+        self._first_wait: dict[str, tuple[float, tuple[str, ...]]] = {}
+        self.wait_seconds: list[float] = []
+        self.wait_by_node: dict[str, float] = defaultdict(float)
+
+    def try_acquire_all(
+        self, requests: list[tuple[NodeId, LockMode]], holder: str
+    ) -> bool:
+        acquired = self._inner.try_acquire_all(requests, holder)
+        now = time.perf_counter()
+        nodes = tuple(str(node) for node, _mode in requests)
+        if not acquired:
+            self._first_wait.setdefault(holder, (now, nodes))
+        elif holder in self._first_wait:
+            started, waited_nodes = self._first_wait.pop(holder)
+            elapsed = now - started
+            self.wait_seconds.append(elapsed)
+            share = elapsed / max(1, len(waited_nodes))
+            for node in waited_nodes:
+                self.wait_by_node[node] += share
+        return acquired
+
+    def release(self, node_id: NodeId, mode: LockMode, holder: str) -> bool:
+        return self._inner.release(node_id, mode, holder)
+
+    def release_all(self, holder: str) -> int:
+        return self._inner.release_all(holder)
+
+    def clear(self) -> int:
+        return self._inner.clear()
+
+    def expire_stale(self) -> list[LockEntry]:
+        return self._inner.expire_stale()
+
+    def holds_all(self, requests: list[tuple[NodeId, LockMode]], holder: str) -> bool:
+        return self._inner.holds_all(requests, holder)
+
+    def renew_all(self, holder: str) -> int:
+        return self._inner.renew_all(holder)
+
+    def all_entries(self) -> dict[NodeId, list[LockEntry]]:
+        return self._inner.all_entries()
+
+
 def _config(
     project_dir: Path,
     mak_dir: Path,
@@ -140,11 +190,14 @@ def run_mak(
     assignment: list[int],
     workload: Workload,
     semantic: SemanticConfig | None = None,
+    *,
+    granularity: str = "node",
 ) -> RunResult:
     """Implement the workload through MAK; return measured results."""
     by_name = {b.name: b for b in backends}
     runner = _BenchmarkRunner(by_name, workload)
 
+    file_dependencies = _file_dependencies(workload) if granularity == "file" else {}
     subtasks = [
         SubTask(
             task_id=op.name,
@@ -159,19 +212,29 @@ def run_mak(
                 NodeId(op.shared_node(reg)): [key]
                 for reg in op.registrations
                 if (key := registration_key(reg.line)) is not None
-            },
+            }
+            if op.commutative_registrations
+            else {},
+            depends_on=list(
+                dict.fromkeys((*op.depends_on, *file_dependencies.get(op.name, ())))
+            ),
         )
         for i, op in enumerate(workload.operations)
     ]
 
     config = _config(project_dir, mak_dir, len(backends), semantic)
+    logger = SessionLogger(mak_dir / "events.jsonl")
+    measured_locks = _MeasuredLockTable(
+        LockTable(default_timeout=config.session.lock_timeout_s)
+    )
     session = Session(
         session_id="benchmark-mak",
         config=config,
         node_store=NodeStore(mak_dir / "node_store"),
-        lock_table=LockTable(default_timeout=config.session.lock_timeout_s),
+        lock_table=measured_locks,
         registry=cast("object", _Registry()),  # type: ignore[arg-type]
         agent_runner=runner,
+        logger=logger,
     )
     session.initialize()
     session.install_plan(subtasks)
@@ -180,8 +243,26 @@ def run_mak(
     result = session.run()
     elapsed = time.monotonic() - start
 
-    print("[mak] agents done; measuring accuracy (pytest) ...", file=sys.stderr, flush=True)
+    print(
+        "[mak] agents done; measuring accuracy (pytest) ...",
+        file=sys.stderr,
+        flush=True,
+    )
     passed = _measure(project_dir)
+    survival = measure_registration_survival(project_dir, workload)
+    commit_spans = [
+        _duration(entry.payload.get("duration_seconds"))
+        for entry in logger.read_log()
+        if entry.event_type is EventType.PHASE_SPAN
+        and entry.payload.get("phase") == "validate_commit_reconstruct"
+    ]
+    store_bytes = sum(
+        path.stat().st_size for path in mak_dir.rglob("*") if path.is_file()
+    )
+    modeled_seconds = max(
+        (float(getattr(backend, "modeled_seconds", 0.0)) for backend in backends),
+        default=0.0,
+    )
     notes = [] if result.ok else [f"MAK run state: {result.state.value}"]
     # Wave 20: a clean run must leave nothing behind — no commit rejected, no
     # fix-up work detected. Both are reported rather than assumed: "0 conflicts
@@ -202,7 +283,52 @@ def run_mak(
         resolutions=result.metrics.get("stale_redispatches", 0.0),
         per_agent_calls=runner.calls_by_agent,
         notes=notes,
+        registration_expected=survival.expected,
+        registration_survived=survival.survived,
+        registration_dropped=survival.dropped,
+        registration_duplicates=survival.duplicates,
+        kernel_seconds=sum(commit_spans),
+        kernel_commit_seconds=commit_spans,
+        lock_wait_seconds=measured_locks.wait_seconds,
+        top_waited_nodes=dict(
+            sorted(
+                measured_locks.wait_by_node.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:10]
+        ),
+        store_bytes=store_bytes,
+        modeled_agent_seconds=modeled_seconds,
+        unscaled_seconds=modeled_seconds + sum(commit_spans),
     )
+
+
+def _file_dependencies(workload: Workload) -> dict[str, tuple[str, ...]]:
+    """Serialize tasks sharing any file for the file-lock ablation."""
+    previous: dict[str, str] = {}
+    dependencies: dict[str, tuple[str, ...]] = {}
+    for operation in workload.operations:
+        resources = {f"{workload.package}/{operation.module}.py"}
+        resources.update(
+            f"{workload.package}/{registration.module}.py"
+            for registration in operation.registrations
+        )
+        deps = tuple(
+            dict.fromkeys(
+                previous[resource]
+                for resource in sorted(resources)
+                if resource in previous
+            )
+        )
+        dependencies[operation.name] = deps
+        for resource in resources:
+            previous[resource] = operation.name
+    return dependencies
+
+
+def _duration(value: object) -> float:
+    """Narrow a structured event duration to a floating-point number."""
+    return float(value) if isinstance(value, int | float) else 0.0
 
 
 def _measure(project_dir: Path) -> int:

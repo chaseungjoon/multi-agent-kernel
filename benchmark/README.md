@@ -212,6 +212,49 @@ suite checks reproducibility, that all 152 baseline checks fail, planner validat
 legacy workload compatibility, and successful mock runs on both coordination models.
 Template 4 test alarms run on POSIX; on other hosts use an external process timeout.
 
+## Simulated agent scaling 1 (Wave 21)
+
+The Wave 21 benchmark maps the coordination crossover without making model calls.
+It generates Python projects from a typed workload specification and runs each arm
+in a separate process. MAK arms use the production `Session`, scheduler, lock
+table, node store, transactions, reconstruction, and conflict detector. Worktree
+arms use real git worktrees, commits, merges or cherry-picks, and conflict
+detection. Only agent latency, tokens, correctness, and resolver behavior are
+modeled. Stable random seeds keyed by operation and attempt give matching work the
+same samples in every arm.
+
+The sweep includes end-of-run worktree merges, merge-often worktrees,
+conflict-avoiding assignment, a sequential baseline, MAK node locks, the file-lock
+ablation, and the API-lock/keyed-registry ablations. Metrics include measured and
+unscaled makespan, speedup, utilization, critical path, conflicts, resolver calls,
+tokens, oracle accuracy, registration survival, commit and lock-wait percentiles,
+hot waited-on nodes, commits per second, and node-store size.
+
+Run the keyless smoke sweep from the repository root:
+
+```bash
+python benchmark/sweep.py --config benchmark/sweeps/smoke.yaml
+```
+
+It resumes by default and writes one record per arm to
+`benchmark/results/simulated_agent_scaling_1_smoke.jsonl`. The consolidated output
+requested for this study is
+`benchmark/simulated_agent_scaling_1_result.json`. Use `--fresh` to replace an
+existing sweep. The paper and pure-kernel grids are `sweeps/paper.yaml` and
+`sweeps/kernel_only.yaml`; the paper grid reaches 200 agents.
+
+Regenerate the analytic overlay, crossover data, SVG, and H1-H5 verdicts with:
+
+```bash
+python benchmark/analysis/scaling.py \
+  --input benchmark/results/simulated_agent_scaling_1_smoke.jsonl
+```
+
+Real calls can emit fitting data by setting `MAK_BENCH_CALLS_PATH` to a JSONL
+path. `sim/fit.py` turns that telemetry into a profile. See `sim/README.md` for
+the real-versus-modeled boundary, fitting workflow, calibration command, and
+threats to validity.
+
 ## Results
 
 > Model configuration is recorded separately for each target. Use `--models` to

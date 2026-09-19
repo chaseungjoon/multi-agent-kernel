@@ -25,11 +25,13 @@ from pathlib import Path
 
 from harness.accuracy import measure
 from harness.agents import Backend, Usage, _union_registry
-from harness.metrics import RunResult
+from harness.metrics import RunResult, measure_registration_survival
 from harness.workload import Workload, add_registration
 
 
-def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(
+    args: list[str], cwd: Path, check: bool = True
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=cwd, check=check, capture_output=True, text=True
     )
@@ -39,8 +41,13 @@ def _func_span(source: str, name: str) -> tuple[int, int]:
     """Return the 0-based [start, end) line span of top-level function ``name``."""
     tree = ast.parse(source)
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
-            start = min([d.lineno for d in node.decorator_list], default=node.lineno) - 1
+        if (
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name == name
+        ):
+            start = (
+                min([d.lineno for d in node.decorator_list], default=node.lineno) - 1
+            )
             assert node.end_lineno is not None
             return start, node.end_lineno
     raise KeyError(name)
@@ -64,8 +71,12 @@ def run_traditional(
     backends: list[Backend],
     assignment: list[int],
     workload: Workload,
+    *,
+    strategy: str = "merge_at_end",
 ) -> RunResult:
     """Implement the workload via git worktrees + merge; return measured results."""
+    if strategy not in {"merge_at_end", "merge_often"}:
+        raise ValueError(f"unknown worktree merge strategy: {strategy}")
     operations = workload.operations
     shared_files = workload.shared_files()
     _git(["init", "-q"], project_dir)
@@ -75,14 +86,17 @@ def run_traditional(
     _git(["commit", "-q", "-m", "base: stubs"], project_dir)
     base = _git(["branch", "--show-current"], project_dir).stdout.strip()
 
-    ops_for = {i: [operations[k] for k in range(len(operations)) if assignment[k] == i]
-               for i in range(len(backends))}
+    ops_for = {
+        i: [operations[k] for k in range(len(operations)) if assignment[k] == i]
+        for i in range(len(backends))
+    }
 
     # -- implementation phase (agents work in parallel, in their own worktrees) --
     agent_seconds: dict[str, float] = {}
     calls_by_agent: dict[str, int] = {}
     total_usage = Usage()
     branches: list[str] = []
+    frequent_commits: list[str] = []
     notes: list[str] = []
 
     for i, backend in enumerate(backends):
@@ -108,7 +122,9 @@ def run_traditional(
             # The call happened and cost tokens regardless of whether its output is
             # usable, so count it before deciding whether to keep the result.
             total_usage = total_usage + usage
-            calls_by_agent[backend.name] = calls_by_agent.get(backend.name, 0) + usage.calls
+            calls_by_agent[backend.name] = (
+                calls_by_agent.get(backend.name, 0) + usage.calls
+            )
 
             # Reject a malformed implementation rather than write unparseable Python
             # into the module (which would crash every later step). The stub stays in
@@ -131,10 +147,20 @@ def run_traditional(
                 table_path.write_text(
                     _splice_function(table_src, "_register_all", updated)
                 )
-        _git(["add", "-A"], worktree)
-        # A backend outage or wholly malformed output can leave this branch unchanged.
-        # Keep its branch mergeable so one failed agent cannot abort the entire run.
-        _git(["commit", "-q", "--allow-empty", "-m", branch], worktree)
+            if strategy == "merge_often":
+                _git(["add", "-A"], worktree)
+                _git(
+                    ["commit", "-q", "--allow-empty", "-m", f"{branch}: {op.name}"],
+                    worktree,
+                )
+                frequent_commits.append(
+                    _git(["rev-parse", "HEAD"], worktree).stdout.strip()
+                )
+        if strategy == "merge_at_end":
+            _git(["add", "-A"], worktree)
+            # A backend outage or wholly malformed output can leave this branch
+            # unchanged. Keep it mergeable so one failed agent cannot abort the run.
+            _git(["commit", "-q", "--allow-empty", "-m", branch], worktree)
         agent_seconds[backend.name] = elapsed
 
     parallel_seconds = max(agent_seconds.values(), default=0.0)
@@ -148,8 +174,14 @@ def run_traditional(
     conflicts = 0
     resolutions = 0
     merge_start = time.monotonic()
-    for branch in branches:
-        merged = _git(["merge", "--no-edit", branch], project_dir, check=False)
+    merge_targets = branches if strategy == "merge_at_end" else frequent_commits
+    for target in merge_targets:
+        command = (
+            ["merge", "--no-edit", target]
+            if strategy == "merge_at_end"
+            else ["cherry-pick", target]
+        )
+        merged = _git(command, project_dir, check=False)
         if merged.returncode == 0:
             continue
         conflicted = _git(
@@ -178,21 +210,44 @@ def run_traditional(
                 calls_by_agent.get(resolver.name, 0) + usage.calls
             )
             table_path.write_text(
-                _splice_function(base_tables[path], "_register_all", merged_register_all)
+                _splice_function(
+                    base_tables[path], "_register_all", merged_register_all
+                )
             )
             _git(["add", path], project_dir)
-        _git(["commit", "-q", "--no-edit"], project_dir)
+        if strategy == "merge_at_end":
+            _git(["commit", "-q", "--no-edit"], project_dir)
+        else:
+            _git(
+                ["-c", "core.editor=true", "cherry-pick", "--continue"],
+                project_dir,
+            )
     merge_seconds = time.monotonic() - merge_start
 
     for branch in branches:
-        _git(["worktree", "remove", "--force", str(worktree_root / branch)],
-             project_dir, check=False)
+        _git(
+            ["worktree", "remove", "--force", str(worktree_root / branch)],
+            project_dir,
+            check=False,
+        )
 
-    print("[traditional] merge done; measuring accuracy (pytest) ...",
-          file=sys.stderr, flush=True)
+    print(
+        "[traditional] merge done; measuring accuracy (pytest) ...",
+        file=sys.stderr,
+        flush=True,
+    )
     passed = measure(project_dir)
+    survival = measure_registration_survival(project_dir, workload)
+    modeled_seconds = max(
+        (float(getattr(backend, "modeled_seconds", 0.0)) for backend in backends),
+        default=0.0,
+    )
     return RunResult(
-        label="Traditional (git worktrees)",
+        label=(
+            "Traditional (git worktrees)"
+            if strategy == "merge_at_end"
+            else "Traditional (git worktrees, merge often)"
+        ),
         wall_seconds=parallel_seconds + merge_seconds,
         usage=total_usage,
         passed=passed,
@@ -201,4 +256,11 @@ def run_traditional(
         resolutions=resolutions,
         per_agent_calls=calls_by_agent,
         notes=notes,
+        registration_expected=survival.expected,
+        registration_survived=survival.survived,
+        registration_dropped=survival.dropped,
+        registration_duplicates=survival.duplicates,
+        kernel_seconds=merge_seconds,
+        modeled_agent_seconds=modeled_seconds,
+        unscaled_seconds=modeled_seconds + merge_seconds,
     )

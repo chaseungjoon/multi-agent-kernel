@@ -169,7 +169,39 @@ def _aggregate(results: list[RunResult]) -> RunResult:
             calls=round(_mean([r.planning_usage.calls for r in results])),
         ),
         planning_seconds=_mean([r.planning_seconds for r in results]),
+        registration_expected=round(
+            _mean([r.registration_expected for r in results])
+        ),
+        registration_survived=round(
+            _mean([r.registration_survived for r in results])
+        ),
+        registration_dropped=round(
+            _mean([r.registration_dropped for r in results])
+        ),
+        registration_duplicates=round(
+            _mean([r.registration_duplicates for r in results])
+        ),
+        kernel_seconds=_mean([r.kernel_seconds for r in results]),
+        kernel_commit_seconds=[
+            value for result in results for value in result.kernel_commit_seconds
+        ],
+        lock_wait_seconds=[
+            value for result in results for value in result.lock_wait_seconds
+        ],
+        top_waited_nodes=_mean_waited_nodes(results),
+        store_bytes=round(_mean([r.store_bytes for r in results])),
+        modeled_agent_seconds=_mean([r.modeled_agent_seconds for r in results]),
+        unscaled_seconds=_mean([r.unscaled_seconds for r in results]),
     )
+
+
+def _mean_waited_nodes(results: list[RunResult]) -> dict[str, float]:
+    """Average per-node lock wait totals across repeated runs."""
+    nodes = {node for result in results for node in result.top_waited_nodes}
+    return {
+        node: _mean([result.top_waited_nodes.get(node, 0.0) for result in results])
+        for node in nodes
+    }
 
 
 def _sample(mak: RunResult, trad: RunResult) -> dict:
@@ -217,6 +249,16 @@ def _write_reports() -> None:
     (BENCH / "STATS.md").write_text(render_stats(runs))
     print(f"[benchmark] wrote {readme_path.name} and STATS.md "
           f"({len(runs)} project section(s))")
+
+
+def _configure_call_telemetry(mode: str) -> None:
+    """Give real runs a unique default JSONL call-telemetry destination."""
+    if mode != "real" or "MAK_BENCH_CALLS_PATH" in os.environ:
+        return
+    timestamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    destination = BENCH / ".calls" / f"run-{timestamp}.jsonl"
+    os.environ["MAK_BENCH_CALLS_PATH"] = str(destination)
+    print(f"[benchmark] call telemetry: {destination}")
 
 
 _DEFAULT_SPECS = [
@@ -411,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.render_only:
         _write_reports()
         return 0
+    _configure_call_telemetry(args.mode)
     if args.agents < 1:
         parser.error("--agents must be at least 1")
 
