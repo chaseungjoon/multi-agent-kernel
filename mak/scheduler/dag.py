@@ -11,6 +11,13 @@ dependencies complete) and have not been handed out before. Calling
 ``newly_unblocked`` immediately after construction yields the initial ready set
 (tasks with no dependencies), so the scheduler has a single, uniform entry point
 for populating its ready queue.
+
+**Soft edges (Wave 20, P3).** A dependency whose provider declared a *contract*
+for everything the dependent needs can be marked soft: it still orders the two
+(topological order, batch commit order) and still counts for reporting, but it
+no longer gates *dispatch* — the dependent is built against the contract while
+the provider is still being implemented. The session holds the dependent's
+commit until the provider commits.
 """
 
 from __future__ import annotations
@@ -22,7 +29,9 @@ from mak.core.types import SubTask
 class DAG:
     """A validated, stateful dependency graph of ``SubTask`` nodes."""
 
-    def __init__(self, tasks: list[SubTask]) -> None:
+    def __init__(
+        self, tasks: list[SubTask], soft_edges: dict[str, set[str]] | None = None
+    ) -> None:
         self._tasks: dict[str, SubTask] = {}
         for task in tasks:
             if task.task_id in self._tasks:
@@ -34,6 +43,11 @@ class DAG:
 
         self._complete: set[str] = set()
         self._released: set[str] = set()
+        self._soft: dict[str, set[str]] = {
+            tid: set(deps) & set(self._tasks[tid].depends_on)
+            for tid, deps in (soft_edges or {}).items()
+            if tid in self._tasks
+        }
 
     @property
     def tasks(self) -> dict[str, SubTask]:
@@ -117,11 +131,31 @@ class DAG:
             if tid in self._released or tid in self._complete:
                 continue
             task = self._tasks[tid]
-            if all(dep in self._complete for dep in task.depends_on):
+            soft = self._soft.get(tid, set())
+            if all(
+                dep in self._complete or dep in soft for dep in task.depends_on
+            ):
                 unblocked.append(task)
         for task in unblocked:
             self._released.add(task.task_id)
         return unblocked
+
+    def soft_dependencies(self, task_id: str) -> set[str]:
+        """Return the dependencies of ``task_id`` that do not gate its dispatch."""
+        return set(self._soft.get(task_id, set()))
+
+    def harden(self, task_id: str) -> None:
+        """Make every soft dependency of ``task_id`` gate it again, and re-arm it.
+
+        Used when a task dispatched ahead of a contract provider cannot commit
+        and nothing else can make progress: it goes back to waiting for the
+        provider the ordinary way, and ``newly_unblocked`` emits it once more
+        when the provider completes.
+        """
+        if task_id not in self._tasks:
+            raise SchedulingError(f"cannot harden unknown task: {task_id}")
+        self._soft.pop(task_id, None)
+        self._released.discard(task_id)
 
     def mark_released(self, task_id: str) -> None:
         """Mark ``task_id`` as already handed out so ``newly_unblocked`` skips it.

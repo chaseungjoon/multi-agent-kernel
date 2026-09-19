@@ -73,22 +73,27 @@ class Operation:
 
 
 # -- basic workload (3 modules, 9 operations) -------------------------------
+#
+# Each reference keeps its stub's exact signature, annotations included: the
+# mock backend stands in for a compliant agent ("keep the exact same function
+# name and signature"), and MAK enforces the body-only declaration these tasks
+# make — a reference that dropped the annotations would be an interface change.
 
 _BASIC_OPERATIONS: list[Operation] = [
-    Operation("upper", "strings", "upper", "def upper(s):\n    return s.upper()\n"),
-    Operation("reverse", "strings", "reverse", "def reverse(s):\n    return s[::-1]\n"),
+    Operation("upper", "strings", "upper", "def upper(s: str) -> str:\n    return s.upper()\n"),
+    Operation("reverse", "strings", "reverse", "def reverse(s: str) -> str:\n    return s[::-1]\n"),
     Operation(
         "count_vowels",
         "strings",
         "count_vowels",
-        'def count_vowels(s):\n    return sum(1 for c in s if c.lower() in "aeiou")\n',
+        'def count_vowels(s: str) -> int:\n    return sum(1 for c in s if c.lower() in "aeiou")\n',
     ),
-    Operation("add", "numbers", "add", "def add(a, b):\n    return a + b\n"),
+    Operation("add", "numbers", "add", "def add(a: int, b: int) -> int:\n    return a + b\n"),
     Operation(
         "factorial",
         "numbers",
         "factorial",
-        "def factorial(n):\n"
+        "def factorial(n: int) -> int:\n"
         "    if n < 0:\n"
         '        raise ValueError("n must be non-negative")\n'
         "    result = 1\n"
@@ -100,7 +105,7 @@ _BASIC_OPERATIONS: list[Operation] = [
         "is_prime",
         "numbers",
         "is_prime",
-        "def is_prime(n):\n"
+        "def is_prime(n: int) -> bool:\n"
         "    if n < 2:\n"
         "        return False\n"
         "    i = 2\n"
@@ -114,7 +119,7 @@ _BASIC_OPERATIONS: list[Operation] = [
         "unique",
         "sequences",
         "unique",
-        "def unique(items):\n"
+        "def unique(items: Sequence[T]) -> list[T]:\n"
         "    seen = set()\n"
         "    result = []\n"
         "    for item in items:\n"
@@ -127,7 +132,7 @@ _BASIC_OPERATIONS: list[Operation] = [
         "maximum",
         "sequences",
         "maximum",
-        "def maximum(items):\n"
+        "def maximum(items: Sequence[T]) -> T:\n"
         "    if not items:\n"
         '        raise ValueError("empty sequence")\n'
         "    return max(items)\n",
@@ -136,7 +141,7 @@ _BASIC_OPERATIONS: list[Operation] = [
         "first",
         "sequences",
         "first",
-        "def first(items):\n"
+        "def first(items: Sequence[T]) -> T:\n"
         "    if not items:\n"
         '        raise ValueError("empty sequence")\n'
         "    return items[0]\n",
@@ -295,20 +300,43 @@ def assign(workload: Workload, num_agents: int) -> list[int]:
 def add_registration(current_source: str, register_line: str) -> str:
     """Return ``_register_all`` source with ``register_line`` added (idempotent).
 
-    Rebuilds the function from the set of ``register(...)`` lines it already
-    contains plus the new one, dropping the ``raise NotImplementedError`` stub. The
-    rebuild is deterministic, so it is the *same* registry edit for both runners —
-    what differs is only *when* it is applied (serialized under MAK vs in parallel
+    The line is inserted *in place* — after the last existing ``register(...)``
+    line, in place of the ``raise NotImplementedError`` stub, or before the
+    local table's ``return`` — and nothing else about the function changes.
+    That is what an agent appending one registration does, and it is what makes
+    the edit recognisably a pure append: rebuilding the whole function (the
+    previous behaviour) also rewrote its docstring, so every append read as a
+    rewrite of the table and MAK could not merge two of them. The edit is still
+    deterministic, so it is the *same* registry edit for both runners — what
+    differs is only *when* it is applied (under MAK's locks vs in parallel
     worktrees that must be merged).
     """
-    existing = [
-        line for line in current_source.splitlines() if line.strip().startswith("register(")
+    lines = current_source.splitlines(keepends=True)
+    existing = [line.strip() for line in lines if line.strip().startswith("register(")]
+    if register_line.strip() in existing:
+        return current_source
+    new_line = f"    {register_line.strip()}\n"
+    stub = [
+        i for i, line in enumerate(lines)
+        if line.strip() == "raise NotImplementedError"
     ]
-    if register_line.strip() not in {line.strip() for line in existing}:
-        existing.append(register_line)
-    return registration_source(
-        existing, local_table="entries: dict[str, object]" in current_source
-    )
+    if stub:
+        lines[stub[0]] = new_line
+        return "".join(lines)
+    registered = [
+        i for i, line in enumerate(lines) if line.strip().startswith("register(")
+    ]
+    returns = [i for i, line in enumerate(lines) if line.strip().startswith("return ")]
+    if registered:
+        at = registered[-1] + 1
+    elif returns:
+        at = returns[-1]
+    else:
+        at = len(lines)
+    if at == len(lines) and lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    lines.insert(at, new_line)
+    return "".join(lines)
 
 
 def registration_source(lines: list[str], *, local_table: bool = False) -> str:

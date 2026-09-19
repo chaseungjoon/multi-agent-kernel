@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from mak.conflict_detector.import_check import check_import_conflicts
 from mak.conflict_detector.name_collision_check import check_name_collisions
 from mak.conflict_detector.node_ids import class_scope_of
+from mak.conflict_detector.registry_key_check import check_registry_keys
 from mak.conflict_detector.signature_check import check_signature_compatibility
 
 
@@ -67,7 +68,8 @@ def _frame_fragment(node_id: str, source: str) -> str:
 class Conflict:
     """One detected problem, tagged with the check that found it."""
 
-    check: str  # "syntax" | "signature" | "import" | "name_collision"
+    # "syntax" | "signature" | "import" | "name_collision" | "registry_key"
+    check: str
     message: str
 
 
@@ -105,12 +107,17 @@ class EditRound:
       definitions above.
     - ``header_edits``: agent_id -> ``__header__`` source, for import consistency.
     - ``symbol_edits``: agent_id -> introduced source, for name-collision checks.
+    - ``registry_edits`` / ``previous``: node_id -> the source about to be
+      committed, and the committed source it replaces, so the registry-key check
+      reports only duplicates an edit *introduces* (Wave 20).
     """
 
     definitions: dict[str, str] = field(default_factory=dict)
     callers: dict[str, str] = field(default_factory=dict)
     header_edits: dict[str, str] = field(default_factory=dict)
     symbol_edits: dict[str, str] = field(default_factory=dict)
+    registry_edits: dict[str, str] = field(default_factory=dict)
+    previous: dict[str, str] = field(default_factory=dict)
 
 
 class ConflictDetector:
@@ -125,6 +132,7 @@ class ConflictDetector:
             conflicts.extend(self._check_signatures(edits))
             conflicts.extend(self._check_imports(edits))
             conflicts.extend(self._check_name_collisions(edits))
+            conflicts.extend(self._check_registry_keys(edits))
         return ConflictReport(tuple(conflicts))
 
     @staticmethod
@@ -168,6 +176,12 @@ class ConflictDetector:
         return [
             Conflict("import", reason)
             for reason in check_import_conflicts(edits.header_edits)
+        ]
+
+    def _check_registry_keys(self, edits: EditRound) -> list[Conflict]:
+        return [
+            Conflict("registry_key", reason)
+            for reason in check_registry_keys(edits.registry_edits, edits.previous)
         ]
 
     def _check_name_collisions(self, edits: EditRound) -> list[Conflict]:

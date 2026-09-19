@@ -32,16 +32,37 @@ node has been committed by the time the reader dispatches.
 Every change is also reported as a :class:`PlanFinding` so the human-in-the-loop
 reviewer sees exactly what validation did and can override it via the edit flow.
 Originals are never mutated (``SubTask`` is frozen; corrections use ``replace``).
+
+**Wave 20 (P4).** With :class:`PlanSemantics` supplied, validation also reads the
+tasks' interface declarations:
+
+- a writer that declared a **body-only** edit of a node (``changes_api=False``,
+  or an API change narrowed to other targets) no longer forces callers' tasks
+  after it — the ``#api`` interface lock and commit-time enforcement carry that
+  guarantee now, and the edge only cost parallelism (``relaxed_dep``);
+- a task that **declares** an API change to X orders every task whose
+  description, context or contract names X after it — including callers that do
+  not exist yet, which the reference graph cannot see (``declared_api_dep``);
+- two tasks writing the same class, one of them its structure (the class node or
+  ``__init__``), are ordered structure-first (``shared_structure``);
+- two tasks appending to the same **ordered** registrar (``use(auth)`` chains)
+  are flagged — order is meaning there, and no lock can choose it
+  (``ordered_table``);
+- two tasks declaring the same registry key on one table are flagged and ordered
+  — the second would register a duplicate (``registry_key_collision``).
 """
 
 from __future__ import annotations
 
 import difflib
-from dataclasses import dataclass, replace
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 
 from mak.core.types import NodeId, SubTask
 from mak.planner.depgraph import DepGraph
+from mak.scheduler.lock_policy import api_write_targets
 
 _STRONG_RATIO = 0.9
 _CLOSE_CUTOFF = 0.8
@@ -56,6 +77,19 @@ class PlanFinding:
     task_id: str
     message: str
     suggestions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PlanSemantics:
+    """What Wave 20 validation needs to know beyond the plan and the graph.
+
+    ``api_locks`` says whether interface locks are on (edge relaxation is only
+    sound when they are). ``registrar_kinds`` maps a targeted node to
+    ``"keyed"``/``"ordered"``/``"empty"`` when it is a registrar function.
+    """
+
+    api_locks: bool = False
+    registrar_kinds: Mapping[NodeId, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,17 +363,35 @@ def _try_add_edge(
 
 
 def _add_missing_edges(
-    plan: list[SubTask], graph: DepGraph
+    plan: list[SubTask], graph: DepGraph, *, api_locks: bool = False
 ) -> tuple[list[SubTask], list[PlanFinding]]:
-    """Add dependency edges grounded in real references; flag unresolvable mutuals."""
+    """Add dependency edges grounded in real references; flag unresolvable mutuals.
+
+    Under interface locks, a writer that declared ``ref`` body-only is skipped:
+    the caller's READ on ``ref#api`` and the commit-time interface check are
+    what keep the pair correct, and the edge would only serialize them.
+    """
     writers = _writers_of(plan)
+    by_id = {t.task_id: t for t in plan}
     deps: dict[str, set[str]] = {t.task_id: set(t.depends_on) for t in plan}
     findings: list[PlanFinding] = []
     mutual_seen: set[frozenset[str]] = set()
+    relaxed: set[tuple[str, str]] = set()
     for task in plan:
         for target in task.target_nodes:
             for ref in sorted(graph.references.get(target, frozenset())):
                 for writer in sorted(writers.get(ref, set())):
+                    if api_locks and ref not in api_write_targets(by_id[writer]):
+                        pair = (writer, task.task_id)
+                        if writer != task.task_id and pair not in relaxed:
+                            relaxed.add(pair)
+                            findings.append(PlanFinding(
+                                "relaxed_dep", task.task_id,
+                                f"not ordered after '{writer}': it declared "
+                                f"'{ref}' body-only, so the interface lock "
+                                "covers the pair",
+                            ))
+                        continue
                     finding = _try_add_edge(
                         deps, mutual_seen, task.task_id, writer,
                         reason=(
@@ -445,14 +497,176 @@ def _flag_spurious(
 
 
 def validate_plan(
-    plan: list[SubTask], graph: DepGraph, inventory: list[NodeId]
+    plan: list[SubTask],
+    graph: DepGraph,
+    inventory: list[NodeId],
+    *,
+    semantic: PlanSemantics | None = None,
 ) -> ValidationResult:
     """Validate and augment ``plan`` against the code graph and node inventory."""
     grounded, findings = _ground_plan(plan, inventory)
     grounded, findings = _guard_whole_file(grounded, findings)
-    augmented, edge_findings = _add_missing_edges(grounded, graph)
+    augmented, edge_findings = _add_missing_edges(
+        grounded, graph, api_locks=semantic is not None and semantic.api_locks
+    )
     findings.extend(edge_findings)
     augmented, forward_findings = _add_forward_context_edges(augmented, inventory)
     findings.extend(forward_findings)
+    if semantic is not None:
+        for check in (
+            _add_declared_api_edges,
+            _add_structure_edges,
+            _add_registry_key_edges,
+        ):
+            augmented, more = check(augmented)
+            findings.extend(more)
+        findings.extend(_flag_ordered_tables(augmented, semantic.registrar_kinds))
     findings.extend(_flag_spurious(plan, augmented, graph))
     return ValidationResult(plan=augmented, findings=findings)
+
+
+def _edge_pass(
+    plan: list[SubTask],
+    pairs: list[tuple[str, str, str, str]],
+) -> tuple[list[SubTask], list[PlanFinding]]:
+    """Add ``writer -> reader`` edges for ``(reader, writer, kind, reason)`` pairs."""
+    deps: dict[str, set[str]] = {t.task_id: set(t.depends_on) for t in plan}
+    findings: list[PlanFinding] = []
+    mutual_seen: set[frozenset[str]] = set()
+    for reader, writer, kind, reason in pairs:
+        finding = _try_add_edge(
+            deps, mutual_seen, reader, writer,
+            reason=f"added: '{writer}' -> '{reader}' ({reason})",
+            mutual_reason=(
+                f"'{reader}' and '{writer}' are already ordered the other way; "
+                f"{reason} — order them manually"
+            ),
+        )
+        if finding is not None:
+            findings.append(replace(finding, kind=kind))
+    return [replace(t, depends_on=sorted(deps[t.task_id])) for t in plan], findings
+
+
+def _add_declared_api_edges(
+    plan: list[SubTask],
+) -> tuple[list[SubTask], list[PlanFinding]]:
+    """Order every task that names a node after the task declaring its API change.
+
+    The reference graph only knows calls that exist before the wave. A task
+    that will *add* a call to ``f`` while another changes ``f``'s signature is
+    invisible to it — but a declared API change plus a description, context
+    node or contract naming ``f`` is enough to order the pair.
+    """
+    pairs: list[tuple[str, str, str, str]] = []
+    for writer in plan:
+        if writer.changes_api is not True:
+            continue
+        for node in api_write_targets(writer):
+            symbol = _symbol(node)
+            pattern = re.compile(rf"\b{re.escape(symbol)}\b") if symbol else None
+            for reader in plan:
+                if reader.task_id == writer.task_id or node in reader.target_nodes:
+                    continue
+                mentions = node in reader.context_nodes or (
+                    pattern is not None
+                    and pattern.search(
+                        " ".join([reader.description, *reader.contract.values()])
+                    )
+                )
+                if mentions:
+                    pairs.append((
+                        reader.task_id, writer.task_id, "declared_api_dep",
+                        f"declares an API change to '{node}', which "
+                        f"'{reader.task_id}' names",
+                    ))
+    return _edge_pass(plan, pairs)
+
+
+def _add_structure_edges(
+    plan: list[SubTask],
+) -> tuple[list[SubTask], list[PlanFinding]]:
+    """Order a class's structure writer before tasks writing its other members."""
+    structure: dict[tuple[str, str], list[str]] = {}
+    members: dict[tuple[str, str], list[str]] = {}
+    for task in plan:
+        for node in task.target_nodes:
+            owner = _class_member(str(node))
+            if owner is None:
+                continue
+            file_path, cls, member = owner
+            bucket = structure if member in ("", "__init__") else members
+            bucket.setdefault((file_path, cls), []).append(task.task_id)
+    pairs: list[tuple[str, str, str, str]] = []
+    for key, writers in sorted(structure.items()):
+        for writer in sorted(set(writers)):
+            for reader in sorted(set(members.get(key, [])) - {writer}):
+                pairs.append((
+                    reader, writer, "shared_structure",
+                    f"rewrites the structure of class '{key[1]}' in '{key[0]}' "
+                    f"(its fields or __init__) that '{reader}' also edits",
+                ))
+    return _edge_pass(plan, pairs)
+
+
+def _add_registry_key_edges(
+    plan: list[SubTask],
+) -> tuple[list[SubTask], list[PlanFinding]]:
+    """Order and flag two tasks that declare the same key on one registrar."""
+    claimed: dict[tuple[NodeId, str], list[str]] = {}
+    for task in plan:
+        for node, keys in task.registry_keys.items():
+            for key in keys:
+                claimed.setdefault((node, key), []).append(task.task_id)
+    pairs: list[tuple[str, str, str, str]] = []
+    for (node, key), owners in sorted(claimed.items()):
+        ordered = sorted(set(owners))
+        for earlier, later in zip(ordered, ordered[1:], strict=False):
+            pairs.append((
+                later, earlier, "registry_key_collision",
+                f"both register key {key!r} in '{node}'; the second registration "
+                "would silently replace the first",
+            ))
+    return _edge_pass(plan, pairs)
+
+
+def _flag_ordered_tables(
+    plan: list[SubTask], kinds: Mapping[NodeId, str]
+) -> list[PlanFinding]:
+    """Flag ordered (unkeyed) registrars that several tasks append to."""
+    writers = _writers_of(plan)
+    findings: list[PlanFinding] = []
+    for node, tasks in sorted(writers.items()):
+        if kinds.get(node) != "ordered" or len(tasks) < 2:
+            continue
+        names = ", ".join(sorted(tasks))
+        for task_id in sorted(tasks):
+            findings.append(PlanFinding(
+                "ordered_table", task_id,
+                f"'{node}' is an ordered registration list (middleware chain, "
+                f"priority list) written by {names}: its entries do not commute, "
+                "so say in each description where the entry belongs relative "
+                "to the others",
+            ))
+    return findings
+
+
+def _symbol(node: NodeId) -> str | None:
+    """Return the short symbol name a ``file::kind::name`` id carries."""
+    parts = str(node).split("::")
+    if len(parts) < 3:
+        return None
+    return parts[2].split("#", 1)[0].rsplit(".", 1)[-1] or None
+
+
+def _class_member(node: str) -> tuple[str, str, str] | None:
+    """Return ``(file, class, member)`` for a class-scoped node (``""`` = class)."""
+    parts = node.split("::")
+    if len(parts) < 3:
+        return None
+    file_path, kind, name = parts[0], parts[1], parts[2].split("#", 1)[0]
+    if kind == "class":
+        return file_path, name, ""
+    if kind in ("method", "class_body") and name:
+        cls, _, member = name.partition(".")
+        return file_path, cls, member or "<body>"
+    return None

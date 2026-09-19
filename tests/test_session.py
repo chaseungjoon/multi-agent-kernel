@@ -651,7 +651,7 @@ class TestCascadeDetection:
         # We simulate this by changing body only and verifying the new-node path.
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
         store = _store(tmp_path)
-        # Stage a non-function so _extract_sig returns None → no cascade.
+        # Stage a non-function: symbol `a` is deleted, but nothing calls it.
         runner = StagingRunner(store, new_source="x = 1\n")
         session = _session(tmp_path, runner=runner, node_store=store)
         session.initialize()
@@ -2434,6 +2434,7 @@ class TestDispatchLayerAttribution:
         layers = event.payload["layers"]
         assert isinstance(layers, dict)
         assert set(layers) == {
+            "contract",  # Wave 20 layer 0: declared contracts
             "write_targets", "planner_context", "same_file",
             "cross_file", "dependency_output",
         }

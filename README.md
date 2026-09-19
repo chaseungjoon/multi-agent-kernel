@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.6.6 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.7.0 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -318,6 +318,17 @@ for the full syntax.
 **One MAK per project.** A session takes an exclusive lease on the project's `.mak/`
 before it touches anything, so a second `mak` on the same checkout fails
 immediately.
+
+**Semantic conflicts.** Node-level locks stop two agents from writing the same
+symbol at once, but not two edits on *different* symbols that are each correct
+alone and wrong together (a stale read, a signature changed under a new call, a
+duplicated registry key). MAK also tracks and validates this: every task's
+context is version-stamped and re-checked at commit, interface changes are
+locked apart from body changes, and anything still slipping through is caught
+and offered as a fix-up wave, same as any other cascade. It is on by default and
+tunable under `semantic:` in `mak/config.yaml`; see
+[CONTRIBUTING.md §5.2](CONTRIBUTING.md#52-semantic-conflicts-wave-20) for the
+full mechanism and a worktree comparison.
 
 ## Benchmark
 

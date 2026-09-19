@@ -185,3 +185,23 @@ class AgentContextExceededError(AgentResponseError):
 
 class ConfigError(MakError):
     """Raised when configuration loading or validation fails."""
+
+
+class SemanticGateError(MakError):
+    """Raised when an optional semantic gate cannot run (Wave 20).
+
+    A gate is an *extra* check a project opts into — a type checker, the
+    impacted tests, an import smoke run, an LLM adjudicator. Its infrastructure
+    failing (the tool is not installed, the subprocess timed out) says nothing
+    about the wave's code, so the session logs this and carries on rather than
+    failing the wave or inventing a defect.
+    """
+
+
+class ContractError(MakError):
+    """Raised when a declared API contract cannot be parsed (Wave 20).
+
+    A contract is the planner's promise of a signature (``def f(a: int) -> R``).
+    One that does not parse as a Python signature is not a contract anyone can
+    be held to, so it is refused where it enters rather than compared later.
+    """

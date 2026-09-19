@@ -55,6 +55,31 @@ class EventType(StrEnum):
     SESSION_ENDED = "session_ended"
     PLAN_VALIDATED = "plan_validated"
     PLAN_METRICS = "plan_metrics"
+    # Wave 20. A task's commit found that a node its bundle carried had been
+    # committed by someone else while it was in flight. Logged for *every*
+    # stale read, whatever the verdict, with the node, both versions, the kind
+    # of change and what the policy decided — "every stale read is logged with
+    # a verdict" is an acceptance criterion, not a debugging aid.
+    STALE_READ = "stale_read"
+    # A commit changed a node's API without holding its ``#api`` write lock and
+    # the kernel took it on the spot (or refused, when a reader held it).
+    API_ESCALATED = "api_escalated"
+    # A keyed registrar node was merged commutatively: this task's appended
+    # entries were applied on top of the version committed since it read.
+    REGISTRY_MERGED = "registry_merged"
+    # An optional semantic gate (type check, impact tests, import smoke,
+    # adjudicator) produced a finding, or could not run.
+    GATE_FINDING = "gate_finding"
+    # The LLM adjudicator was asked about an uncertain stale read.
+    ADJUDICATION = "adjudication"
+    # A committed implementation did not match the contract its task declared.
+    CONTRACT_VIOLATION = "contract_violation"
+    # A finished result could not commit *yet* — another in-flight task holds a
+    # lock it needs (an interface a reader is building against, a registrar
+    # other tasks are appending to) — so it was parked instead of re-running
+    # the agent. ``resumed`` marks the retry; ``released`` a parked task freed
+    # to break a cycle of parked tasks.
+    COMMIT_DEFERRED = "commit_deferred"
 
 
 @dataclass(frozen=True, slots=True)

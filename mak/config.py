@@ -411,6 +411,75 @@ class NodeStoreConfig:
     version_retention: int = DEFAULT_VERSION_RETENTION
 
 
+STALE_READ_POLICIES = (
+    "accept_if_api_stable",
+    "revalidate",
+    "redispatch",
+    "reject",
+)
+TYPE_CHECKERS = ("off", "pyright", "mypy")
+_ON_OFF = ("off", "on")
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticConfig:
+    """Semantic-conflict prevention, detection and the optional gates (Wave 20).
+
+    Node write locks rule out *textual* conflicts. These settings govern the
+    *semantic* ones — two edits on disjoint nodes that are each right and wrong
+    together.
+
+    ``stale_read`` is what a commit does when a node its bundle carried was
+    committed by someone else while the task was in flight:
+
+    - ``accept_if_api_stable`` — accept a body-only change, re-dispatch on any
+      interface change;
+    - ``revalidate`` (default) — accept a body-only change, and an interface
+      change the task's code does not use, or that the static checks re-verify
+      against the new code; re-dispatch (with the diff) on anything uncertain;
+    - ``redispatch`` — re-dispatch on every stale read (strict snapshot
+      isolation);
+    - ``reject`` — reject non-body-only stale reads like any other conflict.
+
+    ``api_locks`` splits each node's lock into interface (``node#api``) and body
+    (``node``): callers read-lock the interface, a declared body-only edit takes
+    only the body, and an interface change is enforced at commit.
+    ``intention_locks`` makes a fragment write hold INTENT_WRITE on its file (and
+    a method on its class), so a whole-file or whole-class writer cannot run
+    beside it. ``registry_keys`` treats *keyed* registrar functions
+    (``register("<key>", ...)`` lists) as commutative: appenders run in parallel,
+    the kernel merges their lines, and a repeated key is a collision. All three
+    are ablation flags for the scaling study and default on.
+
+    ``contract_dispatch`` (opt-in) dispatches a dependent against its provider's
+    declared contract instead of waiting for the implementation to commit.
+
+    The heavy gates are all off by default and never fail a wave: each finding
+    becomes a fix-up task. ``type_check`` diffs pyright/mypy diagnostics against
+    a baseline taken at ``initialize``; ``impact_tests`` runs the tests that
+    import what the wave touched and attributes new failures to a task or task
+    pair; ``import_smoke`` imports every touched module in a fresh interpreter;
+    ``adjudicator`` (``"<backend>:<model>"``) asks a cheap model about stale
+    reads the static checks cannot settle, at most ``adjudicator_max_calls`` per
+    wave. ``gate_timeout_s`` bounds every gate subprocess and
+    ``impact_max_overlays`` bounds how many subset states pairwise attribution
+    may build.
+    """
+
+    stale_read: str = "revalidate"
+    api_locks: bool = True
+    intention_locks: bool = True
+    registry_keys: bool = True
+    contract_dispatch: bool = False
+    type_check: str = "off"
+    impact_tests: bool = False
+    import_smoke: bool = False
+    adjudicator: str | None = None
+    adjudicator_max_calls: int = 5
+    gate_timeout_s: float = 300.0
+    impact_max_overlays: int = 12
+
+
 @dataclass(frozen=True, slots=True)
 class MakConfig:
     """Top-level MAK configuration."""
@@ -425,6 +494,7 @@ class MakConfig:
     git: GitConfig = field(default_factory=GitConfig)
     node_store: NodeStoreConfig = field(default_factory=NodeStoreConfig)
     models: ModelsConfig = field(default_factory=ModelsConfig)
+    semantic: SemanticConfig = field(default_factory=SemanticConfig)
 
 
 def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
@@ -490,6 +560,68 @@ def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
         backend=_as_choice(raw, "backend", None, _PLANNER_BACKENDS),
         base_url=_opt_url(raw, "base_url"),
         api_key_env=_opt_str(raw, "api_key_env"),
+    )
+
+
+def _on_off(raw: dict[str, Any], key: str) -> bool:
+    """Read an ``off``/``on`` gate switch; YAML booleans are accepted too."""
+    value = raw.get(key, "off")
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text not in _ON_OFF:
+        raise ConfigError(f"'{key}' must be one of {_ON_OFF}, got {value!r}")
+    return text == "on"
+
+
+def _parse_adjudicator(raw: dict[str, Any]) -> str | None:
+    """Return ``"<backend>:<model>"`` for the adjudicator, or None when off."""
+    value = raw.get("adjudicator")
+    if value is None or value is False:
+        return None
+    text = str(value).strip()
+    if text.lower() in ("", "off"):
+        return None
+    backend, sep, model = text.partition(":")
+    if not sep or backend not in _PLANNER_BACKENDS or not model.strip():
+        raise ConfigError(
+            "'adjudicator' must be 'off' or '<backend>:<model>' with a backend "
+            f"in {_PLANNER_BACKENDS}, got {value!r}"
+        )
+    return f"{backend}:{model.strip()}"
+
+
+def _parse_semantic(raw: dict[str, Any]) -> SemanticConfig:
+    """Parse the ``semantic:`` section, rejecting a typo at load time."""
+    type_check = raw.get("type_check", "off")
+    type_check = "off" if type_check is False else str(type_check).strip().lower()
+    if type_check not in TYPE_CHECKERS:
+        raise ConfigError(
+            f"'type_check' must be one of {TYPE_CHECKERS}, got {type_check!r}"
+        )
+    max_calls = _as_int(raw, "adjudicator_max_calls", 5)
+    overlays = _as_int(raw, "impact_max_overlays", 12)
+    timeout = _as_float(raw, "gate_timeout_s", 300.0)
+    if max_calls < 0 or overlays < 0 or timeout <= 0:
+        raise ConfigError(
+            "'adjudicator_max_calls' and 'impact_max_overlays' must not be "
+            "negative, and 'gate_timeout_s' must be positive"
+        )
+    return SemanticConfig(
+        stale_read=_require_choice(
+            raw, "stale_read", "revalidate", STALE_READ_POLICIES
+        ),
+        api_locks=_as_bool(raw, "api_locks", True),
+        intention_locks=_as_bool(raw, "intention_locks", True),
+        registry_keys=_as_bool(raw, "registry_keys", True),
+        contract_dispatch=_as_bool(raw, "contract_dispatch", False),
+        type_check=type_check,
+        impact_tests=_on_off(raw, "impact_tests"),
+        import_smoke=_on_off(raw, "import_smoke"),
+        adjudicator=_parse_adjudicator(raw),
+        adjudicator_max_calls=max_calls,
+        gate_timeout_s=timeout,
+        impact_max_overlays=overlays,
     )
 
 
@@ -697,4 +829,13 @@ def load_config(path: Path | str) -> MakConfig:
         git=_parse_git(data.get("git", {})),
         node_store=_parse_node_store(data.get("node_store", {})),
         models=_parse_models(data.get("models", {})),
+        semantic=_parse_semantic(_section(data, "semantic")),
     )
+
+
+def _section(data: dict[str, Any], key: str) -> dict[str, Any]:
+    """Return a config section as a mapping, refusing a non-mapping value."""
+    value = data.get(key) or {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"'{key}' must be a mapping")
+    return value

@@ -20,9 +20,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol, TypeVar
 
-from mak.core.exceptions import PlannerFailedError
+from mak.core.exceptions import ContractError, PlannerFailedError
 from mak.core.paths import unsafe_node_id_reason
+from mak.core.task_codec import subtask_to_dict
 from mak.core.types import NodeId, SubTask
+from mak.planner.contracts import parse_contract, symbol_of_node
 from mak.planner.response import ResponseError, TruncatedResponseError, loads_json
 
 _T = TypeVar("_T")
@@ -41,6 +43,18 @@ below, or new ids for new symbols)
 (sibling methods, class attributes, imports) but will not modify
   - "depends_on": array of task_ids that must complete before this one
   - "agent_type": the agent type to run this sub-task (e.g. "anthropic_api")
+
+Optional interface declarations (MAK enforces each one when the task commits):
+  - "changes_api": false when the task only changes function BODIES of its \
+targets (it then runs in parallel with the tasks that call them, and a signature \
+change is rejected); true when it changes a signature, return type, class fields, \
+or deletes/renames a target; omit it when unsure
+  - "api_targets": with changes_api true, the target ids whose API changes
+  - "contract": {"<target id>": "def name(param: type, ...) -> ReturnType"} for \
+every API this task creates or changes. Dependent tasks are built against it and \
+the implementation must match it exactly
+  - "registry_keys": {"<target id>": ["<key>", ...]} when the task only appends \
+register("<key>", ...) lines to a shared registration function
 
 MAK edits Python only: every target node id must name a Python source file — either \
 "path/to/file.py" or "path/to/file.py::kind::qualified_name". Do NOT target \
@@ -94,7 +108,8 @@ and needless serialization (a depends_on edge with no real code reason).
 If the plan is already good, respond with EXACTLY this JSON object and nothing else:
   {"verdict": "ok"}
 Otherwise respond with ONLY the corrected full plan as a JSON array in the SAME schema \
-as before (task_id, description, target_nodes, context_nodes, depends_on, agent_type). \
+as before (task_id, description, target_nodes, context_nodes, depends_on, agent_type, \
+and any changes_api / api_targets / contract / registry_keys a task declared). \
 Do not add prose or code fences."""
 
 
@@ -205,6 +220,7 @@ def _coerce_subtask(raw: object, index: int) -> SubTask:
     if not isinstance(agent_type, str):
         raise ValueError(f"{where}: 'agent_type' must be a string")
 
+    declared = _coerce_declarations(raw, where, target_nodes)
     return SubTask(
         task_id=task_id,
         description=description,
@@ -212,7 +228,107 @@ def _coerce_subtask(raw: object, index: int) -> SubTask:
         context_nodes=[NodeId(n) for n in context_nodes],
         depends_on=depends_on,
         agent_type=agent_type,
+        changes_api=declared.changes_api,
+        api_targets=declared.api_targets,
+        contract=declared.contract,
+        registry_keys=declared.registry_keys,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _Declarations:
+    """A sub-task's Wave 20 interface declarations, validated."""
+
+    changes_api: bool | None
+    api_targets: list[NodeId]
+    contract: dict[NodeId, str]
+    registry_keys: dict[NodeId, list[str]]
+
+
+def _coerce_declarations(
+    raw: dict[str, object], where: str, targets: list[str]
+) -> _Declarations:
+    """Validate the optional interface declarations against the task's targets.
+
+    Each declaration is a promise the kernel enforces at commit, so one that
+    cannot be honoured — an API target the task does not write, a contract that
+    is not a signature, "body-only" alongside a contract that changes the API —
+    is refused here, where the planner can be asked again, rather than failing
+    a commit later.
+    """
+    changes_api = raw.get("changes_api")
+    if changes_api is not None and not isinstance(changes_api, bool):
+        raise ValueError(f"{where}: 'changes_api' must be true, false, or null")
+    api_targets = _require_str_list(raw.get("api_targets", []), where, "api_targets")
+    contract = _require_str_map(raw.get("contract", {}), where, "contract")
+    keys = _require_key_map(raw.get("registry_keys", {}), where)
+    owned = set(targets)
+    for field_name, ids in (
+        ("api_targets", api_targets),
+        ("contract", list(contract)),
+        ("registry_keys", list(keys)),
+    ):
+        stray = [n for n in ids if n not in owned]
+        if stray:
+            raise ValueError(
+                f"{where}: '{field_name}' names node(s) the task does not target: "
+                f"{', '.join(stray)} — declare only on this task's target_nodes"
+            )
+    for node_id, text in contract.items():
+        _check_contract(where, node_id, text)
+    if changes_api is False and (api_targets or contract):
+        raise ValueError(
+            f"{where}: 'changes_api' is false but the task declares "
+            "'api_targets' or a 'contract' — a contract creates or changes an API"
+        )
+    if changes_api is None and (api_targets or contract):
+        changes_api = True  # declaring an API target *is* declaring a change
+    return _Declarations(
+        changes_api=changes_api,
+        api_targets=[NodeId(n) for n in api_targets],
+        contract={NodeId(k): v for k, v in contract.items()},
+        registry_keys={NodeId(k): v for k, v in keys.items()},
+    )
+
+
+def _check_contract(where: str, node_id: str, text: str) -> None:
+    """Refuse a contract that does not parse or names a different symbol."""
+    try:
+        contract = parse_contract(text)
+    except ContractError as exc:
+        raise ValueError(f"{where}: {exc}") from exc
+    symbol = symbol_of_node(node_id)
+    if symbol is not None and symbol != contract.name:
+        raise ValueError(
+            f"{where}: contract for '{node_id}' declares '{contract.name}', "
+            f"but that node is '{symbol}'"
+        )
+
+
+def _require_str_map(value: object, where: str, field_name: str) -> dict[str, str]:
+    """Return ``value`` as a ``{str: non-empty str}`` mapping or raise."""
+    if not isinstance(value, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) and v.strip()
+        for k, v in value.items()
+    ):
+        raise ValueError(
+            f"{where}: '{field_name}' must map node ids to non-empty strings"
+        )
+    return dict(value)
+
+
+def _require_key_map(value: object, where: str) -> dict[str, list[str]]:
+    """Return ``registry_keys`` as ``{node id: [key, ...]}`` or raise."""
+    if not isinstance(value, dict) or not all(
+        isinstance(k, str)
+        and isinstance(v, list)
+        and all(isinstance(key, str) and key for key in v)
+        for k, v in value.items()
+    ):
+        raise ValueError(
+            f"{where}: 'registry_keys' must map node ids to lists of keys"
+        )
+    return {k: list(dict.fromkeys(v)) for k, v in value.items()}
 
 
 def parse_plan(raw: str) -> list[SubTask]:
@@ -433,19 +549,7 @@ def _assemble_outline(
 
 def _plan_to_json(tasks: list[SubTask]) -> str:
     """Serialize ``SubTask`` objects to the plan-array JSON ``parse_plan`` accepts."""
-    return json.dumps(
-        [
-            {
-                "task_id": t.task_id,
-                "description": t.description,
-                "target_nodes": [str(n) for n in t.target_nodes],
-                "context_nodes": [str(n) for n in t.context_nodes],
-                "depends_on": list(t.depends_on),
-                "agent_type": t.agent_type,
-            }
-            for t in tasks
-        ]
-    )
+    return json.dumps([subtask_to_dict(t) for t in tasks])
 
 
 class Planner:

@@ -114,6 +114,27 @@ class FileSyncReport:
         return bool(self.added or self.updated or self.retired)
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class NodeStamp:
+    """What a reader saw of a node: its committed version and a content digest.
+
+    Wave 20's read sets compare these, and the digest — not the version — is
+    what decides "did this node change?". Versions are not a safe identity on
+    their own: a node that is uncommitted, or retired and then re-created,
+    starts again at version 1, so ``version == 1`` before and after can describe
+    two different sources (the ABA problem). Two stamps are the same read
+    exactly when their digests are equal.
+    """
+
+    version: int
+    digest: str
+
+
+def source_digest(source: str) -> str:
+    """Return the digest a :class:`NodeStamp` records for a node's source."""
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
 @dataclasses.dataclass(slots=True)
 class _StoreSnapshot:
     """Everything a transaction must be able to put back (Wave 19).
@@ -519,6 +540,19 @@ class NodeStore:
             if version is None or version == latest.version:
                 return latest
             return self._historical(node_id, version, kind=latest.kind)
+
+    def stamp(self, node_id: NodeId) -> NodeStamp | None:
+        """Return the committed version and digest of a live node, or None.
+
+        ``None`` means "no live node by that id" — never committed, retired, or
+        superseded by a whole-file node. Taken under the store lock, so the
+        version and the digest always describe the same committed fragment.
+        """
+        with self._lock:
+            fragment = self._nodes.get(node_id)
+            if fragment is None:
+                return None
+            return NodeStamp(fragment.version, source_digest(fragment.source))
 
     def _historical(
         self, node_id: NodeId, version: int, *, kind: str | None = None

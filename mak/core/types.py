@@ -134,6 +134,23 @@ class SubTask:
     nodes it needs to *read* to do the work (sibling methods, class attributes,
     imports). The runner ships the current source of both to the agent so it is
     not editing blind.
+
+    The four Wave 20 fields are the task's *declarations* about its interface,
+    and each one is enforced at commit rather than trusted:
+
+    - ``changes_api`` is tri-state. ``None`` — the default, and what every plan
+      that says nothing gets — means "unknown", and the task is locked as if it
+      might change every target's API. ``False`` is a promise of a body-only
+      edit: the task no longer serializes with its callers' tasks, and an API
+      change at commit is rejected. ``True`` declares an API change on
+      ``api_targets`` (or on every target when that list is empty).
+    - ``api_targets`` narrows a declared API change to some targets.
+    - ``contract`` maps a node id to the signature the task will give it
+      (``"def f(a: int) -> R"``). Dependents are built against it and the
+      implementation must match it exactly.
+    - ``registry_keys`` names the literal keys the task will append to a keyed
+      registrar node (``register("<key>", ...)``), so tasks appending different
+      keys run in parallel and the same key is a detected collision.
     """
 
     task_id: str
@@ -142,3 +159,7 @@ class SubTask:
     context_nodes: list[NodeId] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
     agent_type: str = ""
+    changes_api: bool | None = None
+    api_targets: list[NodeId] = field(default_factory=list)
+    contract: dict[NodeId, str] = field(default_factory=dict)
+    registry_keys: dict[NodeId, list[str]] = field(default_factory=dict)

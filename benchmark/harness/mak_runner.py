@@ -7,10 +7,18 @@ atomic lock pre-allocation claims them together). Contended nodes serialize unde
 MAK's node-level write locks so no registration is ever lost; tasks touching
 different shared tables (or none) run fully in parallel. The agent work itself is
 delegated to the same backends the traditional runner uses.
+
+Wave 20: each subtask *declares* what it is — a body-only edit of its function
+(``changes_api=False``: implementing a stub keeps its signature) and the literal
+key it registers in each shared table (``registry_keys``). With the kernel's
+interface split and key-level registry locks on (the defaults), tasks appending
+different keys to one table run in parallel and the kernel merges their lines;
+``semantic`` turns either off for the ablation study.
 """
 
 from __future__ import annotations
 
+import ast
 import sys
 import threading
 import time
@@ -20,7 +28,13 @@ from typing import cast
 from harness.agents import Backend, Usage
 from harness.metrics import RunResult
 from harness.workload import Workload, add_registration, operation_by_func_node
-from mak.config import GitConfig, MakConfig, NodeStoreConfig, SessionConfig
+from mak.config import (
+    GitConfig,
+    MakConfig,
+    NodeStoreConfig,
+    SemanticConfig,
+    SessionConfig,
+)
 from mak.core.types import NodeId, SubTask, TaskBundle, TaskResult
 from mak.lock_manager.lock_table import LockTable
 from mak.node_store.store import NodeStore
@@ -84,7 +98,12 @@ class _BenchmarkRunner:
         pass
 
 
-def _config(project_dir: Path, mak_dir: Path, num_agents: int) -> MakConfig:
+def _config(
+    project_dir: Path,
+    mak_dir: Path,
+    num_agents: int,
+    semantic: SemanticConfig | None = None,
+) -> MakConfig:
     return MakConfig(
         session=SessionConfig(
             work_dir=str(project_dir),
@@ -93,7 +112,25 @@ def _config(project_dir: Path, mak_dir: Path, num_agents: int) -> MakConfig:
         ),
         git=GitConfig(auto_commit=False, auto_push=False),
         node_store=NodeStoreConfig(exclude_patterns=_EXCLUDES),
+        semantic=semantic or SemanticConfig(),
     )
+
+
+def registration_key(line: str) -> str | None:
+    """Return the literal first argument of a ``register("<key>", ...)`` line."""
+    try:
+        stmt = ast.parse(line.strip()).body[0]
+    except (SyntaxError, IndexError):
+        return None
+    if (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and stmt.value.args
+        and isinstance(stmt.value.args[0], ast.Constant)
+        and isinstance(stmt.value.args[0].value, str)
+    ):
+        return stmt.value.args[0].value
+    return None
 
 
 def run_mak(
@@ -102,6 +139,7 @@ def run_mak(
     backends: list[Backend],
     assignment: list[int],
     workload: Workload,
+    semantic: SemanticConfig | None = None,
 ) -> RunResult:
     """Implement the workload through MAK; return measured results."""
     by_name = {b.name: b for b in backends}
@@ -116,11 +154,17 @@ def run_mak(
                 *(NodeId(op.shared_node(reg)) for reg in op.registrations),
             ],
             agent_type=backends[assignment[i]].name,
+            changes_api=False,
+            registry_keys={
+                NodeId(op.shared_node(reg)): [key]
+                for reg in op.registrations
+                if (key := registration_key(reg.line)) is not None
+            },
         )
         for i, op in enumerate(workload.operations)
     ]
 
-    config = _config(project_dir, mak_dir, len(backends))
+    config = _config(project_dir, mak_dir, len(backends), semantic)
     session = Session(
         session_id="benchmark-mak",
         config=config,
@@ -139,14 +183,23 @@ def run_mak(
     print("[mak] agents done; measuring accuracy (pytest) ...", file=sys.stderr, flush=True)
     passed = _measure(project_dir)
     notes = [] if result.ok else [f"MAK run state: {result.state.value}"]
+    # Wave 20: a clean run must leave nothing behind — no commit rejected, no
+    # fix-up work detected. Both are reported rather than assumed: "0 conflicts
+    # by construction" was true of textual conflicts only.
+    fixups = session.detect_cascade_tasks()
+    if fixups:
+        notes.append(
+            f"MAK detected {len(fixups)} fix-up task(s): "
+            + ", ".join(t.task_id for t in fixups[:5])
+        )
     return RunResult(
         label="MAK (shared-memory kernel)",
         wall_seconds=elapsed,
         usage=runner.usage,
         passed=passed,
         total=workload.expected_tests,
-        conflicts=0,
-        resolutions=0,
+        conflicts=result.metrics.get("conflict_rejections", 0.0),
+        resolutions=result.metrics.get("stale_redispatches", 0.0),
         per_agent_calls=runner.calls_by_agent,
         notes=notes,
     )

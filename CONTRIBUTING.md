@@ -213,7 +213,9 @@ Session complete → run the test suite → push if green → write the session 
 
 ## Current status
 
-The **kernel is functionally complete and well-tested**: **1672 tests pass**,
+The **kernel is functionally complete and well-tested**: **2035 tests pass**
+(plus three pre-existing, unrelated `TestIterSourceFiles` failures that predate
+Wave 20 and are tracked, not fixed, by it — see Known limitations),
 `mypy --strict mak cli` is clean, and `ruff check mak cli tests` is clean (the
 gate was extended to `cli/` in Wave 17 — see below). The concurrent
 shared-memory pipeline — the project's reason to exist — runs end-to-end and is
@@ -251,6 +253,8 @@ The module-by-module state:
 | **Cost & disk bounds, log fidelity** | **Complete (Wave 18)** — a run has a token ceiling and the store a retention policy; a no-op cannot be asserted about code that never existed; enrichment and ingestion stop paying for what they discard |
 | **Local LLM support** | **Complete (Wave 15)** — `local_api`/`ollama_api` transports, native context sizing, a parse→repair→retry loop, and an app mode (`cloud`/`local`/`hybrid`) that reaches the prompt with no API key at all |
 | **State preservation & truthful outcomes** | **Complete (Wave 19)** — a real commit transaction with a journal and restart recovery; the store reconciles with the working tree at startup instead of discarding human edits; audit commits use a private Git index; a run reports its *aggregate* outcome and teardown reports what the suite actually did; one owner per project |
+| `mak/semantic/` (read sets, stale reads, interface/registrar locking, contracts, cascade-on-the-graph, optional gates) | Complete (Wave 20) |
+| **Semantic conflict detection** | **Complete (Wave 20)** — every shape in PLANS §5's taxonomy is prevented or detected against a real MAK run, with a git-worktree comparison recorded (§5.2) |
 | `cli/` (interactive CLI app) | Complete |
 
 > ### ⚠️ The mental model to hold before contributing
@@ -524,6 +528,35 @@ it in **every** run, and never fewer tokens or more than zero conflicts.
   contended workload would show MAK's parallelism on the independent part and widen the
   token/correctness gap on the contended part. Extending the benchmark in those directions
   is an [open problem](#also-extend-the-benchmark).
+
+### Semantic conflict corpus (Wave 20)
+
+A second, separate benchmark: not tokens/time/accuracy on a shared workload, but
+whether each coordination model **catches** a semantic conflict at all.
+[`benchmark/semantic/`](benchmark/semantic/) seeds one scenario per shape in
+PLANS §5's taxonomy — two scripted edits, an oracle that only fails on the
+uncoordinated combination — and runs each through a real MAK session and
+through a worktree-shaped merge of the same two edits. Full mechanism,
+scripting details, and the false-positive/extra-call guarantees are in
+[§5.2](#52-semantic-conflicts-wave-20); the result:
+
+| shape | scenario | MAK | worktrees |
+|---|---|---|---|
+| 1 | stale read (write skew) | detected (commit) | missed |
+| 2 | signature change vs new call | detected (wave end) | missed |
+| 3 | behaviour change, same signature | missed / with `impact_tests`: detected | detected (CI tests) |
+| 4 | deletion / rename | detected (wave end) | missed |
+| 5 | override against a changed base | detected (wave end) | missed |
+| 6 | duplicate registration key | detected (commit) | detected (textual conflict) |
+| 7 | order-dependent table | **prevented** | detected (textual conflict) |
+| 8 | new required field vs new construction | detected (wave end) | missed |
+| 9 | duplicate implementation | detected (wave end) | missed |
+| 10 | out-of-store artifacts | not representable | not representable |
+
+```bash
+python benchmark/semantic/run_semantic.py            # markdown table
+python benchmark/semantic/run_semantic.py --json      # one JSON object per shape
+```
 
 ### Running it
 
@@ -1194,7 +1227,7 @@ A reader-writer lock per node, with three modes:
 |---|---|---|
 | `read` | unlimited | agent reads a symbol as context |
 | `write` | 1 (exclusive) | agent edits a symbol |
-| `intent_write` | multiple (compatible with reads, **excludes writers**) | declare a future write; deadlock-prevention signal |
+| `intent_write` | multiple (compatible with reads, **excludes writers**) | declare a future write; deadlock-prevention signal, and (Wave 20, §4.5) the hierarchy/registrar-append mode |
 
 The canonical conflict matrix lives in `conflicts.py` and is consumed by **both**
 `RWLock.can_acquire` *and* the `DeadlockDetector`, so the two can never disagree.
@@ -1268,6 +1301,50 @@ fallback is documented as the weaker of the two paths.
 
 Because the lease is held, `lock_table.clear()` is finally sound: holding it **is**
 the proof the prior owner is dead.
+
+### 4.5 Derived lock resources & the lock policy (Wave 20)
+
+Every request the scheduler makes, the session re-validates at commit, and the
+deadlock watchdog describes is now built by **one** function —
+`mak/scheduler/lock_policy.py::lock_requests(task, policy)` — so the three can
+never disagree about what a task is holding. With every `LockPolicy` flag off
+it returns exactly the pre-Wave-20 set (WRITE each target, READ each
+`context_node`), which is also what makes the flags a clean ablation switch for
+the scaling study (Wave 21).
+
+- **Interface/body split (`api_locks`).** `mak/lock_manager/resources.py` derives
+  two resource ids per node: `<id>#api` (its interface — signature, decorators,
+  return annotation, bases, fields, imports; whatever
+  `api_digest.api_fingerprint` renders) and the bare `<id>` (its body). A task
+  calling X takes READ on `X#api` (callees come from the pre-wave `DepGraph`,
+  §8); a task that declared a body-only edit (`changes_api=False`) takes only
+  `X`, so it runs beside X's callers instead of serializing with them the way a
+  single node-level lock always did. An undeclared task (`changes_api=None`,
+  the default) is conservative: WRITE on every target's `#api`, same as before
+  this wave.
+- **Intention locks (`intention_locks`).** A fragment write additionally takes
+  INTENT_WRITE on its bare file id, and a method/`class_body` write on its
+  `::class::` node too (`intention_parents`). A whole-file or whole-class write
+  asks for WRITE at that level, which conflicts with any INTENT_WRITE below it —
+  so a whole-file rewrite cannot start beside a fragment writer, while fragment
+  writers of the same file still run beside each other. This is what
+  `intent_write`'s multi-holder, writer-excluding semantics (§4.1) turn out to
+  be for in practice.
+- **Key-level registry locks (`registry_keys`).** A *registrar* function — one
+  whose body is a flat list of `callee("<literal>", …)` calls, detected
+  **structurally** by `mak/node_store/registrar.py`, never by name — is
+  commutative when every entry is keyed. A task appending to one takes
+  INTENT_WRITE on the node (co-holdable with other appenders) and WRITE on each
+  declared key as `<id>#key=<literal>` (`SubTask.registry_keys`). An *unkeyed*
+  list (a middleware chain, a priority list) is order-dependent and keeps the
+  plain node lock — see §5.2 for what happens to the entries themselves at
+  commit.
+- **Recovery and the deadlock watchdog both read the same policy.** `Scheduler`
+  takes an optional `lock_policy` and exposes `use_lock_policy` for
+  `from_persisted` to rebuild one after reading the graph back; `Session._run_heartbeat`'s
+  deadlock scan builds its wait-graph edges from `lock_requests` too, so a
+  waiting task's *declared* mode (e.g. INTENT_WRITE for a registrar appender) is
+  what the watchdog reasons about, not an assumed WRITE.
 
 ## 5. Conflict Detector
 
@@ -1381,6 +1458,341 @@ genuine breakage that must still be reported. Add to both when you touch a check
 > `symbol_edits`/`header_edits` scoped to the files the task touches (name-collision
 > and import checks are file-local). A task that collides with a batch peer already
 > committed ahead of it is rejected and retried.
+
+### 5.2 Semantic conflicts (Wave 20)
+
+Node-level write locks guarantee that **no two agents write the same AST node at
+the same time** — a *textual* guarantee, enforced by construction. They say
+nothing about two edits on *disjoint* nodes that are each correct alone and
+wrong together: a task builds on a sibling's return value while that sibling
+is rewritten underneath it, a signature changes under a call the plan never
+saw, two tasks each register the same key in a shared table. PLANS §5.1 had
+listed a cycle-free-dependency-graph check that nothing implemented, and three
+more shapes had no check at all. Wave 20 closes the gap across three layers —
+prevent at scheduling time, detect at commit and at wave end, resolve by
+re-dispatch or fix-up — all living in the new `mak/semantic/` package plus six
+new modules under `mak/conflict_detector/`.
+
+#### Prevention
+
+- **Read-set versioning (`mak/semantic/read_set.py`).** Before this wave, only
+  the planner's `context_nodes` were read-locked or tracked at all — everything
+  `_enrich_bundle` added on its own (same-file siblings, cross-file callers,
+  dependency outputs, §3.2) was invisible to the kernel, and a task could be
+  rewritten underneath a sibling with no way for the commit to know. A `ReadMark`
+  now records, for **every** context key a bundle carries, the node's committed
+  version and a **content digest** — the digest, not the version, is the
+  identity that matters, because a node that is uncommitted or retired-and-
+  recreated restarts at version 1 with different content (the classic ABA
+  problem). `build_read_set` derives the whole set structurally from the
+  enriched context and the per-layer attribution `TASK_DISPATCHED` already logs
+  (§3.2), so a layer added later is covered without anyone remembering to wire
+  it in. The set is captured on the dispatching thread immediately after
+  enrichment (`Session._record_read_set`) — commits happen on that same thread,
+  so nothing can advance the store between reading sources into the bundle and
+  stamping them — and persisted alongside the task graph (`Scheduler.annotations`)
+  so `--recover` does not lose it.
+- **Interface/body lock split, intention locks, key-level registry locks** —
+  see §4.5. Callers read-lock a callee's `#api`; a declared body-only writer
+  takes only the body and runs beside its callers; a whole-file/whole-class
+  write cannot start beside a fragment writer below it; a keyed registrar's
+  appenders co-hold it and each declared key locks separately.
+- **Declared contracts (`mak/planner/contracts.py`, `mak/semantic/contracts.py`).**
+  A task may declare, per target, the signature it will give it —
+  `contract: {node_id: "def f(a: int) -> R"}` — plus `changes_api` and
+  `api_targets` (§8 has the planner-schema side) and `registry_keys` (the keys
+  it will append, for the lock above). Every declaration is a promise the
+  kernel **enforces at commit, never trusts**: `Session._contracts_hold`
+  compares the committed source against `implementation_mismatch(contract,
+  source)`, which parses both to a canonical signature (name, parameters with
+  annotations and defaults, return annotation, async-ness, or a class's bases)
+  and refuses a drift with a note naming exactly what changed. A dependent is
+  shown its providers' (and its own) contracts as **layer 0** of its bundle
+  (`contract:<id>` context keys, rendered by `render_contract` with a role —
+  "you must implement this" vs. "build against this fixed signature") — before
+  the provider's code even exists.
+  With `semantic.contract_dispatch` on (opt-in, off by default), a dependency
+  edge whose provider fully declares a contract for every node it writes, and
+  whose lock set does not conflict with the dependent's, becomes **soft**
+  (`mak/semantic/contracts.py::soft_edges`, `DAG.soft_dependencies` — the DAG's
+  `newly_unblocked` treats a soft dependency as satisfied for dispatch, but
+  batch/topological ordering still respects it): the dependent is dispatched
+  against the contract while the provider is still being implemented, and its
+  commit is *parked* (below) until the provider's commits. If the provider
+  fails, the dependent fails with it rather than committing against an
+  interface that was never built.
+- **Plan validation reads the declarations too (`mak/planner/validation.py`,
+  P4).** With `PlanSemantics` supplied, `validate_plan` **relaxes** the edge
+  from a writer that declared a node body-only or narrowed its API change
+  elsewhere (`relaxed_dep` — the `#api` lock and the commit-time check now
+  carry that guarantee, so the edge only cost parallelism); **adds** an edge
+  from a task that declares an API change to every task whose description,
+  context or contract names that node (`declared_api_dep`) — the only way to
+  see a caller the reference graph cannot, because the call does not exist
+  yet; orders a class's structure writer (its `::class::` node or `__init__`)
+  before tasks writing its other members (`shared_structure`); and flags (never
+  silently merges) two tasks declaring the **same** registry key on one table
+  (`registry_key_collision`, ordered so the second would visibly overwrite the
+  first) or appending to an **ordered** (unkeyed) registrar at all
+  (`ordered_table` — order is meaning there, and no lock can choose it, so the
+  finding asks the plan to say where each entry belongs).
+
+#### Detection — at commit
+
+`Session._validate_and_commit` runs, in order: **(1)** the registrar merge
+(below), **(2)** read-set validation, **(3)** the structural checks (syntax,
+signatures, imports, name collisions, and now a **duplicate registry key**
+check), **(4)** the contract check, **(5)** interface enforcement. Any step
+can reject or defer the commit; nothing after it runs.
+
+- **Keyed-registrar reconciliation (`mak/node_store/registrar.py`,
+  `mak/semantic/registry_merge.py`).** A registrar is detected by *structure*
+  — an optional docstring, a prelude of simple assignments, a flat run of
+  `callee("<literal>", …)` statements, an optional `return`; placeholder
+  bodies (`pass`, `...`, `raise NotImplementedError`, or an empty local table
+  built and returned in the prelude) count as an empty table — never by the
+  name `_register_all`, so it generalizes to any project's wiring function.
+  Two appenders holding a table's INTENT_WRITE each return the table *as they
+  read it*, plus their own lines; committing either as-is would silently drop
+  the other's. `plan_merge` instead extracts what an agent **appended** to the
+  version it read (`appended_entries`) and replays exactly those entries onto
+  whatever the table holds **now** (`merge_append`) — a pure textual splice
+  after the last existing entry (or in place of the stub), so formatting and
+  comments survive. Anything that is not a pure keyed append — an edited or
+  removed entry, an unkeyed entry, a table that stopped being a registrar, or
+  a table that moved since the agent read it in a way an overwrite would lose
+  — cannot merge: the commit takes the node's plain WRITE lock instead
+  (waiting if another appender holds it) or is sent back with a fresh read if
+  even that would lose entries. `check_registry_keys`
+  (`mak/conflict_detector/registry_key_check.py`) then reports a key
+  registered twice **by this edit** (comparing against the table's *previous*
+  committed source, so pre-existing debt is not blamed on the task that
+  happened to touch the file) as a `registry_key` conflict — shape 6, and the
+  one place a kernel can do strictly better than a textual merge, which
+  applies both lines and lets the second silently win at runtime.
+- **Stale-read validation (`mak/semantic/stale.py`, D1/R1).** Every node in the
+  task's read set is compared, by digest, against what is committed now.
+  Nothing stale → proceed. Something stale → `classify` reads it as
+  `body_only` (the interface fingerprint is unchanged — and "interface"
+  here means *binding-level*: a node that only **gained** a name, a new
+  import, a new sibling helper, broke nobody, because nothing could have
+  depended on a name that did not exist; `mak/semantic/interface.py`'s
+  `changed_bindings` is what makes that distinction, replacing the coarser
+  "any fingerprint diff" rule), `api_change`, `deleted`, or `created` — and
+  whether the task's own staged code actually **references** anything that
+  changed (`_referenced`; an unreferenced change is free to accept, however it
+  changed). `semantic.stale_read` then decides:
+
+  | Policy | body-only | referenced API change |
+  |---|---|---|
+  | `accept_if_api_stable` | accept | re-dispatch |
+  | `revalidate` (default) | accept | re-verify the static checks against the *new* code; a parameter-shape-only change to a module-level function/constructor is accepted if they pass; ask the adjudicator if configured; otherwise re-dispatch |
+  | `redispatch` | re-dispatch (strict snapshot isolation) | re-dispatch |
+  | `reject` | accept | reject, like any other conflict |
+
+  A node the task only saw as an API digest (`read_api:`, past the dependency
+  context budget, §3.2) never re-dispatches on a body change — it was never
+  shown the body to begin with. **Every stale read is logged** (`STALE_READ`)
+  with the node, both versions, the change kind, whether it was referenced,
+  and the verdict — this is an acceptance criterion, not a debugging aid. A
+  node covered by a declared contract the task was built against is accepted
+  outright, whatever else changed about it: the contract, not the
+  implementation, is the authority the task answers to. A re-dispatch carries
+  a **bounded unified diff** of every blocking node (`retry_note`, R1) and
+  counts against the ordinary `max_attempts` budget with
+  `error_kind="stale_read"` — this is a semantic rebase done by the agent, at
+  the cost of one call, not a full attempt burned re-asking an identical
+  question.
+- **Interface enforcement (`mak/lock_manager/resources.py`, §4.5).** A task
+  that declared `changes_api=False` and then changed an *existing* binding
+  anyway is refused outright (its callers ran beside it on that promise). Any
+  other undeclared interface change needs `#api` WRITE: taken on the spot if
+  free (logged `API_ESCALATED(outcome=acquired)`); if a concurrent task holds
+  it as a reader, the **commit is parked**, not the agent re-run — the readers
+  will validate their own commits against whatever this one leaves behind, so
+  the writer only has to wait for none of them to still be mid-build.
+- **Parked commits.** A finished result that cannot commit *yet* — waiting on
+  a registrar's exclusive lock, on an `#api` reader, or on a contract-dispatch
+  provider — is parked (`Session._park`/`_resume_parked`, `COMMIT_DEFERRED`),
+  not re-dispatched: the agent's work was fine, only the timing was wrong, and
+  re-running it would spend a whole call and an attempt of the retry budget
+  to arrive at the same answer. Every batch completion retries every parked
+  result (`_resume_parked`); if every task still in flight is parked (nothing
+  can make progress), the run loop breaks the tie by releasing the
+  highest-id victim — re-gated on its dependencies if it was waiting on a
+  contract provider, re-dispatched with a note if it was waiting on a lock —
+  which is the one place a wait in this design can become a cycle at all
+  (parking is the only state where a task waits *while holding locks*).
+
+#### Detection — at wave end and optional gates
+
+`detect_cross_module_defects()` now runs four more whole-repository checks
+alongside the Wave 13 unresolved-import/arity one, all reading the touched
+files through `mak/semantic/module_index.py::ModuleIndex` (one shared
+import-resolution and class-lookup layer, built on the same *strict*
+`resolve_module_file` §8 uses, so the checks cannot disagree with each other
+about what a module binds):
+
+- **`attribute_check.py`** — `mod.name` where `mod` resolves to an in-repo
+  module that no longer binds `name` (shape 4: a rename or deletion caught
+  through a module alias, which the from-import check never reads). Skips a
+  module that binds names dynamically (`__getattr__`, a star import,
+  `globals()`/`exec`), a rebound local, and anything not in `Load` context.
+- **`override_check.py`** — an override that cannot accept what its base
+  method accepts (shape 5), checked positionally and by keyword against the
+  base's `Signature` (shared with `signature_check.py`'s `signature_for`).
+  Skips constructors and other non-Liskov dunders, a static/class/instance
+  receiver mismatch, a renamed positional-or-keyword parameter, and any base
+  that does not resolve in-repo.
+- **`constructor_check.py`** — a call to an in-repo class whose constructor
+  rejects it (shape 8): an explicit `__init__` (own or inherited), or a
+  `@dataclass`'s fields (bases first, `ClassVar`/`field(init=False)` excluded,
+  defaults and `kw_only`/`KW_ONLY` read). Skips any class with a metaclass, a
+  `__new__`, multiple resolved bases, or an unrecognised decorator.
+- **`cycle_check.py`** — the PLANS §5.1 check that never existed: a **new**
+  module-level import cycle among files the wave touched, found via an
+  iterative Tarjan SCC over the module-level import graph and reported only
+  when it contains a `from`-import edge (a plain `import pkg.mod` cycle
+  usually works at runtime and is left alone). Function-local and
+  `TYPE_CHECKING`-guarded imports are excluded — they cannot deadlock module
+  initialisation.
+- **`duplicate_check.py`** — the same top-level function, created by
+  **different tasks** in different files this wave, with an equivalent body
+  once docstrings are dropped (shape 9 — two agents each writing a private
+  `_normalize_email`). Conventional names (`main`, `run`, `test*`, dunders)
+  are never reported.
+
+Every check above (and the Wave 13 one) also runs against the **pre-wave**
+state, and only a defect *absent* there is reported — pre-existing debt is
+never blamed on the wave that merely touched the file. Findings are cached per
+store `generation`, since the cascade loop asks twice for the same state.
+
+`detect_cascade_tasks()` — the same entry point as before, now assembling from
+three sources instead of two, folded into one task per node
+(`_merge_fixups`):
+
+- **cascade, rewritten onto the real graph (`mak/semantic/cascade_graph.py`,
+  R3).** The old check compared each committed node's *first function
+  signature* before/after and then regex-matched `symbol` across other
+  files — blind to same-file callers, to a deleted symbol (there was no "new"
+  signature to compare), and to anything a node id didn't map onto
+  one-to-one. This wave diffs **symbols**, not node ids
+  (`mak/semantic/symbols.py::diff_symbols` — a per-file before/after table that
+  sees a signature change, a deletion, or a body change the same way whether
+  the file is stored as fragments or one whole-file node), and walks the
+  **reference graph** for callers: the pre-wave graph (so a deleted symbol's
+  existing callers are still found) and the graph rebuilt after the wave (so a
+  caller the wave itself added is found too), same-file callers included. A
+  caller whose calls are *provably* compatible with the new signature (the
+  shared `check_call`) is left alone rather than given needless fix-up work. A
+  deleted symbol's fix-up description names a same-bodied symbol the wave
+  added instead, when one exists, as a rename hint.
+- **cross-module defects**, as before plus the four new checks above.
+- **optional gates (`mak/semantic/gates.py`, D3/D4/D6), all off by default and
+  none able to fail a wave** — a finding becomes a fix-up task exactly like
+  the others, and a gate whose tool is missing or times out is logged
+  (`GATE_FINDING`) and skipped, because its infrastructure failing says
+  nothing about the wave's code:
+  - **`type_gate.py`** diffs pyright/mypy diagnostics (`semantic.type_check`)
+    over the touched files plus their static importers against a
+    **baseline** taken once at `initialize()`, so a codebase that was never
+    type-clean is judged only on what the wave *introduced*. Discovery
+    mirrors the venv-`ruff` rule (§3.4): the binary beside the running
+    interpreter first, then `PATH`.
+  - **`impact_tests.py`** (`semantic.impact_tests`) selects the tests whose
+    static import closure reaches a touched module, runs them on the wave's
+    end state and on the pre-wave state (both materialized without git via
+    `mak/semantic/overlay.py`, which copies the work dir with chosen files
+    substituted or removed), and for each **new** failure attributes it to
+    the smallest task or task **pair** that reproduces it — first a single
+    task's commits alone, then every pair, up to
+    `semantic.impact_max_overlays` overlays; whatever the budget cannot
+    narrow is blamed on every task that touched an importer. A test passing
+    with task A alone and task B alone and failing with both is the standard
+    research definition of a semantic merge conflict, and this is the one
+    detector that can actually evaluate it, because any subset of a wave's
+    commits is assemblable from the store without git. `WaveView.subset`
+    rebuilds "pre-wave plus only these tasks' commits" from the per-commit
+    fragment log kept during the run (`_wave_fragments_before`,
+    `_wave_commit_log`), not from files — a whole-file commit supersedes the
+    fragments before it in the rebuild exactly as `commit_node` does live.
+  - **`import_smoke.py`** (`semantic.import_smoke`) imports every touched
+    module in a fresh subprocess, before and after the wave, and reports one
+    that stopped importing cleanly — the parse gate proves a module is valid
+    Python, not that it can be *imported* (a name that fails at import time,
+    a module-level call into code another task changed, a cycle that only
+    bites on first import).
+  - **`adjudicator.py`** (`semantic.adjudicator: "<backend>:<model>"`, D7) asks
+    a cheap model one question — "does B's use of X still hold under A's
+    change?" — for a stale read the static checks in `revalidate` could not
+    settle, budgeted (`adjudicator_max_calls`) and logged (`ADJUDICATION`)
+    per call. It can only ever turn an uncertain re-dispatch into an accept;
+    a "no", an unparsed answer, an exhausted budget, or a call failure all
+    leave the re-dispatch standing, and it is never consulted once a static
+    check has already found a defect.
+
+#### Resolution
+
+- **R1** is the stale-read re-dispatch above.
+- **R2** — every fix-up task, cross-module, cascade, or gate-sourced, now
+  names the **task(s)** whose work met in the defect and (for the
+  cross-module case, `_pair_context`) carries a **bounded diff of both
+  sides** of the wave, not just the defining module's current source. Before
+  this the fix-up only got the two files as they stand; now it is told what
+  each side actually changed and by whom.
+- **R3** is cascade on the real graph, above.
+- **R4** (revert as an alternative to a fix-up) was scoped in the wave's
+  design notes but not built — the store already keeps ≥2 versions per node
+  (§2), so `revert_node` is available to a front end that wants to offer it;
+  nothing in the kernel calls it automatically today.
+
+#### The corpus (`benchmark/semantic/`, 20.1)
+
+One scenario per shape 1–9 (shape 10 — config, SQL, docs — is not
+representable: those files are not nodes, so nothing here covers them, and
+the table says so explicitly). Each scenario is a tiny project, two scripted
+edits A and B (`ScriptedAgent`, with a timing hook that holds B's first call
+until A's commit is on record — but only if the kernel actually dispatched
+them concurrently; if it serialized them there is nothing to wait for), and
+an oracle whose contract is checked by `evaluate.validate`: it must pass on
+the base project, on A alone, and on B alone, and **fail** on the naive
+combination (a three-way `git merge-file --union`, B's side first).
+`evaluate.run_mak` drives a real `Session`; `evaluate.run_worktrees` merges
+the two single-edit states the way a worktree agent would leave them (text
+spliced by symbol span, not a full-file rewrite, so the merge sees only what
+each edit actually changed). Measured by `benchmark/semantic/run_semantic.py`:
+
+| shape | scenario | MAK | worktrees | false positives | extra calls |
+|---|---|---|---|---|---|
+| 1 | stale read (write skew) | detected (commit) | missed | 0 | 1 |
+| 2 | signature change vs new call | detected (wave end) | missed | 0 | 0 |
+| 3 | behaviour change, same signature | missed / with `impact_tests`: detected (wave end) | detected (CI tests) | 0 | 0 |
+| 4 | deletion / rename | detected (wave end) | missed | 0 | 0 |
+| 5 | override against a changed base | detected (wave end) | missed | 0 | 0 |
+| 6 | duplicate registration key | detected (commit) | detected (textual conflict) | 0 | 1 |
+| 7 | order-dependent table | **prevented** | detected (textual conflict) | 0 | 0 |
+| 8 | new required field vs new construction | detected (wave end) | missed | 0 | 0 |
+| 9 | duplicate implementation | detected (wave end) | missed | 0 | 0 |
+| 10 | out-of-store artifacts | not representable | not representable | — | — |
+
+Every shape is prevented or detected under MAK (shape 3 needs the
+`impact_tests` gate — a behaviour change behind an unchanged signature is
+invisible to every static check by construction); worktrees miss six of nine
+because a textual merge has no way to see a semantic one. Zero false
+positives across the corpus's single-edit runs (a rejection, re-dispatch, or
+fix-up on a *lone correct edit* would mean a check was firing on nothing),
+and at most one extra agent call per detected shape — the cost of the one
+re-dispatch stale-read detection needs (shape 1); everything caught at wave
+end costs a fix-up wave instead, which is reviewed like any other cascade,
+not silently spent. `tests/test_semantic_corpus.py` is the standing gate on
+both the table and the corpus's own validity contract.
+
+Separately, `tests/test_wave20_acceptance.py` runs the four benchmark
+templates (§Benchmark) through a real (mocked) MAK session and asserts **zero**
+rejections, stale-read re-dispatches, or fix-up tasks on a clean run — the
+false-positive guard on real-shaped work, not just the seeded corpus — and
+that Template 3/4 wall-clock with the interface/body split on is not worse
+than with every Wave 20 lock flag off.
 
 ## 6. Scheduler
 
@@ -2059,7 +2471,27 @@ resolution are the planner's half of this wave — see §8.
       it would violate a `parse_plan` invariant, e.g. create a second whole-file
       owner for one file.
   `PlanFinding.kind` is one of `missing_dep` / `spurious_dep` / `unknown_node` /
-  `corrected_node` / `context_dropped`.
+  `corrected_node` / `context_dropped` / and, since Wave 20 (§5.2, `PlanSemantics`),
+  `relaxed_dep` / `declared_api_dep` / `shared_structure` / `ordered_table` /
+  `registry_key_collision`.
+- **`contracts.py` (Wave 20).** `parse_contract(text)` accepts the natural
+  spellings a planner writes (`"def f(a: int) -> R"`, with or without a
+  trailing `:`/`...`) and normalizes to a canonical signature; `contract_stub`
+  renders it as a parseable `def f(a: int) -> R: ...` for use as a signature
+  authority before the implementation exists; `implementation_mismatch(text,
+  source)` compares a committed source's actual signature to the declared one
+  (name, parameters with annotations/defaults, return, async-ness, or a
+  class's bases) and returns why they differ, or `None`. `_coerce_subtask`
+  (`planner.py`) validates the four declaration fields at parse time — an
+  `api_targets`/`contract`/`registry_keys` entry naming a node the task does
+  not target, a contract that does not parse or names the wrong symbol, or
+  `changes_api: false` alongside a contract, all raise `ValueError` so the
+  retry loop feeds the reason back to the model rather than letting an
+  unhonourable promise reach the kernel. `changes_api` left `null` while
+  `api_targets`/`contract` are set is read as declaring `true` — naming an API
+  target *is* declaring a change. `mak/semantic/contracts.py` is the
+  session-side use of a parsed contract (which edges may soften, what a task
+  should be shown) — see §5.2, §10.
 - **Config-gated strategy and self-critique** (Wave 10, `Planner`, `planner.py`) —
   two opt-in refinements on top of the default one-shot `decompose`, both off by
   default so nothing about the default LLM call count changes:
@@ -2211,14 +2643,23 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   The pool is the healthy set from the startup preflight (§7.2); the planner prompt
   also lists the configured agent types so the model can pick one directly.
 - **run** — dispatch lock-satisfiable ready tasks onto the thread pool (enriching
-  each bundle with write/read source via the four-layer enrichment in §3.2); as
-  results arrive, **stage the source each agent returned** (`new_sources`, within the
-  task's grant) via `put_node`; batch concurrently-completing results; gate staged
-  fragments through the conflict detector; **transactionally** commit and reconstruct;
-  write a git audit commit on success. A node the agent claims it changed but
-  provides no source for cannot be committed, so a misbehaving agent fails its task
-  cleanly rather than crashing the commit. During each commit, `_wave_committed`
-  records `(old_source, new_source)` for every node committed this wave.
+  each bundle with a layer 0 of declared contracts plus the write/read source via
+  the four-layer enrichment in §3.2 — and, immediately after enrichment, capturing
+  its read set, §5.2); as results arrive, **stage the source each agent returned**
+  (`new_sources`, within the task's grant) via `put_node`; batch concurrently-
+  completing results; run the Wave 20 commit pipeline (registrar reconciliation →
+  read-set validation → the conflict detector → contract check → interface
+  enforcement, §5.2) ahead of the parse/signature/import/collision checks it wraps;
+  **transactionally** commit and reconstruct; write a git audit commit on success. A
+  node the agent claims it changed but provides no source for cannot be committed,
+  so a misbehaving agent fails its task cleanly rather than crashing the commit.
+  During each commit, `_wave_committed` records `(old_source, new_source)` for every
+  node committed this wave — and, since Wave 20, `(old_source, None)` for a fragment
+  a whole-file commit **superseded**, so post-wave analysis sees a deletion the old
+  code had no way to represent. `_wave_file_before` / `_wave_file_writers` /
+  `_wave_node_writer` snapshot each touched file's pre-wave state and record which
+  task(s) wrote it, and `_wave_fragments_before` / `_wave_commit_log` keep the
+  per-commit fragment history the optional gates rebuild subset states from (§5.2).
 
   **Every attempt is diagnosable from the log alone.** `AGENT_RESULT` records what
   came back (task, attempt, success, granted ids, returned ids, per-id source
@@ -2233,30 +2674,75 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   success with no changes on a file that is still not valid Python, or — the
   remaining catch-all — success with no sources and no `no_changes_required`
   assertion, which is also exactly what a truncated reply looks like.
-- **cascade detection** (`detect_cascade_tasks()`) — called after every `run()` wave.
-  Compares old vs new AST signatures for every node committed in `_wave_committed`.
-  When a function's signature changed, it scans all other stored nodes for callers
-  (cross-file, word-boundary search) and generates `SubTask`s for those callers to
-  update. The CLI presents these to the user as a **CASCADE WAVE** (via
-  `display_plan_for_review` with a banner header); if approved, `install_plan` is
-  called and `run()` executes another wave. The loop repeats until no cascades
-  remain or the user declines. If the planner's CASCADE PREVENTION worked, this
-  path fires zero times. Each generated fix-up task's id is a sanitized slug
-  **plus a digest of the pre-sanitization subject** (`_fixup_task_id`, Wave 17):
-  `[^a-zA-Z0-9]` sanitization is lossy — `a/b.py` and `a-b.py` both collapse to
-  `a_b_py` — and `DAG` rejects a duplicate task id outright, so two unrelated
-  files whose names happened to sanitize alike used to take down the *entire*
+- **declared contracts, read sets, stale reads, registrars and parked commits
+  (Wave 20)** — the prevention/detection/resolution machinery described in §5.2
+  lives across `mak/semantic/*` and is wired into exactly the two points above:
+  bundle enrichment (layer 0 + read-set capture, on the dispatching thread) and
+  the commit pipeline (registrar merge → stale-read validation → contract check
+  → interface enforcement, before the structural checks). A commit that cannot
+  proceed **yet** — not wrong, just early — is **parked**
+  (`_park`/`_resume_parked`/`_all_in_flight_parked`/`_release_parked_victim`)
+  rather than sent back to the agent; every batch completion retries the parked
+  set, and a tie among only-parked in-flight tasks is broken by releasing the
+  highest-id one (re-gated on its dependencies via the new
+  `Scheduler.wait_for_dependencies` if it was waiting on a contract provider,
+  re-dispatched with a note otherwise — this is the one place a wait in this
+  design can become a cycle, because parking is the only state where a task
+  waits *while holding locks*). `_granted` records the lock **mode** each task
+  was actually given per node (WRITE vs. the co-holdable INTENT_WRITE a
+  registrar appender gets), so `_release_lock` and the commit-time
+  `holds_all` re-validation release/check the mode a task really holds instead
+  of assuming WRITE — the same reasoning that gave every lock request one
+  shared builder in §4.5.
+- **cascade detection** (`detect_cascade_tasks()`) — called after every `run()`
+  wave, now assembling from **three** sources folded into one task per node
+  (`_merge_fixups`, §5.2): cascade, cross-module defects, and the optional
+  gates. **Cascade itself was rewritten onto the real reference graph in Wave
+  20** — the AST-signature-diff-plus-regex approach described here before
+  missed same-file callers, deleted symbols (there was no "new" signature to
+  diff against), and anything a node id did not map onto one-to-one. It now
+  diffs **symbols** across the wave (`mak/semantic/symbols.py::diff_symbols`)
+  and walks the pre-wave **and** post-wave reference graphs for callers,
+  skipping one whose calls are provably compatible with the new signature
+  (§5.2 has the full mechanism). The CLI presents the result to the user as a
+  **CASCADE WAVE** (via `display_plan_for_review` with a banner header); if
+  approved, `install_plan` is called and `run()` executes another wave. The
+  loop repeats until no cascades remain or the user declines. If the
+  planner's CASCADE PREVENTION worked, this path fires zero times. Each
+  generated fix-up task's id is a sanitized slug **plus a digest of the
+  pre-sanitization subject** (`_fixup_task_id`, Wave 17): `[^a-zA-Z0-9]`
+  sanitization is lossy — `a/b.py` and `a-b.py` both collapse to `a_b_py` —
+  and `DAG` rejects a duplicate task id outright, so two unrelated files
+  whose names happened to sanitize alike used to take down the *entire*
   cascade wave over a naming coincidence, not a real conflict.
-- **cross-module defects** (`detect_cross_module_defects()`, Wave 13) — carried by
-  the same call. A wave that creates two modules which disagree about each other's
-  API changed no existing signature, so the comparison above sees nothing, yet the
-  code is broken exactly as if it had: the module both parses and imports fine, and
-  only fails when the call is reached. The session assembles the current source of
-  every file in the store, scopes the check to files with a node in
-  `_wave_committed`, logs each defect as `CONFLICT_DETECTED`, and turns each
-  offending file into an `api_fix_<file>` fix-up `SubTask` (targeting that file's
-  committed nodes, with the defining modules as context) appended to the cascade
-  list — so both classes of breakage share one review flow rather than needing two.
+- **cross-module defects** (`detect_cross_module_defects()`, Wave 13, extended
+  Wave 20) — carried by the same call. A wave that creates two modules which
+  disagree about each other's API changed no existing signature, so the
+  cascade comparison above sees nothing, yet the code is broken exactly as if
+  it had. Five checks run now, not one — the Wave 13 unresolved-import/arity
+  check plus `attribute_check` / `override_check` / `constructor_check` /
+  `cycle_check` / `duplicate_check` (§5.2) — all sharing one `ModuleIndex`
+  (`mak/conflict_detector/module_index.py`) for import resolution and class
+  lookup, and all run against the **pre-wave** state too so only a defect the
+  wave introduced is reported. The session assembles the current (and, for
+  the baseline, the pre-wave) source of every relevant file, scopes to files
+  touched this wave, logs each defect as `CONFLICT_DETECTED`, and turns each
+  offending file into an `api_fix_<file>` fix-up `SubTask` — now carrying a
+  bounded diff of *both* sides and naming the task(s) behind each
+  (`_pair_context`, R2) — appended to the cascade list, so every class of
+  breakage shares one review flow. Both this and cascade cache their result
+  per store `generation`, since the cascade loop asks twice for the same
+  state.
+- **optional heavy gates** (`mak/semantic/gates.py`, Wave 20, §5.2) — a fourth
+  source of fix-up work, all off by default: a type-check diagnostic diff
+  against a baseline taken at `initialize()` (`_take_gate_baseline`), impacted
+  tests with pairwise attribution, and an import smoke test. None can fail a
+  wave; a gate whose tool is missing is logged (`GATE_FINDING`) and skipped.
+  An optional LLM adjudicator (`mak/semantic/adjudicator.py`) is installed per
+  wave (`_install_adjudicator`, re-budgeted each `install_plan`) and consulted
+  only from inside stale-read validation for a case the static checks
+  couldn't settle — it is not a fifth gate, it never generates a fix-up task
+  on its own.
 - **the cascade loop itself** lives in `mak/cascade.py` (Wave 16), not in a front
   end. `run_cascade_waves(session, approve, announce=...)` drives detect → announce
   → approve → install → run until nothing remains, the approver declines, or
@@ -2499,6 +2985,11 @@ Robustness properties worth knowing:
   across every attempt from the `TASK_DISPATCHED` path (§3.2). A wave whose mean
   context is near zero produced its results without being shown the code, which is
   worth knowing before trusting them.
+  Wave 20 adds `stale_reads` and `stale_redispatches` — every stale read found
+  during commit validation (§5.2), and how many of them a re-dispatch was
+  needed for; the difference between the two is how many the kernel settled
+  on its own (accept, or a re-verified shape-only change) without spending an
+  agent call at all.
 - **Token accounting is the session's own, not scraped from an SDK (Wave 17).**
   `Session.token_usage` / `Session.total_tokens` sum what each provider actually
   reported on its own response: `_agent_usage` accumulates `TaskResult.usage` as
@@ -2620,6 +3111,24 @@ node_store:
     - "**/.mypy_cache/**"
     - "**/.pytest_cache/**"
     - "**/site-packages/**"
+
+# Semantic conflicts (Wave 20, §5.2) — every setting is optional; the values
+# below are the defaults. All four locking flags default *on*; every gate
+# defaults *off*.
+# semantic:
+#   stale_read: "revalidate"    # accept_if_api_stable | revalidate | redispatch | reject
+#   api_locks: true             # split each node's lock into #api and body (§4.5)
+#   intention_locks: true       # INTENT_WRITE on a fragment's file/class (§4.5)
+#   registry_keys: true         # key-level locks + commutative append merge (§4.5)
+#   contract_dispatch: false    # dispatch a dependent against a fully-declared
+                                # contract instead of waiting for the implementation
+#   type_check: "off"           # off | pyright | mypy — diagnostic diff gate (D3)
+#   impact_tests: "off"         # off | on — pairwise-attributed impacted tests (D4)
+#   import_smoke: "off"         # off | on — import every touched module fresh (D6)
+#   adjudicator: "off"          # off | "<backend>:<model>" — LLM tie-breaker (D7)
+#   adjudicator_max_calls: 5
+#   gate_timeout_s: 300
+#   impact_max_overlays: 12     # bounds how many subset states D4 may build
 ```
 
 Rules and behaviors:
@@ -2752,6 +3261,28 @@ Rules and behaviors:
   that ignores them, and rejects `local_api` **without** a `base_url` — MAK
   never guesses a port for a local server, so the message names Ollama's
   OpenAI-compat default (`http://localhost:11434/v1`) as the likely fix.
+- **`semantic:` (Wave 20, §5.2, §4.5).** Parsed by `_parse_semantic` into
+  `SemanticConfig`. `stale_read` and `type_check` are each validated against a
+  fixed enum at load time (`_require_choice` / a direct membership check), so
+  a typo fails before a run starts rather than acting as `revalidate`/`off`
+  silently. `impact_tests` and `import_smoke` accept a YAML boolean or the
+  literal strings `"on"`/`"off"` (`_on_off`) — the gates read as feature
+  switches, not booleans, in the file. `adjudicator` is `"off"` (or unset) for
+  none, otherwise `"<backend>:<model>"` with the backend checked against the
+  same four planner backends (`_parse_adjudicator`); `Session._configured_adjudicator_llm`
+  builds it through `build_planner_llm` (§8) exactly like a `PlannerLLM`, so a
+  local adjudicator (`ollama:qwen2.5-coder:14b`) needs no extra plumbing.
+  `adjudicator_max_calls` and `impact_max_overlays` must not be negative and
+  `gate_timeout_s` must be positive, or `ConfigError` is raised. Every
+  locking flag (`api_locks`/`intention_locks`/`registry_keys`) and
+  `contract_dispatch` is a plain `_as_bool`. Every gate is **off** by default
+  because none of them are free — a subprocess per touched module, several
+  pytest runs, a model call — and every locking flag is **on** by default
+  because none of them cost anything the pre-Wave-20 lock model did not
+  already pay for. `Session(gate_runner=..., adjudicator_llm=...)` accepts
+  both the gate subprocess runner and the adjudicator's `PlannerLLM` as
+  constructor overrides, which is how the whole subsystem is testable with
+  neither a real tool on `PATH` nor a real API key (`tests/semantic/`).
 
 ## 12. Command-line interface
 
@@ -3745,6 +4276,36 @@ here so contributors don't mistake them for bugs:
   entry is a few dozen bytes and keeping it is what stops `gc` treating the
   directory as an orphan; a store with an extremely high symbol churn would
   accumulate them. No sweep exists for this yet.
+- **Behaviour changes behind an unchanged signature need a gate (Wave 20, D5).**
+  A function that starts returning `None` instead of raising, or reorders a
+  list, or switches units, is invisible to every static check in §5.2 — the
+  interface fingerprint is unchanged by construction. `semantic.impact_tests`
+  catches it (that is exactly what shape 3 in the corpus needs), but it is off
+  by default because it runs the project's own test suite in overlay
+  subprocesses. `mak/semantic/overlay.py` materializing subset states makes
+  it cheap enough to try, but a proper differential-property-test gate (the
+  wave's own design notes called this D5 and scoped it out) is still open.
+- **Impacted-test selection is static, not coverage-driven (Wave 20).** The
+  research definition calls for `coverage.py` dynamic contexts mapping test →
+  node once at `initialize()`; `mak/semantic/impact_tests.py::select_tests`
+  approximates it with the static import graph instead (a test file is
+  selected when its import closure reaches a touched module). This is a
+  superset of the coverage-based selection in the ordinary case and a
+  reasonable approximation everywhere else, but a test that reaches a touched
+  module only through late binding or dependency injection would be missed.
+- **The new static checks (attribute/override/constructor/cycle/duplicate,
+  §5.2) inherit signature_check's precision-over-recall contract, deliberately.**
+  Each skips a call through an untyped receiver, a class with a metaclass or an
+  unrecognised decorator, multiple resolved bases, and anything a module binds
+  dynamically — the same class of gap §5.1 already documents and accepts for
+  the exact same reason: a false positive costs a whole fix-up task, a missed
+  one costs nothing the test suite (or, now, the optional gates) would not also
+  catch.
+- **Three pre-existing `TestIterSourceFiles` failures** in
+  `tests/node_store/test_ingestion.py::test_matches_the_glob_it_replaces`
+  predate Wave 20 (introduced by the `.makignore` work, one commit before it)
+  and are out of this wave's scope; they are unrelated to semantic conflicts
+  and left for whoever picks up ingestion glob matching next.
 
 ## Good first contributions
 
@@ -4070,6 +4631,49 @@ text promised a transactional commit that "never diverges" and a teardown that
 gates a push, and the code delivered neither. Those paragraphs now say what the
 tests prove. The gates closed at 1672 tests, `mypy --strict mak cli` and
 `ruff check mak cli tests` clean.
+
+**Wave 20** is the first of the project's research track (TASKS.md's Waves
+20–22 — evidence for the shared-memory thesis, not a user feature) and closes
+the correctness gap the thesis has to survive first: node-level locks rule out
+textual conflicts by construction, but PLANS §5.1 had listed a cycle-detection
+check nothing implemented and named nine more semantic shapes with no check at
+all, several of them invisible to the kernel for a *structural* reason —
+only the planner's `context_nodes` were ever version-tracked, so anything
+`_enrich_bundle` added on its own (three of the five layers, §3.2) could be
+rewritten under a task with no way for the commit to know. Fourteen steps,
+leaving the tree green after each: read-set versioning first (so every later
+step has something to validate against), then the lock-resource split and the
+planner-schema declarations it needs, the registrar module, stale-read
+validation and its retry note, commit-time interface enforcement, six new
+static checks, plan validation reading the declarations, declared-contract
+dispatch, cascade rebuilt on the real reference graph, the four optional
+gates, the seeded corpus, and finally the acceptance pass and this
+documentation. Every step is a module or a session method with a name in
+§4.5/§5.2/§8/§10/§11 above, so it is not repeated here; three decisions are
+worth recording because they generalize past this wave. **A stale read's
+identity is a content digest, never a version number** — a node that is
+uncommitted or retired-and-recreated restarts at version 1 with different
+content (the ABA problem a version-only check would miss silently).
+**"Interface changed" means an existing binding was removed or re-bound, not
+any text diff** — a node that only *gained* a name broke nobody, and the
+old rule (any fingerprint diff) would have re-dispatched every task that
+added a sibling helper next to the one it was reading. And **a commit that
+cannot proceed *yet* is parked, never re-run**: re-dispatching a finished,
+correct result to wait out a lock would spend a whole agent call and an
+attempt of the retry budget to arrive at the same answer, so §10's parked-
+commit machinery exists specifically to not do that, and the one place a
+wait in this design can become a cycle (parking is the only state where a
+task waits *while holding locks*) is broken the same way the deadlock
+watchdog breaks any other cycle — release the youngest, let the rest
+resolve. The corpus (§5.2) is the wave's own acceptance evidence: every one
+of PLANS §5's nine representable shapes is prevented or detected under MAK,
+against a git-worktree comparison run on the identical two edits, with zero
+false positives on either side's single-edit runs and at most one extra agent
+call for the shapes that need one. The gates closed at 2035 tests (plus three
+pre-existing, unrelated `TestIterSourceFiles` failures — see Known
+limitations — that this wave found already failing on `main` and left alone,
+rather than fix something outside its own scope), `mypy --strict mak` and
+`ruff check mak tests` clean.
 
 **Wave 15** picked up the top-priority item Waves 17/18's security-and-robustness
 audit had temporarily reordered around — local LLM support (§7.7, §8, §12.2, §14)

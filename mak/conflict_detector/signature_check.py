@@ -162,6 +162,22 @@ def _build_signature(
     )
 
 
+def signature_for(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, *, in_class: bool
+) -> Signature | None:
+    """Return one definition's ``Signature``, or None when it is unknowable.
+
+    The public face of the rules ``extract_signatures`` applies to a whole
+    source: an unrecognised decorator makes the shape unknowable, and a
+    method's implicit receiver is stripped. Shared so the override and
+    constructor checks read a definition exactly the way this module does.
+    """
+    receiver = _receiver_of(node, in_class=in_class)
+    if receiver is None:
+        return None
+    return _build_signature(node, receiver=receiver, is_method=in_class)
+
+
 def extract_signatures(source: str) -> dict[str, Signature]:
     """Extract a ``Signature`` per function/method defined in ``source``.
 

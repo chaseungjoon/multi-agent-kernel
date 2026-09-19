@@ -23,8 +23,10 @@ from typing import Protocol
 
 from mak.core.atomic import write_text_atomic
 from mak.core.exceptions import SchedulingError
+from mak.core.task_codec import subtask_from_dict, subtask_to_dict
 from mak.core.types import LockMode, NodeId, SubTask
 from mak.scheduler.dag import DAG
+from mak.scheduler.lock_policy import LEGACY_POLICY, LockPolicy, lock_requests
 
 
 class LockManager(Protocol):
@@ -74,6 +76,7 @@ class Scheduler:
         registry: AdapterRegistryLike,
         persist_path: Path | None = None,
         max_concurrent: int | None = None,
+        lock_policy: LockPolicy | None = None,
     ) -> None:
         self._dag = dag
         self._lock_manager = lock_manager
@@ -81,9 +84,15 @@ class Scheduler:
         self._registry = registry
         self._persist_path = persist_path
         self._max_concurrent = max_concurrent
+        self._lock_policy = lock_policy or LEGACY_POLICY
 
         self._dispatched: set[str] = set()
         self.ready_queue: list[SubTask] = list(dag.newly_unblocked())
+        # Session-owned state that must survive a crash alongside the DAG — the
+        # per-task read sets (Wave 20). Opaque to the scheduler: it only
+        # persists and restores it, so recovery never needs a second file that
+        # could disagree with this one about which tasks exist.
+        self.annotations: dict[str, object] = {}
         self._save()
 
     @property
@@ -96,24 +105,24 @@ class Scheduler:
         """The underlying dependency graph (read-only access to task state)."""
         return self._dag
 
-    def _lock_requests(self, task: SubTask) -> list[tuple[NodeId, LockMode]]:
-        """Build the lock requests for a task: WRITE targets + READ context.
+    @property
+    def lock_policy(self) -> LockPolicy:
+        """The policy this scheduler builds lock requests with."""
+        return self._lock_policy
 
-        Each target node is acquired WRITE (exclusive). Each ``context_node`` the
-        task only reads is acquired READ, so a concurrent task cannot be rewriting
-        that node while this one reads it as context. A node that is both a target
-        and a context node is requested WRITE only (the write lock subsumes the
-        read), so the same node is never double-requested in one acquisition.
+    def use_lock_policy(self, policy: LockPolicy) -> None:
+        """Replace the lock policy (recovery builds it after the DAG is read)."""
+        self._lock_policy = policy
+
+    def _lock_requests(self, task: SubTask) -> list[tuple[NodeId, LockMode]]:
+        """Build the lock requests for a task (see ``lock_policy.lock_requests``).
+
+        Under the legacy policy this is WRITE on each target and READ on each
+        ``context_node``, so a concurrent task cannot be rewriting a node this
+        one reads as context; a node that is both is requested WRITE only. The
+        Wave 20 flags add interface, intention and registry-key resources.
         """
-        targets = set(task.target_nodes)
-        requests: list[tuple[NodeId, LockMode]] = [
-            (node_id, LockMode.WRITE) for node_id in task.target_nodes
-        ]
-        for node_id in task.context_nodes:
-            if node_id not in targets:
-                requests.append((node_id, LockMode.READ))
-                targets.add(node_id)  # dedupe repeated context ids too
-        return requests
+        return lock_requests(task, self._lock_policy)
 
     def _free_slots(self) -> int | None:
         """Concurrency budget remaining this tick, or ``None`` when unbounded."""
@@ -182,6 +191,21 @@ class Scheduler:
                 self.ready_queue.append(task)
         self._save()
 
+    def wait_for_dependencies(self, task_id: str) -> None:
+        """Release a dispatched task's locks and re-gate it on its dependencies.
+
+        The counterpart of ``on_task_failed(requeue=True)`` for a task that was
+        dispatched ahead of a soft (contract) dependency and must now wait for
+        it the ordinary way: it leaves the in-flight set and the ready queue,
+        and the DAG re-emits it when every dependency is complete.
+        """
+        self._lock_manager.release_all(task_id)
+        self._dispatched.discard(task_id)
+        self.ready_queue = [t for t in self.ready_queue if t.task_id != task_id]
+        self._dag.harden(task_id)
+        self.ready_queue.extend(self._dag.newly_unblocked())
+        self._save()
+
     def is_done(self) -> bool:
         """Return whether all tasks are complete and nothing is ready or in flight."""
         return (
@@ -213,23 +237,14 @@ class Scheduler:
 
     def _state(self) -> dict[str, object]:
         return {
-            "tasks": [
-                {
-                    "task_id": t.task_id,
-                    "description": t.description,
-                    "target_nodes": list(t.target_nodes),
-                    "context_nodes": list(t.context_nodes),
-                    "depends_on": list(t.depends_on),
-                    "agent_type": t.agent_type,
-                }
-                for t in self._dag.tasks.values()
-            ],
+            "tasks": [subtask_to_dict(t) for t in self._dag.tasks.values()],
             "completed": [
                 tid for tid in self._dag.topological_order()
                 if self._dag.is_complete(tid)
             ],
             "dispatched": sorted(self._dispatched),
             "ready": [t.task_id for t in self.ready_queue],
+            "annotations": self.annotations,
         }
 
     def _save(self) -> None:
@@ -251,6 +266,7 @@ class Scheduler:
         agent_runner: AgentRunnerLike,
         registry: AdapterRegistryLike,
         max_concurrent: int | None = None,
+        lock_policy: LockPolicy | None = None,
     ) -> Scheduler:
         """Reconstruct a scheduler from a persisted ``task_graph.json``.
 
@@ -266,17 +282,7 @@ class Scheduler:
             data = json.loads(persist_path.read_text("utf-8"))
             if not isinstance(data, dict):
                 raise ValueError(f"expected a JSON object, got {type(data).__name__}")
-            tasks = [
-                SubTask(
-                    task_id=str(t["task_id"]),
-                    description=str(t["description"]),
-                    target_nodes=[NodeId(n) for n in t.get("target_nodes", [])],
-                    context_nodes=[NodeId(n) for n in t.get("context_nodes", [])],
-                    depends_on=[str(d) for d in t.get("depends_on", [])],
-                    agent_type=str(t.get("agent_type", "")),
-                )
-                for t in data.get("tasks", [])
-            ]
+            tasks = [subtask_from_dict(t) for t in data.get("tasks", [])]
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             raise SchedulingError(
                 f"could not read the task graph at {persist_path}: {exc}"
@@ -304,7 +310,12 @@ class Scheduler:
         scheduler._registry = registry
         scheduler._persist_path = persist_path
         scheduler._max_concurrent = max_concurrent
+        scheduler._lock_policy = lock_policy or LEGACY_POLICY
         scheduler._dispatched = set()
+        annotations = data.get("annotations", {})
+        scheduler.annotations = (
+            dict(annotations) if isinstance(annotations, dict) else {}
+        )
         # In-flight tasks at crash time are re-queued (locks were lost on crash).
         # Preserve order and avoid duplicates between the persisted ready set and
         # the re-queued in-flight set.

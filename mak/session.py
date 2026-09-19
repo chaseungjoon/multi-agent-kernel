@@ -39,6 +39,7 @@ fakes and is not bound to concrete subprocess/LLM backends.
 from __future__ import annotations
 
 import ast
+import difflib
 import fnmatch
 import hashlib
 import queue
@@ -47,7 +48,7 @@ import sys
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -59,16 +60,25 @@ from mak.agent_runner.protocol import map_returned_sources
 from mak.agent_runner.registry import AdapterRegistry
 from mak.agent_runner.stop_signals import matches
 from mak.config import MakConfig
+from mak.conflict_detector.attribute_check import check_module_attributes
+from mak.conflict_detector.constructor_check import check_constructors
 from mak.conflict_detector.cross_module_check import (
     CrossModuleDefect,
     check_cross_module_api,
 )
+from mak.conflict_detector.cycle_check import check_new_cycles
 from mak.conflict_detector.detector import ConflictDetector, EditRound
+from mak.conflict_detector.duplicate_check import CreatedFunction, check_duplicates
+from mak.conflict_detector.module_index import ModuleIndex
+from mak.conflict_detector.override_check import check_overrides
 from mak.core.atomic import write_text_atomic
 from mak.core.exceptions import (
+    ContractError,
     GitIntegrationError,
     NodeStoreError,
+    PlannerFailedError,
     SchedulingError,
+    SemanticGateError,
     SessionError,
     UnsafeNodeIdError,
     WorkTreeConflictError,
@@ -95,11 +105,12 @@ from mak.execution_result import ExecutionResult
 from mak.git_integration.git import GitHelper
 from mak.lock_manager.deadlock_detector import DeadlockDetector
 from mak.lock_manager.project_lease import ProjectLease
-from mak.node_store.api_digest import public_api_digest
+from mak.lock_manager.resources import api_resource
+from mak.node_store.api_digest import api_fingerprint, public_api_digest
 from mak.node_store.ingestion import iter_source_files
 from mak.node_store.makignore import MakIgnore, ensure_makignore, load_makignore
 from mak.node_store.reconstruction import assemble_fragments, reconstruct_file
-from mak.node_store.store import FileSyncReport, NodeStore
+from mak.node_store.store import FileSyncReport, NodeStore, source_digest
 from mak.node_store.transaction import (
     finish,
     install_files,
@@ -107,12 +118,51 @@ from mak.node_store.transaction import (
     render_affected,
 )
 from mak.node_store.transaction import recover as recover_commit
-from mak.planner.depgraph import dep_graph_from_store
-from mak.planner.planner import Planner
+from mak.planner.contracts import contract_stub, implementation_mismatch
+from mak.planner.depgraph import DepGraph, dep_graph_from_store
+from mak.planner.llm import build_planner_llm
+from mak.planner.planner import Planner, PlannerLLM
 from mak.planner.review import display_plan_for_review
-from mak.planner.validation import PlanFinding, validate_plan
+from mak.planner.validation import PlanFinding, PlanSemantics, validate_plan
 from mak.scheduler.dag import DAG
+from mak.scheduler.lock_policy import LEGACY_POLICY, LockPolicy, lock_requests
 from mak.scheduler.scheduler import Scheduler
+from mak.semantic.adjudicator import Adjudicator
+from mak.semantic.cascade_graph import CascadeItem, cascade_items
+from mak.semantic.contracts import (
+    CONTRACT_PREFIX,
+    render_contract,
+    soft_edges,
+    visible_contracts,
+)
+from mak.semantic.gate_types import GateFinding, ProcessRunner, WaveView, run_process
+from mak.semantic.gates import GateSuite
+from mak.semantic.interface import changed_bindings
+from mak.semantic.locking import build_lock_policy, registrar_kinds
+from mak.semantic.read_set import (
+    ReadMark,
+    ReadSet,
+    build_read_set,
+    read_set_from_json,
+    read_set_to_json,
+)
+from mak.semantic.registry_merge import MergeKind, plan_merge
+from mak.semantic.sources import StoreSources
+from mak.semantic.stale import (
+    NodeDecision,
+    StaleDecision,
+    StaleRead,
+    Verdict,
+    classify,
+    decide,
+    retry_note,
+)
+from mak.semantic.symbols import (
+    SymbolChangeKind,
+    diff_symbols,
+    symbol_source,
+    symbol_table,
+)
 from mak.teardown import SuiteOutcome, TeardownResult, may_push
 
 # A test runner returns (passed, output) so teardown can gate the push.
@@ -194,6 +244,12 @@ class SubTaskProgress:
     # next one. Carried onto the re-dispatched bundle so a retry differs from the
     # attempt that failed instead of re-issuing it verbatim.
     retry_note: str | None = None
+    # Wave 20. Set when the kernel — not the agent — sent the attempt back: a
+    # stale read (the diff of what changed) or a broken interface promise. It
+    # outranks every agent-side reason, because it is the one thing the next
+    # attempt must act on, and ``error_kind`` says which it was.
+    kernel_note: str | None = None
+    error_kind: str | None = None
 
     @property
     def remaining(self) -> list[NodeId]:
@@ -258,6 +314,23 @@ class _Completion:
 
     bundle: TaskBundle
     result: TaskResult
+
+
+@dataclass(frozen=True, slots=True)
+class _Parked:
+    """A finished result waiting for a lock another in-flight task holds.
+
+    ``sources`` are the staged sources at the moment of parking: the store's
+    pending slot for a node is single, and a registrar other tasks append to
+    would otherwise have this task's staging overwritten while it waits.
+    """
+
+    bundle: TaskBundle
+    result: TaskResult
+    sources: dict[NodeId, str]
+    reason: str
+    # Waiting for a contract provider to commit, not for a lock.
+    on_providers: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,6 +431,8 @@ class Session:
         heartbeat_interval_s: float | None = None,
         collect_timeout_s: float = 300.0,
         project_lease: ProjectLease | None = None,
+        gate_runner: ProcessRunner | None = None,
+        adjudicator_llm: PlannerLLM | None = None,
     ) -> None:
         self.session_id = session_id
         self._config = config
@@ -411,9 +486,22 @@ class Session:
         # whose real defect rejected attempts 1-2 reported only attempt 3's
         # one-off malformed response, which named nothing relevant.
         self._failure_history: dict[str, list[str]] = {}
-        # Per-wave commit log: node_id → (source_before, source_after).
+        # Per-wave commit log: node_id → (source_before, source_after). A node a
+        # commit *removed* — a fragment superseded by a whole-file write — is
+        # recorded with ``None`` after, so post-wave analysis sees deletions.
         # Populated during run(); read by detect_cascade_tasks() after run().
-        self._wave_committed: dict[NodeId, tuple[str | None, str]] = {}
+        self._wave_committed: dict[NodeId, tuple[str | None, str | None]] = {}
+        # Wave 20. Each touched file as it was before its first commit this
+        # wave (``None``: it did not exist), which task(s) committed to it, and
+        # which task last committed each node — the "before" side of every
+        # post-wave symbol diff and baseline, and the pair a fix-up names.
+        self._wave_file_before: dict[str, str | None] = {}
+        self._wave_file_writers: dict[str, list[str]] = {}
+        self._wave_node_writer: dict[NodeId, str] = {}
+        # Post-wave findings cached by store generation: the cascade loop asks
+        # twice for the same state, and the checks are not free.
+        self._defects_at: tuple[int, list[CrossModuleDefect]] | None = None
+        self._cascade_at: tuple[int, list[CascadeItem]] | None = None
         # Deterministic plan-validation findings from the most recent install_plan;
         # surfaced to the review UI and available to callers after planning.
         self.last_plan_findings: list[PlanFinding] = []
@@ -454,6 +542,43 @@ class Session:
         # The project's ``.makignore``, read at ``initialize``. Empty until then,
         # so a session driven without initialize ignores nothing extra.
         self._makignore = MakIgnore()
+        # Wave 20. The reference graph the current wave was planned against
+        # (interface locks and post-wave cascade both read it), the lock policy
+        # the wave runs under, and what each dispatched task was granted —
+        # commit re-validation must check the *modes* it was given, and a keyed
+        # registrar target is held INTENT_WRITE, not WRITE.
+        self._wave_graph: DepGraph | None = None
+        self._lock_policy: LockPolicy = LEGACY_POLICY
+        self._granted: dict[str, dict[NodeId, LockMode]] = {}
+        # task id -> every node its latest bundle carried, with the version and
+        # digest it was shipped at. Validated at commit (``_reads_are_current``).
+        self._read_sets: dict[str, ReadSet] = {}
+        # Stale-read accounting for the wave, reported by ``_plan_metrics``.
+        self._stale_reads = 0
+        self._stale_redispatches = 0
+        # Optional LLM adjudicator for uncertain stale reads (``semantic.
+        # adjudicator``); built lazily by ``_install_adjudicator``.
+        self._adjudicate_fn: (
+            Callable[[StaleRead, dict[NodeId, str]], bool | None] | None
+        ) = None
+        # Results that finished but cannot commit until another in-flight task
+        # releases a lock (see ``_park``), and the reason each is waiting.
+        self._parked: dict[str, _Parked] = {}
+        self._deferring: dict[str, str] = {}
+        self._waiting_on_providers: set[str] = set()
+        # Optional heavy gates (D3/D4/D6) and the adjudicator (D7). The runner
+        # and the model are injectable so tests need neither tools nor keys.
+        self._gates = GateSuite(config.semantic, runner=gate_runner or run_process)
+        self._adjudicator_llm = adjudicator_llm
+        self._adjudicator_instance: Adjudicator | None = None
+        self._gates_at: tuple[int, list[GateFinding]] | None = None
+        # Per-commit records for rebuilding "pre-wave + these tasks' commits":
+        # each touched file's fragments before the wave, and every committed
+        # node as (task, node, order, indented source), in commit order.
+        self._wave_fragments_before: dict[
+            str, list[tuple[NodeId, int | None, str]]
+        ] = {}
+        self._wave_commit_log: list[tuple[str, NodeId, int | None, str]] = []
 
     # -- logging helper ----------------------------------------------------
 
@@ -556,6 +681,7 @@ class Session:
         if self._git is not None and self._config.git.require_clean_tree:
             self._require_clean_tree()
         ensure_makignore(self._work_dir)
+        self._take_gate_baseline()
         if self._git is not None and self._config.git.auto_commit:
             # Keep MAK's audit commits inside the project: if the work-dir is nested
             # in an outer repo (e.g. a home directory) or in none at all, give it its
@@ -574,6 +700,40 @@ class Session:
             pruned_nodes=pruned,
         )
         return inventory
+
+    def _take_gate_baseline(self) -> None:
+        """Record the type checker's pre-existing diagnostics, when it is on."""
+        try:
+            self._gates.take_baseline(self._work_dir)
+        except SemanticGateError as exc:
+            self._log(EventType.GATE_FINDING, gate="type_check", error=str(exc))
+
+    def _install_adjudicator(self) -> None:
+        """Build (once) and re-budget the stale-read adjudicator for a wave."""
+        if self._adjudicator_instance is None:
+            llm = self._adjudicator_llm or self._configured_adjudicator_llm()
+            if llm is None:
+                self._adjudicate_fn = None
+                return
+            self._adjudicator_instance = Adjudicator(
+                llm,
+                max_calls=self._config.semantic.adjudicator_max_calls,
+                log=lambda **p: self._log(EventType.ADJUDICATION, **p),
+            )
+        self._adjudicator_instance.reset()
+        self._adjudicate_fn = self._adjudicator_instance
+
+    def _configured_adjudicator_llm(self) -> PlannerLLM | None:
+        """Build the configured adjudicator model, or None when it cannot be."""
+        spec = self._config.semantic.adjudicator
+        if spec is None:
+            return None
+        backend, _, model = spec.partition(":")
+        try:
+            return build_planner_llm(model, backend=backend)
+        except PlannerFailedError as exc:
+            self._log(EventType.GATE_FINDING, gate="adjudicator", error=str(exc))
+            return None
 
     def _acquire_project(self) -> None:
         """Take the project's exclusive lease, if one was supplied."""
@@ -845,13 +1005,24 @@ class Session:
         return reviewed
 
     def _validate_subtasks(
-        self, subtasks: list[SubTask]
+        self, subtasks: list[SubTask], graph: DepGraph | None = None
     ) -> tuple[list[SubTask], list[PlanFinding]]:
         """Run deterministic plan validation, unless disabled in config."""
         if not self._config.planner.validate:
             return subtasks, []
-        graph = dep_graph_from_store(self._node_store)
-        result = validate_plan(subtasks, graph, self._node_store.list_nodes())
+        if graph is None:
+            graph = dep_graph_from_store(self._node_store)
+        targets = {node for task in subtasks for node in task.target_nodes}
+        semantic = PlanSemantics(
+            api_locks=self._config.semantic.api_locks,
+            registrar_kinds={
+                node: str(kind)
+                for node, kind in registrar_kinds(self._node_store, targets).items()
+            },
+        )
+        result = validate_plan(
+            subtasks, graph, self._node_store.list_nodes(), semantic=semantic
+        )
         return result.plan, result.findings
 
     def _log_plan_findings(self, findings: list[PlanFinding]) -> None:
@@ -881,6 +1052,22 @@ class Session:
         self._failure_reasons = {}
         self._failure_history = {}
         self._wave_committed = {}
+        self._wave_file_before = {}
+        self._wave_file_writers = {}
+        self._wave_node_writer = {}
+        self._wave_fragments_before = {}
+        self._wave_commit_log = []
+        self._defects_at = None
+        self._cascade_at = None
+        self._gates_at = None
+        self._granted = {}
+        self._read_sets = {}
+        self._parked = {}
+        self._deferring = {}
+        self._waiting_on_providers = set()
+        self._stale_reads = 0
+        self._stale_redispatches = 0
+        self._install_adjudicator()
         self._conflict_rejections = 0
         self._redispatches = 0
         self._concurrency_samples = []
@@ -900,12 +1087,22 @@ class Session:
         # and user-edited plans all get validation. Idempotent when plan() already
         # validated the same list.
         self._reject_unsafe_targets(subtasks)
-        subtasks, findings = self._validate_subtasks(subtasks)
+        # Always built: interface locks read callees off it, validation reads
+        # references, and post-wave cascade needs the *pre*-wave edges to find
+        # callers of symbols the wave deletes.
+        self._wave_graph = dep_graph_from_store(self._node_store)
+        subtasks, findings = self._validate_subtasks(subtasks, self._wave_graph)
         self.last_plan_findings = findings
         if findings:
             self._log_plan_findings(findings)
         subtasks = self._apply_default_agent(subtasks)
-        dag = DAG(subtasks)
+        self._lock_policy = build_lock_policy(
+            self._config.semantic, self._node_store, self._wave_graph, subtasks
+        )
+        soft: dict[str, set[str]] = {}
+        if self._config.semantic.contract_dispatch:
+            subtasks, soft = soft_edges(subtasks, self._lock_policy)
+        dag = DAG(subtasks, soft_edges=soft)
         self._scheduler = Scheduler(
             dag,
             self._lock_table,
@@ -913,6 +1110,7 @@ class Session:
             self._registry,
             persist_path=self._mak_dir / "task_graph.json",
             max_concurrent=self._max_concurrent,
+            lock_policy=self._lock_policy,
         )
         self._progress = {
             t.task_id: SubTaskProgress(t.task_id, list(t.target_nodes))
@@ -1050,6 +1248,9 @@ class Session:
                 # Nothing is in flight and the DAG is not done — the remaining
                 # tasks are blocked on locks that never freed, or stranded.
                 break
+            if self._all_in_flight_parked(scheduler):
+                self._release_parked_victim(scheduler)
+                continue
 
             batch = self._collect_batch()
             if not batch:
@@ -1107,7 +1308,7 @@ class Session:
         re-queued partials are dropped and surface as stranded tasks in the
         result, which is what they are.
         """
-        pending = len(scheduler.dispatched)
+        pending = len(scheduler.dispatched - set(self._parked))
         while pending > 0:
             batch = self._collect_batch()
             if not batch:
@@ -1116,6 +1317,9 @@ class Session:
             pending -= len(batch)
             self._process_batch(batch)
         self._partial_queue.clear()
+        # A parked result is waiting on a task that will now never be
+        # dispatched again; it is stranded like any other unfinished task.
+        self._parked.clear()
 
     def _finalize(self, scheduler: Scheduler) -> SessionResult:
         """Compute the terminal state and result after the loop exits."""
@@ -1206,6 +1410,8 @@ class Session:
             "context_bytes_total": float(self._context_bytes),
             "mean_context_bytes": mean_bytes,
             "starved_dispatches": float(self._starved_dispatches),
+            "stale_reads": float(self._stale_reads),
+            "stale_redispatches": float(self._stale_redispatches),
         }
 
     @property
@@ -1311,6 +1517,9 @@ class Session:
                 completion.bundle, completion.result, peers
             )
             peers.update(committed)
+        # Anything this batch completed may have released a lock a parked
+        # result was waiting for.
+        self._resume_parked()
 
     def _batch_order(self, task_ids: list[str]) -> list[str]:
         """Order a batch's task ids by topological index, then id (deterministic)."""
@@ -1329,7 +1538,6 @@ class Session:
         task_id = bundle.task_id
         progress = self._progress[task_id]
         progress.attempts += 1
-        in_scope = set(progress.target_nodes)
         reported = dict.fromkeys([*result.modified_nodes, *result.new_sources])
         self._log_agent_result(progress, result, reported)
         accepted: list[NodeId] = []
@@ -1347,17 +1555,37 @@ class Session:
         # source for cannot be committed (the task stays incomplete and retries);
         # ``_describe_empty_result`` below names that case rather than leaving the
         # operator with a symptom.
+        in_scope = set(progress.target_nodes)
         staged = [
             n
             for n in dict.fromkeys([*reported, *accepted])
             if n in in_scope and self._node_store.get_staged(n) is not None
         ]
+        return self._settle(bundle, result, staged, peers)
 
+    def _settle(
+        self,
+        bundle: TaskBundle,
+        result: TaskResult,
+        staged: list[NodeId],
+        peers: dict[str, str],
+    ) -> dict[str, str]:
+        """Commit what can be committed and account the attempt's outcome.
+
+        Split from :meth:`_process_one` so a parked result can be settled again
+        later without being counted — or logged — as a second agent attempt.
+        """
+        task_id = bundle.task_id
+        progress = self._progress[task_id]
+        self._deferring.pop(task_id, None)
         committed = (
             self._validate_and_commit(task_id, staged, peers)
             if result.success
             else []
         )
+        if task_id in self._deferring:
+            self._park(bundle, result, staged)
+            return {}
         committed_sources: dict[str, str] = {}
         for node_id in committed:
             progress.completed_nodes.add(node_id)
@@ -1383,6 +1611,106 @@ class Session:
         else:
             self._handle_incomplete(progress, result)
         return committed_sources
+
+    # -- parked commits (Wave 20) --------------------------------------------
+
+    def _defer(self, task_id: str, reason: str, *, providers: bool = False) -> None:
+        """Mark the commit in progress as waiting for a lock, not failed.
+
+        The agent's work is fine; another in-flight task holds something the
+        commit needs. Re-running the agent would spend a whole call — and an
+        attempt of the retry budget — to arrive at the same result, so the
+        result is parked and its commit retried when locks are released.
+        """
+        self._deferring[task_id] = reason
+        if providers:
+            self._waiting_on_providers.add(task_id)
+        else:
+            self._waiting_on_providers.discard(task_id)
+
+    def _park(
+        self, bundle: TaskBundle, result: TaskResult, staged: list[NodeId]
+    ) -> None:
+        """Take the attempt's staged sources out of the store and park them."""
+        task_id = bundle.task_id
+        sources: dict[NodeId, str] = {}
+        for node_id in staged:
+            fragment = self._node_store.get_staged(node_id)
+            if fragment is not None:
+                sources[node_id] = fragment.source
+            self._node_store.rollback_node(node_id)
+        reason = self._deferring.pop(task_id, "waiting for a lock")
+        self._parked[task_id] = _Parked(
+            bundle, result, sources, reason,
+            on_providers=task_id in self._waiting_on_providers,
+        )
+        self._log(EventType.COMMIT_DEFERRED, task_id=task_id, reason=reason)
+
+    def _resume_parked(self) -> None:
+        """Retry every parked commit until a pass makes no progress."""
+        progressed = True
+        while progressed and self._parked:
+            progressed = False
+            for task_id in sorted(self._parked):
+                if self._parked[task_id].on_providers and self._providers_pending(
+                    task_id
+                ):
+                    continue
+                parked = self._parked.pop(task_id)
+                for node_id, source in parked.sources.items():
+                    self._node_store.put_node(
+                        node_id,
+                        NodeFragment(node_id, self._node_kind(node_id), source, 1),
+                    )
+                self._log(EventType.COMMIT_DEFERRED, task_id=task_id, resumed=True)
+                self._settle(parked.bundle, parked.result, list(parked.sources), {})
+                if task_id not in self._parked:
+                    progressed = True
+
+    def _all_in_flight_parked(self, scheduler: Scheduler) -> bool:
+        """Whether every in-flight task is a parked result (none can progress)."""
+        dispatched = scheduler.dispatched
+        return (
+            bool(self._parked)
+            and not self._partial_queue
+            and dispatched <= set(self._parked)
+        )
+
+    def _release_parked_victim(self, scheduler: Scheduler) -> None:
+        """Break a cycle of parked results by re-queueing one of them.
+
+        Parking is the one place a task waits while holding locks, so it is the
+        one place a wait can become a cycle: W waits for R's interface read
+        lock while R waits to take a table W appends to. The last task by id
+        gives its locks back and is re-queued with fresh context; the rest are
+        retried at once. A task waiting on its *contract providers* is instead
+        re-gated on them, since re-dispatching it at once would only park it
+        again.
+        """
+        victim = sorted(self._parked)[-1]
+        parked = self._parked.pop(victim)
+        progress = self._progress[victim]
+        if parked.on_providers:
+            self._granted.pop(victim, None)
+            self._log(
+                EventType.COMMIT_DEFERRED, task_id=victim, released=True,
+                reason="re-gated on its contract providers",
+            )
+            scheduler.wait_for_dependencies(victim)
+            self._resume_parked()
+            return
+        progress.kernel_note = (
+            f"Your previous result could not be committed ({parked.reason}), and "
+            "the tasks holding what it needed were waiting on this one in turn. "
+            "It was released so they could finish. Redo the task against the "
+            "current code in your refreshed bundle."
+        )
+        progress.error_kind = "commit_cycle"
+        self._granted.pop(victim, None)
+        self._redispatches += 1
+        self._log(EventType.COMMIT_DEFERRED, task_id=victim, released=True)
+        scheduler.on_task_failed(victim, requeue=True)
+        self._resume_parked()
 
     @staticmethod
     def _is_asserted_noop(result: TaskResult) -> bool:
@@ -1657,11 +1985,24 @@ class Session:
         """
         if not staged:
             return []
+        if not self._providers_committed(task_id):
+            if task_id not in self._deferring:
+                for node_id in staged:
+                    self._node_store.rollback_node(node_id)
+            return []
+        if not self._reconcile_registrars(task_id, staged):
+            return []
+        if not self._reads_are_current(task_id, staged):
+            return []
         report = self._conflict_detector.detect(
-            self._build_edit_round(staged, peers or {})
+            self._build_edit_round(staged, peers or {}, task_id=task_id)
         )
         if not report.ok:
             self._reject(task_id, staged, report.reasons)
+            return []
+        if not self._contracts_hold(task_id, staged):
+            return []
+        if not self._interfaces_are_granted(task_id, staged):
             return []
         if not self._preview_is_valid(staged):
             self._reject(
@@ -1672,7 +2013,8 @@ class Session:
         # reclaimed by another holder). Confirm we still own every write lock
         # before advancing the store, so we never commit through a stolen lock.
         if not self._lock_table.holds_all(
-            [(node_id, LockMode.WRITE) for node_id in staged], task_id
+            [(node_id, self._granted_mode(task_id, node_id)) for node_id in staged],
+            task_id,
         ):
             self._reject(
                 task_id, staged, ["write lock lost before commit (lease expired)"]
@@ -1684,15 +2026,20 @@ class Session:
         # journal covers the output files. The metadata save at the end of the
         # ``with`` block is the commit point for both — before it, nothing
         # durable has changed; after it, the change is recoverable in full.
-        wave_entries: dict[NodeId, tuple[str | None, str]] = {}
+        wave_entries: dict[NodeId, tuple[str | None, str | None]] = {}
+        before_files = self._files_before(staged)
         try:
             with self._node_store.transaction():
                 for node_id in staged:
                     old_source = self._node_source(node_id)  # before commit
+                    superseded = self._superseded_by(node_id)
                     self._node_store.commit_node(node_id)
                     new_source = self._node_source(node_id)  # after commit
                     if new_source is not None:
                         wave_entries[node_id] = (old_source, new_source)
+                    for gone, gone_source in superseded.items():
+                        if self._node_source(gone) is None:
+                            wave_entries[gone] = (gone_source, None)
                 installed = install_files(
                     self._node_store,
                     staged,
@@ -1720,12 +2067,555 @@ class Session:
         # so a rolled-back transaction left entries behind and the wave's cascade
         # analysis went on to inspect "reverted" work as if it were real.
         self._wave_committed.update(wave_entries)
+        self._record_wave_writes(task_id, staged, before_files)
         for file_path, content in installed.contents.items():
             self._node_store.record_materialized(file_path, content)
         mark_installed(installed)
         self._audit_commit(task_id, staged)
         finish(installed)
         return list(staged)
+
+    def _files_before(self, staged: list[NodeId]) -> dict[str, str | None]:
+        """Each staged file's committed source, for files first touched now."""
+        before: dict[str, str | None] = {}
+        for file_path in sorted({_file_of(str(n)) for n in staged}):
+            if file_path in self._wave_file_before:
+                continue
+            fragments = self._node_store.get_committed_fragments(file_path)
+            before[file_path] = assemble_fragments(fragments) if fragments else None
+            self._wave_fragments_before[file_path] = [
+                (f.node_id, self._node_store.node_order(f.node_id), f.source)
+                for f in fragments
+            ]
+        return before
+
+    def _superseded_by(self, node_id: NodeId) -> dict[NodeId, str]:
+        """Return the fragments a whole-file commit of ``node_id`` will remove."""
+        if "::" in str(node_id):
+            return {}
+        return {
+            fragment: source
+            for fragment in self._file_fragment_ids(node_id)
+            if (source := self._node_source(fragment)) is not None
+        }
+
+    def _record_wave_writes(
+        self, task_id: str, staged: list[NodeId], before: dict[str, str | None]
+    ) -> None:
+        """Remember what this commit touched, once it is past the commit point."""
+        for file_path, source in before.items():
+            self._wave_file_before.setdefault(file_path, source)
+        for node_id in staged:
+            self._wave_node_writer[node_id] = task_id
+            writers = self._wave_file_writers.setdefault(_file_of(str(node_id)), [])
+            if task_id not in writers:
+                writers.append(task_id)
+        for file_path in sorted({_file_of(str(n)) for n in staged}):
+            for fragment in self._node_store.get_committed_fragments(file_path):
+                if fragment.node_id in staged:
+                    self._wave_commit_log.append((
+                        task_id,
+                        fragment.node_id,
+                        self._node_store.node_order(fragment.node_id),
+                        fragment.source,
+                    ))
+
+    # -- declared contracts (Wave 20, P3) -----------------------------------
+
+    def _providers_committed(self, task_id: str) -> bool:
+        """Hold a contract-dispatched task's commit until its providers commit.
+
+        A task dispatched ahead of a soft dependency was built against the
+        provider's *contract*; its code may call what does not exist yet, so it
+        is parked until the provider commits — and fails with it if it fails.
+        """
+        dag = self._require_scheduler().dag
+        waiting = sorted(
+            dep for dep in dag.soft_dependencies(task_id) if not dag.is_complete(dep)
+        )
+        failed = [dep for dep in waiting if dep in self._failed]
+        if failed:
+            self._record_failure(
+                task_id,
+                f"its contract provider(s) {', '.join(failed)} failed, so the "
+                "interface it was built against was never implemented",
+            )
+            self._progress[task_id].attempts = self._max_attempts
+            return False
+        if waiting:
+            self._defer(
+                task_id,
+                f"built against the declared contract of {', '.join(waiting)}; "
+                "waits for them to commit",
+                providers=True,
+            )
+            return False
+        return True
+
+    def _providers_pending(self, task_id: str) -> bool:
+        """Whether a soft provider of ``task_id`` has neither committed nor failed."""
+        dag = self._require_scheduler().dag
+        return any(
+            not dag.is_complete(dep) and dep not in self._failed
+            for dep in dag.soft_dependencies(task_id)
+        )
+
+    def _contracts_hold(self, task_id: str, staged: list[NodeId]) -> bool:
+        """Check the provider side: a contracted node must match its contract."""
+        task = self._dag_task(task_id)
+        for node_id, text in task.contract.items():
+            fragment = self._node_store.get_staged(node_id)
+            if fragment is None:
+                continue
+            reason = implementation_mismatch(text, fragment.source)
+            if reason is None:
+                continue
+            self._log(
+                EventType.CONTRACT_VIOLATION, task_id=task_id,
+                node_id=str(node_id), reason=reason,
+            )
+            self._send_back(
+                task_id, staged,
+                note=(
+                    f"'{node_id}' must implement its declared contract exactly — "
+                    f"other tasks are being built against it: {reason}. Keep the "
+                    "declared name, parameters (names, order, annotations, "
+                    "defaults) and return annotation."
+                ),
+                kind="contract_violation",
+                reason=f"'{node_id}' does not match its declared contract: {reason}",
+            )
+            return False
+        return True
+
+    def _add_contracts(self, task: SubTask, context: dict[str, str]) -> list[str]:
+        """Layer 0: the declared contracts this task implements or builds on."""
+        plan = self._require_scheduler().dag.tasks
+        added: list[str] = []
+        for node_id, text in visible_contracts(task, plan).items():
+            key = f"{CONTRACT_PREFIX}:{node_id}"
+            context[key] = render_contract(node_id, text, own=node_id in task.contract)
+            added.append(key)
+        return added
+
+    def _contract_definitions(
+        self, task_id: str, own: dict[str, str]
+    ) -> dict[str, str]:
+        """Contract stubs a task's calls are checked against at its commit."""
+        task = self._dag_task(task_id)
+        plan = self._require_scheduler().dag.tasks
+        stubs: dict[str, str] = {}
+        for node_id, text in visible_contracts(task, plan).items():
+            if node_id in task.contract or str(node_id) in own:
+                continue
+            try:
+                stubs[str(node_id)] = contract_stub(text)
+            except ContractError:
+                continue  # a contract the planner never validated is no authority
+        return stubs
+
+    def _contract_covered(self, task_id: str, stale: StaleRead) -> bool:
+        """Whether a stale node is exactly the contract the task was built against."""
+        task = self._dag_task(task_id)
+        text = visible_contracts(task, self._require_scheduler().dag.tasks).get(
+            stale.node_id
+        )
+        if text is None or stale.current_source is None:
+            return False
+        return implementation_mismatch(text, stale.current_source) is None
+
+    # -- keyed registrars and interface enforcement (Wave 20, P5/P2) ---------
+
+    def _send_back(
+        self, task_id: str, staged: list[NodeId], note: str, kind: str, reason: str
+    ) -> None:
+        """Roll the attempt back and re-dispatch it with a kernel note.
+
+        For the cases where the *kernel* declined the commit for a reason the
+        agent can act on: the note replaces the generic retry text, and
+        ``error_kind`` records which case it was.
+        """
+        progress = self._progress[task_id]
+        progress.kernel_note = note
+        progress.error_kind = kind
+        self._record_failure(task_id, reason)
+        for node_id in staged:
+            self._node_store.rollback_node(node_id)
+
+    def _reconcile_registrars(self, task_id: str, staged: list[NodeId]) -> bool:
+        """Replay keyed-registrar appends onto the current table (no lost update).
+
+        Only targets held INTENT_WRITE are touched. A pure keyed append is
+        merged onto whatever the table holds now; anything else must upgrade to
+        an exclusive WRITE, and waits when it cannot — or is sent back when the
+        table moved since the agent read it, which an overwrite would undo.
+        """
+        for node_id in staged:
+            if self._granted_mode(task_id, node_id) is not LockMode.INTENT_WRITE:
+                continue
+            fragment = self._node_store.get_staged(node_id)
+            if fragment is None:
+                continue
+            mark = self._read_sets.get(task_id, {}).get(node_id)
+            current = self._node_source(node_id)
+            plan = plan_merge(
+                mark.source if mark else None, fragment.source, current
+            )
+            if plan.kind is MergeKind.MERGED and plan.source is not None:
+                self._stage_merge(task_id, node_id, plan.source, plan.appended, mark)
+                continue
+            if not self._upgrade_registrar(task_id, staged, node_id, plan.reason):
+                return False
+        return True
+
+    def _stage_merge(
+        self,
+        task_id: str,
+        node_id: NodeId,
+        merged: str,
+        appended: tuple[object, ...],
+        mark: ReadMark | None,
+    ) -> None:
+        """Stage the merged table in place of the agent's copy and log it."""
+        fragment = self._node_store.get_staged(node_id)
+        if fragment is not None and fragment.source != merged:
+            self._node_store.put_node(node_id, replace(fragment, source=merged))
+        current = self._committed_fragment(node_id)
+        self._log(
+            EventType.REGISTRY_MERGED,
+            task_id=task_id,
+            node_id=str(node_id),
+            appended=[getattr(e, "text", str(e)) for e in appended],
+            read_version=mark.version if mark else None,
+            current_version=current.version if current else None,
+        )
+
+    def _upgrade_registrar(
+        self, task_id: str, staged: list[NodeId], node_id: NodeId, why: str
+    ) -> bool:
+        """Take a registrar exclusively for a non-append edit, or wait for it."""
+        if not self._lock_table.try_acquire_all([(node_id, LockMode.WRITE)], task_id):
+            self._defer(
+                task_id,
+                f"'{node_id}' is being appended to concurrently and this edit "
+                f"needs it exclusively ({why})",
+            )
+            return False
+        self._granted.setdefault(task_id, {})[node_id] = LockMode.WRITE
+        mark = self._read_sets.get(task_id, {}).get(node_id)
+        current = self._committed_fragment(node_id)
+        current_digest = source_digest(current.source) if current else None
+        if mark is not None and mark.digest == current_digest:
+            return True
+        self._send_back(
+            task_id, staged,
+            note=(
+                f"'{node_id}' gained entries from other tasks while you worked, "
+                "and your version would have overwritten them. Your bundle now "
+                "holds its current content: make your change on top of it."
+            ),
+            kind="stale_read",
+            reason=(
+                f"'{node_id}' changed since it was read; an overwrite would lose "
+                "entries"
+            ),
+        )
+        return False
+
+    def _interfaces_are_granted(self, task_id: str, staged: list[NodeId]) -> bool:
+        """Hold every interface change to the task's declaration and its locks.
+
+        A task that declared ``changes_api=False`` promised a body-only edit —
+        callers' tasks ran beside it on the strength of that — so an interface
+        change is refused. Any other interface change needs WRITE on
+        ``node#api``; one the task was not granted is taken now if it is free,
+        and waits when a concurrent task is building against the interface.
+        """
+        if not self._config.semantic.api_locks:
+            return True
+        task = self._dag_task(task_id)
+        for node_id in staged:
+            change = self._interface_change(node_id)
+            if change is None:
+                continue
+            if task.changes_api is False:
+                self._send_back(
+                    task_id, staged,
+                    note=(
+                        "This task was planned as a body-only change, so other "
+                        f"tasks are relying on the interface of '{node_id}' "
+                        f"staying exactly as it is. Your version changed it "
+                        f"({change}). Keep every signature, parameter, return "
+                        "annotation, decorator, class field and import exactly "
+                        "as they are; change only function bodies."
+                    ),
+                    kind="undeclared_api_change",
+                    reason=f"body-only task changed the interface of '{node_id}'",
+                )
+                self._log(
+                    EventType.API_ESCALATED, task_id=task_id, node_id=str(node_id),
+                    outcome="refused_promise", change=change,
+                )
+                return False
+            if not self._hold_interface(task_id, staged, node_id, change):
+                return False
+        return True
+
+    def _interface_change(self, node_id: NodeId) -> str | None:
+        """Describe how the staged source changes a node's interface, or None.
+
+        A node that does not exist yet has no interface to change — nothing can
+        have been built against it — and a node that only *gained* a binding
+        (a new import, a new helper) broke nobody.
+        """
+        fragment = self._node_store.get_staged(node_id)
+        old = self._dependency_source(node_id)
+        if fragment is None or old is None:
+            return None
+        changed = changed_bindings(old, fragment.source)
+        if changed == set():
+            return None
+        return _describe_interface_change(
+            api_fingerprint(old), api_fingerprint(fragment.source), changed
+        )
+
+    def _hold_interface(
+        self, task_id: str, staged: list[NodeId], node_id: NodeId, change: str
+    ) -> bool:
+        """Make sure the task holds WRITE on every interface it is changing."""
+        resources = [
+            api_resource(n)
+            for n in (node_id, *self._file_fragment_ids(node_id))
+        ]
+        needed = [
+            (r, LockMode.WRITE) for r in resources
+            if not self._lock_table.holds_all([(r, LockMode.WRITE)], task_id)
+        ]
+        if not needed:
+            return True
+        if self._lock_table.try_acquire_all(needed, task_id):
+            self._granted.setdefault(task_id, {}).update(
+                {r: LockMode.WRITE for r, _ in needed}
+            )
+            self._log(
+                EventType.API_ESCALATED, task_id=task_id, node_id=str(node_id),
+                outcome="acquired", change=change,
+            )
+            return True
+        readers = sorted({
+            entry.holder
+            for resource, _ in needed
+            for entry in self._lock_table.all_entries().get(resource, [])
+            if entry.holder != task_id
+        })
+        self._log(
+            EventType.API_ESCALATED, task_id=task_id, node_id=str(node_id),
+            outcome="refused_contended", change=change, readers=readers,
+        )
+        # The readers will validate their own commits against whatever this
+        # one leaves behind; this commit only has to wait until none of them
+        # is still building against the old interface.
+        self._defer(
+            task_id,
+            f"undeclared interface change to '{node_id}' waits for "
+            f"{', '.join(readers)}, which depend on its current interface",
+        )
+        return False
+
+    # -- stale-read validation (Wave 20, P1/D1/R1) --------------------------
+
+    def _reads_are_current(self, task_id: str, staged: list[NodeId]) -> bool:
+        """Validate the task's read set; roll the attempt back when it fails.
+
+        Backward validation from optimistic concurrency control: every node the
+        bundle carried is compared, by digest, with what is committed *now*.
+        Nothing changed → the task saw a consistent snapshot. Something changed
+        → each stale node is classified and the ``semantic.stale_read`` policy
+        decides; every one of them is logged with its verdict. Returns whether
+        the commit may proceed.
+        """
+        stale = self._stale_reads_of(task_id, staged)
+        if not stale:
+            return True
+        self._stale_reads += len(stale)
+        covered = [s for s in stale if self._contract_covered(task_id, s)]
+        rest = [s for s in stale if s not in covered]
+        decision = decide(
+            self._config.semantic.stale_read,
+            rest,
+            recheck=lambda nodes: self._recheck_against_current(staged, nodes),
+            adjudicate=self._adjudicator(staged),
+        )
+        decision = StaleDecision(
+            decision.verdict,
+            (
+                *(
+                    NodeDecision(
+                        s, Verdict.ACCEPT,
+                        "matches the declared contract the task was built against",
+                    )
+                    for s in covered
+                ),
+                *decision.nodes,
+            ),
+        )
+        self._log_stale_decision(task_id, decision)
+        if decision.verdict is Verdict.ACCEPT:
+            return True
+        reasons = [
+            f"stale read of '{d.stale.node_id}' ({d.stale.kind}): {d.reason}"
+            for d in decision.nodes
+            if d.verdict is not Verdict.ACCEPT
+        ]
+        if decision.verdict is Verdict.REJECT:
+            self._reject(task_id, staged, reasons)
+            return False
+        self._stale_redispatches += 1
+        progress = self._progress[task_id]
+        progress.kernel_note = retry_note(decision)
+        progress.error_kind = "stale_read"
+        self._record_failure(task_id, "; ".join(reasons))
+        for node_id in staged:
+            self._node_store.rollback_node(node_id)
+        return False
+
+    def _stale_reads_of(self, task_id: str, staged: list[NodeId]) -> list[StaleRead]:
+        """Every node in the task's read set whose committed content moved."""
+        read_set = self._read_sets.get(task_id)
+        if not read_set:
+            return []
+        exempt = self._stale_exempt(task_id, staged)
+        own = self._staged_sources(staged)
+        stale: list[StaleRead] = []
+        for node_id, mark in read_set.items():
+            if node_id in exempt:
+                continue
+            version, source, digest = self._current_for_mark(mark)
+            if digest == mark.digest:
+                continue
+            stale.append(classify(mark, version, source, own))
+        return stale
+
+    def _stale_exempt(self, task_id: str, staged: list[NodeId]) -> set[NodeId]:
+        """Read-set nodes whose staleness is already settled for this task.
+
+        Its own WRITE-held targets cannot have changed — nobody else can commit
+        them. Its INTENT_WRITE-held targets are keyed registrars that other
+        tasks append to concurrently *by design*; ``_reconcile_registrars`` has
+        already replayed this task's append onto whatever they hold now (or sent
+        the attempt back), so a newer version there is the expected state, not
+        a stale read.
+        """
+        granted = self._granted.get(task_id, {})
+        targets = set(self._progress[task_id].target_nodes)
+        return {
+            node_id
+            for node_id, mode in granted.items()
+            if node_id in targets
+            and mode in (LockMode.WRITE, LockMode.INTENT_WRITE)
+        }
+
+    def _current_for_mark(
+        self, mark: ReadMark
+    ) -> tuple[int | None, str | None, str | None]:
+        """Return ``(version, source, digest)`` of what a read-set node is *now*.
+
+        A fragment superseded by a whole-file commit is not gone: its symbol is
+        looked up in the whole-file node, so a sibling task's whole-file rewrite
+        is compared symbol-for-symbol rather than reported as a deletion.
+        """
+        fragment = self._committed_fragment(mark.node_id)
+        if fragment is not None:
+            return fragment.version, fragment.source, source_digest(fragment.source)
+        parts = str(mark.node_id).split("::")
+        if len(parts) >= 3:
+            whole = self._committed_fragment(NodeId(parts[0]))
+            if whole is not None:
+                qualname = parts[2].split("#", 1)[0]
+                extracted = symbol_source(whole.source, qualname)
+                if extracted is not None:
+                    return whole.version, extracted, source_digest(extracted)
+        return None, None, None
+
+    def _staged_sources(self, staged: list[NodeId]) -> dict[NodeId, str]:
+        """Return the task's pending sources, keyed by node id."""
+        own: dict[NodeId, str] = {}
+        for node_id in staged:
+            fragment = self._node_store.get_staged(node_id)
+            if fragment is not None:
+                own[node_id] = fragment.source
+        return own
+
+    def _recheck_against_current(
+        self, staged: list[NodeId], stale: list[StaleRead]
+    ) -> list[str]:
+        """Re-run the static checks for ``staged`` against the *current* code.
+
+        The signature check takes the changed nodes' current sources as the
+        definition authority; the cross-module checks judge the task's files as
+        they would be committed, against the store as it stands.
+        """
+        own = {str(k): v for k, v in self._staged_sources(staged).items()}
+        definitions = {
+            str(s.node_id): s.current_source
+            for s in stale
+            if s.current_source is not None
+        }
+        reasons: list[str] = []
+        if definitions and own:
+            report = self._conflict_detector.detect(
+                EditRound(definitions={**definitions, **own}, callers=own)
+            )
+            reasons.extend(report.reasons)
+        reasons.extend(self._prospective_defects(staged))
+        return reasons
+
+    def _prospective_defects(self, staged: list[NodeId]) -> list[str]:
+        """Cross-module defects the task's files would have if committed now."""
+        staged_set = set(staged)
+        files = sorted({_file_of(str(n)) for n in staged})
+        sources = StoreSources(self._node_store)
+        overrides: dict[str, str | None] = {}
+        for file_path in files:
+            try:
+                overrides[file_path] = self._assemble_preview(file_path, staged_set)
+            except (SyntaxError, NodeStoreError):
+                continue
+        view = sources.with_overrides(overrides)
+        return [
+            defect.detail
+            for defect in check_cross_module_api(view, frozenset(files))
+        ]
+
+    def _adjudicator(
+        self, staged: list[NodeId]
+    ) -> Callable[[StaleRead], bool | None] | None:
+        """Bind the optional LLM adjudicator to this commit's staged code."""
+        fn = self._adjudicate_fn
+        if fn is None:
+            return None
+        own = self._staged_sources(staged)
+        return lambda stale: fn(stale, own)
+
+    def _log_stale_decision(self, task_id: str, decision: StaleDecision) -> None:
+        """Log one ``STALE_READ`` event per stale node, each with its verdict."""
+        attempt = self._progress[task_id].attempts
+        for node in decision.nodes:
+            self._log(
+                EventType.STALE_READ,
+                task_id=task_id,
+                attempt=attempt,
+                node_id=str(node.stale.node_id),
+                layer=node.stale.mark.layer,
+                read_version=node.stale.mark.version,
+                current_version=node.stale.current_version,
+                change=str(node.stale.kind),
+                referenced=node.stale.referenced,
+                verdict=str(node.verdict),
+                commit_verdict=str(decision.verdict),
+                policy=self._config.semantic.stale_read,
+                reason=node.reason,
+            )
 
     def _reject(self, task_id: str, staged: list[NodeId], reasons: list[str]) -> None:
         """Log a rejection and discard the staged (pending) fragments."""
@@ -1767,7 +2657,11 @@ class Session:
         )
 
     def _build_edit_round(
-        self, staged: list[NodeId], peers: dict[str, str] | None = None
+        self,
+        staged: list[NodeId],
+        peers: dict[str, str] | None = None,
+        *,
+        task_id: str | None = None,
     ) -> EditRound:
         """Assemble an EditRound from staged fragments plus this batch's peers.
 
@@ -1785,11 +2679,19 @@ class Session:
             if fragment is not None:
                 own[str(node_id)] = fragment.source
         own_files = {_file_of(k) for k in own}
-        definitions = {**peers, **own}
+        contracts = (
+            self._contract_definitions(task_id, own) if task_id is not None else {}
+        )
+        definitions = {**contracts, **peers, **own}
         same_file = {
             k: v for k, v in definitions.items() if _file_of(k) in own_files
         }
         headers = {k: v for k, v in same_file.items() if _is_header_id(k)}
+        previous = {
+            k: source
+            for k in own
+            if (source := self._node_source(NodeId(k))) is not None
+        }
         # Each staged source is both a definition authority and a caller, so the
         # detector validates this task's new calls against every new signature.
         return EditRound(
@@ -1797,6 +2699,8 @@ class Session:
             callers=own,
             header_edits=headers,
             symbol_edits=same_file,
+            registry_edits=own,
+            previous=previous,
         )
 
     def _safe_output_path(self, file_path: str) -> Path:
@@ -1957,6 +2861,9 @@ class Session:
           string three times — ~18k output tokens, one failed task, and twelve
           dependents stranded behind it.
         """
+        if progress.kernel_note is not None:
+            note, progress.kernel_note = progress.kernel_note, None
+            return note
         reason = self._failure_reasons.get(progress.task_id)
         truncated = result is not None and matches(
             result.stop_reason, TRUNCATION_STOP_REASONS
@@ -2007,11 +2914,17 @@ class Session:
                 retry_note=progress.retry_note,
             )
             runner.assign(adapter, bundle)
+        # A re-dispatch replaced those tasks' read sets; persist them now rather
+        # than at the next unrelated state transition.
+        self._require_scheduler().save()
 
     def _enrich_bundle(self, bundle: TaskBundle) -> _Dispatch:
         """Attach every layer of context, record what was attached, and gate it.
 
-        Five layers, each only adding entries not already present:
+        Layer 0 (Wave 20) is ``contract:<id>`` — every declared contract the
+        task implements or builds on (its own, its providers', its context's),
+        so a dependent is shown the fixed interface even before its provider's
+        code exists. Then five layers, each only adding entries not present:
 
         1. ``write_source:<id>`` — every node the agent will modify.
         2. ``read_source:<id>`` — nodes the planner explicitly listed as context.
@@ -2039,9 +2952,12 @@ class Session:
         :class:`_Dispatch`.
         """
         task = self._dag_task(bundle.task_id)
+        self._record_grant(task)
+        bundle = self._resume_bundle(bundle)
         context = dict(bundle.context)
         target_files = {str(n).split("::", 1)[0] for n in bundle.target_nodes}
         layers: dict[str, list[str]] = {}
+        layers["contract"] = self._add_contracts(task, context)
         layers["write_targets"] = self._add_write_targets(
             bundle.target_nodes, context
         )
@@ -2055,12 +2971,71 @@ class Session:
             bundle.target_nodes, target_files, context
         )
         layers["dependency_output"] = self._add_dependency_outputs(task, context)
+        self._record_read_set(task, context, layers)
         return self._gate_dispatch(
             task,
             replace(bundle, context=context),
             layers,
             cross_file_dropped=dropped,
         )
+
+    def _resume_bundle(self, bundle: TaskBundle) -> TaskBundle:
+        """Narrow a re-queued task to its open grants and attach the kernel note.
+
+        A task the scheduler re-queues (a released parked result, a deadlock
+        victim) is dispatched from its full ``SubTask``: without this it would
+        redo grants it already committed, and arrive with no word of why.
+        """
+        progress = self._progress.get(bundle.task_id)
+        if progress is None:
+            return bundle
+        if progress.completed_nodes:
+            bundle = replace(bundle, target_nodes=progress.remaining)
+        if bundle.retry_note is None and progress.kernel_note is not None:
+            bundle = replace(bundle, retry_note=progress.kernel_note)
+            progress.kernel_note = None
+        return bundle
+
+    def _record_read_set(
+        self, task: SubTask, context: dict[str, str], layers: dict[str, list[str]]
+    ) -> None:
+        """Record every node this bundle carries, at the version it carries.
+
+        Called on the dispatching thread straight after enrichment. Commits
+        happen on that same thread, so nothing can advance the store between
+        the sources being read into ``context`` and the stamps taken here.
+        """
+        absent = [
+            node_id
+            for node_id in task.context_nodes
+            if self._dependency_source(node_id) is None
+        ]
+        read_set = build_read_set(
+            context,
+            layers,
+            absent,
+            fetch=self._committed_fragment,
+            expand=self._file_fragment_ids,
+        )
+        self._read_sets[task.task_id] = read_set
+        scheduler = self._scheduler
+        if scheduler is not None:
+            persisted = scheduler.annotations.setdefault("read_sets", {})
+            if isinstance(persisted, dict):
+                persisted[task.task_id] = read_set_to_json(read_set)
+
+    def _committed_fragment(self, node_id: NodeId) -> NodeFragment | None:
+        """Return a node's committed fragment, or None when it has none."""
+        try:
+            return self._node_store.get_node(node_id)
+        except NodeStoreError:
+            return None
+
+    def _file_fragment_ids(self, node_id: NodeId) -> list[NodeId]:
+        """Return the committed fragments of a bare whole-file id (else none)."""
+        if "::" in str(node_id):
+            return []
+        return [n for n in self._node_store.list_nodes(str(node_id)) if n != node_id]
 
     def _add_write_targets(
         self, target_nodes: list[NodeId], context: dict[str, str]
@@ -2078,10 +3053,16 @@ class Session:
     def _add_planner_context(
         self, context_nodes: list[NodeId], context: dict[str, str]
     ) -> list[str]:
-        """Layer 2: the nodes the planner explicitly listed as context."""
+        """Layer 2: the nodes the planner explicitly listed as context.
+
+        A whole-file id whose file is stored as fragments has no node of its
+        own, so it is assembled from them — the planner asked for the file, and
+        shipping nothing for it (as a plain ``get_node`` lookup did) left the
+        agent blind to exactly what it was told to read.
+        """
         added: list[str] = []
         for node_id in context_nodes:
-            source = self._node_source(node_id)
+            source = self._dependency_source(node_id)
             if source is not None:
                 key = f"read_source:{node_id}"
                 context[key] = source
@@ -2299,7 +3280,12 @@ class Session:
             return []
         added: list[str] = []
         spent = 0
+        dag = self._require_scheduler().dag
         for dep_id in sorted(task.depends_on):
+            if dep_id in dag.soft_dependencies(task.task_id) and not dag.is_complete(
+                dep_id
+            ):
+                continue  # not written yet: its declared contract is layer 0
             for node_id in self._dag_task(dep_id).target_nodes:
                 if _context_has(context, node_id):
                     continue
@@ -2457,7 +3443,17 @@ class Session:
             return False
 
     def _release_lock(self, task_id: str, node_id: NodeId) -> None:
-        self._lock_table.release(node_id, LockMode.WRITE, task_id)
+        self._lock_table.release(
+            node_id, self._granted_mode(task_id, node_id), task_id
+        )
+
+    def _granted_mode(self, task_id: str, node_id: NodeId) -> LockMode:
+        """Return the mode ``task_id`` was granted on a target (WRITE if unknown)."""
+        return self._granted.get(task_id, {}).get(node_id, LockMode.WRITE)
+
+    def _record_grant(self, task: SubTask) -> None:
+        """Remember the lock set a task was dispatched under."""
+        self._granted[task.task_id] = dict(lock_requests(task, self._lock_policy))
 
     def _dag_task(self, task_id: str) -> SubTask:
         return self._require_scheduler().dag.get_task(task_id)
@@ -2495,9 +3491,9 @@ class Session:
         if scheduler is None:
             return
         waiting = [
-            (task.task_id, node_id, LockMode.WRITE)
+            (task.task_id, node_id, mode)
             for task in scheduler.ready_queue
-            for node_id in task.target_nodes
+            for node_id, mode in lock_requests(task, self._lock_policy)
         ]
         if not waiting:
             return
@@ -2644,6 +3640,22 @@ class Session:
                 )
                 return len(expired)
             self._scheduler = scheduler
+            self._wave_graph = dep_graph_from_store(self._node_store)
+            self._lock_policy = build_lock_policy(
+                self._config.semantic,
+                self._node_store,
+                self._wave_graph,
+                list(scheduler.dag.tasks.values()),
+            )
+            scheduler.use_lock_policy(self._lock_policy)
+            self._granted = {}
+            persisted = scheduler.annotations.get("read_sets", {})
+            self._read_sets = {
+                str(task_id): read_set_from_json(raw)
+                for task_id, raw in (
+                    persisted.items() if isinstance(persisted, dict) else ()
+                )
+            }
             self._progress = {
                 t.task_id: self._restore_progress(scheduler, t)
                 for t in scheduler.dag.tasks.values()
@@ -2668,91 +3680,251 @@ class Session:
     # -- cascade detection -------------------------------------------------
 
     def detect_cascade_tasks(self) -> list[SubTask]:
-        """Return fix-up tasks for callers broken by signature changes this wave.
+        """Return fix-up tasks for everything this wave left broken between tasks.
 
-        After ``run()`` completes, this method compares the old and new AST
-        signature of every node committed during the wave.  When a function's
-        signature changed (parameters or return annotation differ), every node
-        in the store — across all files — that references that symbol by name is
-        a potential broken caller and gets its own SubTask.
+        Three sources, one review flow:
 
-        It also carries the *cross-module* check
-        (:meth:`detect_cross_module_defects`): a wave that created two modules
-        which disagree about each other's API changed no existing signature, so
-        the comparison above sees nothing, yet the code is broken exactly as if it
-        had. Both classes of breakage are fix-up work for the next wave, so they
-        share one entry point rather than needing a second review flow.
+        - **cross-module defects** (:meth:`detect_cross_module_defects`) — code
+          the wave wrote that contradicts the code it uses: unresolved imports
+          and attributes, wrong arity or constructor arguments, broken
+          overrides, new import cycles, duplicated implementations;
+        - **cascade** (Wave 20, R3) — callers of every symbol whose signature
+          changed or which was deleted/renamed this wave, found on the real
+          reference graph (before and after the wave), same-file callers
+          included, minus callers whose calls already fit the new signature;
+        - **gates** — whatever the optional type-check, impact-test and
+          import-smoke gates found, when a project turns them on.
 
-        Returns an empty list when no signatures changed, which is the expected
-        outcome when the planner was thorough about including all affected nodes.
-        A non-empty return is a signal that the planner missed callers; the
-        caller (``__main__``) should present these tasks to the user for review
-        before running a second wave.
+        A caller named by more than one is given one task, not several. Returns
+        an empty list when nothing is broken — the expected outcome when the
+        planner was thorough. Idempotent for an unchanged store (the cascade
+        loop asks twice).
         """
-        tasks = self._cross_module_fix_tasks(self.detect_cross_module_defects())
-        changed: list[tuple[NodeId, str, str, str]] = []
-        for node_id, (old_src, new_src) in self._wave_committed.items():
-            parts = str(node_id).split("::")
-            if len(parts) < 3:
-                continue
-            old_sig = _extract_sig(old_src) if old_src is not None else None
-            new_sig = _extract_sig(new_src)
-            # Only cascade when an *existing* function's signature changed.
-            # New functions (old_src is None) have no prior callers to break.
-            if old_sig is not None and new_sig is not None and old_sig != new_sig:
-                symbol = parts[2].rsplit(".", 1)[-1]
-                changed.append((node_id, symbol, old_sig, new_sig))
+        fixes = self._cross_module_fix_tasks(self.detect_cross_module_defects())
+        cascade = self._cascade_fix_tasks(self._cascade_items())
+        gated = self._gate_fix_tasks(self._gate_findings())
+        return _merge_fixups(_merge_fixups(fixes, cascade), gated)
 
-        if not changed:
-            return tasks
+    # -- cascade on the real graph (Wave 20, R3) -----------------------------
 
-        already_targeted: set[NodeId] = set()
+    def _cascade_items(self) -> list[CascadeItem]:
+        """Callers of symbols this wave re-signed or deleted, on the real graph.
 
-        for node_id, symbol, old_sig, new_sig in changed:
-            func_file = str(node_id).split("::", 1)[0]
-            pat = re.compile(r"\b" + re.escape(symbol) + r"\b")
-            for xfile_id in self._node_store.list_nodes():
-                if str(xfile_id).split("::", 1)[0] == func_file:
-                    continue  # same-file callers should have been in the plan
-                if xfile_id in already_targeted:
-                    continue
-                source = self._node_source(xfile_id)
-                if not (source and pat.search(source)):
-                    continue
-                already_targeted.add(xfile_id)
-                safe_id = _fixup_task_id("cascade", f"{symbol}_{xfile_id}")
-                tasks.append(SubTask(
-                    task_id=safe_id,
-                    description=(
-                        f"Update call sites of `{symbol}` in `{xfile_id}` — "
-                        f"its signature changed from `{old_sig}` to `{new_sig}`. "
-                        "Adjust every call in this node to match the new signature."
-                    ),
-                    target_nodes=[xfile_id],
-                    context_nodes=[node_id],
-                    depends_on=[],
-                    agent_type=self._default_agent_type or "",
-                ))
+        Cached per store generation and logged once per finding
+        (``CONFLICT_DETECTED`` with ``kind="cascade"``), like the cross-module
+        defects: the finding is on the record even if the fix-up is declined.
+        """
+        generation = self._node_store.generation
+        if self._cascade_at is not None and self._cascade_at[0] == generation:
+            return list(self._cascade_at[1])
+        items = self._find_cascade_items()
+        for item in items:
+            self._log(
+                EventType.CONFLICT_DETECTED,
+                kind="cascade",
+                file=_file_of(str(item.caller)),
+                defining_file=item.change.file,
+                reasons=[_describe_cascade(item).splitlines()[0]],
+            )
+        self._cascade_at = (generation, list(items))
+        return items
 
+    def _find_cascade_items(self) -> list[CascadeItem]:
+        """Diff this wave's symbols and walk the reference graph for callers."""
+        scope = sorted(self._wave_file_before)
+        if not scope:
+            return []
+        changes = [
+            change
+            for file_path in scope
+            for change in diff_symbols(
+                file_path,
+                self._wave_file_before.get(file_path) or "",
+                self._file_source_or_empty(file_path),
+            )
+        ]
+        if not any(c.kind is not SymbolChangeKind.BODY for c in changes):
+            return []
+        return cascade_items(
+            changes,
+            self._wave_graph,
+            dep_graph_from_store(self._node_store),
+            source_of=self._node_source,
+            after_sources=lambda f: self._file_source_or_empty(f) or None,
+        )
+
+    def _cascade_fix_tasks(self, items: list[CascadeItem]) -> list[SubTask]:
+        """One fix-up task per broken caller, naming every change it must absorb."""
+        by_caller: dict[NodeId, list[CascadeItem]] = {}
+        for item in items:
+            by_caller.setdefault(item.caller, []).append(item)
+        tasks: list[SubTask] = []
+        for caller, found in sorted(by_caller.items()):
+            symbols = sorted({i.change.old.qualname for i in found})
+            context = sorted({
+                d for i in found for d in i.definers
+                if self._node_source(d) is not None and d != caller
+            })
+            for item in found:
+                if not any(_file_of(str(c)) == item.change.file for c in context):
+                    context.extend(self._node_store.list_nodes(item.change.file))
+            tasks.append(SubTask(
+                task_id=_fixup_task_id("cascade", f"{'_'.join(symbols)}_{caller}"),
+                description=(
+                    f"Update `{caller}` for changes this wave made to code it "
+                    "uses:\n"
+                    + "\n".join(_describe_cascade(i) for i in found)
+                    + "\nAdjust every use in this node to match — do not restore "
+                    "the old definitions or add compatibility shims."
+                ),
+                target_nodes=[caller],
+                context_nodes=list(dict.fromkeys(n for n in context if n != caller)),
+                depends_on=[],
+                agent_type=self._default_agent_type or "",
+            ))
         return tasks
 
+    # -- optional heavy gates (Wave 20, D3/D4/D6) ----------------------------
+
+    def _gate_findings(self) -> list[GateFinding]:
+        """Run the enabled gates over this wave, once per store generation."""
+        if not self._gates.enabled or not self._wave_file_before:
+            return []
+        generation = self._node_store.generation
+        if self._gates_at is not None and self._gates_at[0] == generation:
+            return list(self._gates_at[1])
+        findings = self._gates.run(
+            self._wave_view(),
+            log=lambda **p: self._log(EventType.GATE_FINDING, **p),
+        )
+        for finding in findings:
+            self._log(
+                EventType.GATE_FINDING,
+                gate=finding.gate,
+                file=finding.file,
+                tasks=list(finding.tasks),
+                detail=finding.detail,
+            )
+        self._gates_at = (generation, list(findings))
+        return findings
+
+    def _wave_view(self) -> WaveView:
+        """Return what the gates may see of the wave that just ran."""
+        tasks = tuple(dict.fromkeys(task for task, *_ in self._wave_commit_log))
+        return WaveView(
+            work_dir=self._work_dir,
+            before=dict(self._wave_file_before),
+            current=lambda f: self._file_source_or_empty(f) or None,
+            subset=self._subset_files,
+            writers={f: list(w) for f, w in self._wave_file_writers.items()},
+            tasks=tasks,
+            task_nodes=lambda t: list(dict.fromkeys(
+                node for task, node, *_ in self._wave_commit_log if task == t
+            )),
+            file_nodes=lambda f: self._node_store.list_nodes(f),
+            timeout_s=self._config.semantic.gate_timeout_s,
+            max_overlays=self._config.semantic.impact_max_overlays,
+        )
+
+    def _subset_files(self, tasks: frozenset[str]) -> dict[str, str | None]:
+        """Every touched file as the pre-wave state plus only ``tasks``' commits.
+
+        Rebuilt from fragments, not files: each touched file's pre-wave
+        fragments, with the chosen tasks' committed nodes swapped in (in commit
+        order) and a whole-file commit superseding the fragments before it.
+        """
+        files: dict[str, str | None] = {}
+        for file_path in self._wave_file_before:
+            nodes: dict[NodeId, tuple[int | None, str]] = {
+                node: (order, source)
+                for node, order, source in self._wave_fragments_before.get(
+                    file_path, []
+                )
+            }
+            for task, node, order, source in self._wave_commit_log:
+                if task not in tasks or _file_of(str(node)) != file_path:
+                    continue
+                if "::" not in str(node):
+                    nodes = {}
+                nodes[node] = (order, source)
+            ordered = sorted(
+                nodes.items(),
+                key=lambda item: (item[1][0] is None, item[1][0] or 0, str(item[0])),
+            )
+            files[file_path] = (
+                assemble_fragments(
+                    [NodeFragment(n, "fragment", src, 1) for n, (_, src) in ordered]
+                )
+                if ordered
+                else None
+            )
+        return files
+
+    def _gate_fix_tasks(self, findings: list[GateFinding]) -> list[SubTask]:
+        """One fix-up task per gate and file, naming the task(s) it traces to."""
+        grouped: dict[tuple[str, str], list[GateFinding]] = {}
+        for finding in findings:
+            if finding.targets:
+                grouped.setdefault((finding.gate, finding.file), []).append(finding)
+        tasks: list[SubTask] = []
+        for (gate, file_path), found in sorted(grouped.items()):
+            culprits = sorted({t for f in found for t in f.tasks})
+            tasks.append(SubTask(
+                task_id=_fixup_task_id(f"{gate}_fix", file_path),
+                description=(
+                    f"The {gate.replace('_', ' ')} gate found a problem this "
+                    f"wave introduced (task(s) {', '.join(culprits) or 'unknown'}): "
+                    + "; ".join(f.detail for f in found)
+                    + ". Fix the code so the combined result is correct — do not "
+                    "weaken or delete the check that caught it."
+                ),
+                target_nodes=list(dict.fromkeys(n for f in found for n in f.targets)),
+                context_nodes=list(dict.fromkeys(n for f in found for n in f.context)),
+                depends_on=[],
+                agent_type=self._default_agent_type or "",
+            ))
+        return tasks
+
+    # -- post-wave cross-module analysis -------------------------------------
+
     def detect_cross_module_defects(self) -> list[CrossModuleDefect]:
-        """Report where the files this wave wrote contradict the modules they use.
+        """Report where the files this wave wrote contradict the rest of the code.
 
         Every gate MAK runs is scoped to one task's edit, so two tasks can each
         finish clean and still leave the codebase broken between them: a module
-        that imports a name its target never defines, or calls a sibling's
-        function with the wrong arity. Both parse, so the parse gate passes; the
-        signature is *new*, so cascade detection has no "before" to compare.
+        that imports a name its target never defines, calls a sibling's
+        function with the wrong arity, reads ``mod.name`` from a module that no
+        longer binds it, constructs a class its new fields reject, overrides a
+        base method it can no longer honour, closes an import cycle, or
+        duplicates a function another task just wrote.
 
-        Scope is every file with a node committed this wave, judged against the
-        store as it now stands. Each defect is logged as ``CONFLICT_DETECTED`` so
-        it is on the record even if the operator declines the fix-up wave.
+        Scope is every file with a commit this wave, judged against the store as
+        it now stands — and only defects the wave **introduced** are reported:
+        the same checks run over the pre-wave state, and anything they also
+        find there is pre-existing debt, not this wave's fix-up work. Each
+        defect is logged as ``CONFLICT_DETECTED`` so it is on the record even if
+        the operator declines the fix-up wave. Cached per store generation.
         """
-        scope = frozenset(_file_of(str(n)) for n in self._wave_committed)
+        scope = frozenset(self._wave_file_before) | frozenset(
+            _file_of(str(n)) for n in self._wave_committed
+        )
         if not scope:
             return []
-        defects = check_cross_module_api(self._file_sources(), scope)
+        generation = self._node_store.generation
+        if self._defects_at is not None and self._defects_at[0] == generation:
+            return list(self._defects_at[1])
+        after = StoreSources(self._node_store)
+        before = after.with_overrides({
+            f: self._wave_file_before.get(f)
+            for f in scope
+            if f in self._wave_file_before
+        })
+        baseline = {d.detail for d in _post_wave_checks(before, scope)}
+        defects = [
+            d for d in _post_wave_checks(after, scope) if d.detail not in baseline
+        ]
+        defects.extend(check_new_cycles(before, after, scope))
+        defects.extend(check_duplicates(self._created_functions(before, after, scope)))
         for defect in defects:
             self._log(
                 EventType.CONFLICT_DETECTED,
@@ -2761,37 +3933,73 @@ class Session:
                 defining_file=defect.defining_file,
                 reasons=[defect.detail],
             )
+        self._defects_at = (generation, list(defects))
         return defects
+
+    def _created_functions(
+        self, before: StoreSources, after: StoreSources, scope: frozenset[str]
+    ) -> list[CreatedFunction]:
+        """Top-level functions this wave created, with the task that wrote each."""
+        created: list[CreatedFunction] = []
+        for file_path in sorted(scope):
+            if file_path not in after:
+                continue
+            old = symbol_table(before[file_path]) if file_path in before else {}
+            for name, definition in symbol_table(after[file_path]).items():
+                if definition.kind != "function" or name in old:
+                    continue
+                writer = self._writer_of(file_path, name)
+                if writer is not None:
+                    created.append(
+                        CreatedFunction(file_path, name, definition.source, writer)
+                    )
+        return created
+
+    def _writer_of(self, file_path: str, name: str) -> str | None:
+        """Return the task that committed the node defining ``name``."""
+        for node_id in (
+            NodeId(f"{file_path}::function::{name}"),
+            NodeId(file_path),
+        ):
+            if node_id in self._wave_node_writer:
+                return self._wave_node_writer[node_id]
+        writers = self._wave_file_writers.get(file_path)
+        return writers[-1] if writers else None
 
     def _file_sources(self) -> dict[str, str]:
         """Return the assembled current source of every file the store holds."""
-        sources: dict[str, str] = {}
-        paths = {_file_of(str(n)) for n in self._node_store.list_nodes()}
-        for file_path in sorted(paths):
-            fragments = self._node_store.get_committed_fragments(file_path)
-            if fragments:
-                sources[file_path] = assemble_fragments(fragments)
-        return sources
+        return dict(StoreSources(self._node_store))
+
+    def _file_source_or_empty(self, file_path: str) -> str:
+        """Return a file's assembled committed source, or ``""`` when it has none."""
+        fragments = self._node_store.get_committed_fragments(file_path)
+        return assemble_fragments(fragments) if fragments else ""
 
     def _cross_module_fix_tasks(
         self, defects: list[CrossModuleDefect]
     ) -> list[SubTask]:
-        """One fix-up task per file whose cross-module references do not resolve."""
+        """One fix-up task per file whose cross-module references do not resolve.
+
+        R2: the fix-up names the tasks whose work met in the defect and carries
+        the wave's diff of both files, not just the defining modules' current
+        source — the agent is told what changed on each side, and by whom.
+        """
         by_file: dict[str, list[CrossModuleDefect]] = {}
         for defect in defects:
             by_file.setdefault(defect.file, []).append(defect)
         tasks: list[SubTask] = []
         for file_path, found in sorted(by_file.items()):
             listed = "; ".join(d.detail for d in found)
-            defining = sorted({d.defining_file for d in found})
+            defining = sorted({d.defining_file for d in found} - {file_path})
             tasks.append(SubTask(
                 task_id=_fixup_task_id("api_fix", file_path),
                 description=(
                     f"Fix `{file_path}` so its use of "
-                    f"{', '.join(f'`{d}`' for d in defining)} matches what those "
-                    f"modules actually define: {listed}. Use the real names and "
-                    "signatures — do not add fallbacks or try/except around the "
-                    "imports."
+                    f"{', '.join(f'`{d}`' for d in defining) or 'its own code'} "
+                    f"matches what those modules actually define: {listed}. Use "
+                    "the real names and signatures — do not add fallbacks or "
+                    "try/except around the imports."
+                    + self._pair_context(file_path, defining)
                 ),
                 target_nodes=self._node_store.list_nodes(file_path),
                 context_nodes=[
@@ -2803,6 +4011,24 @@ class Session:
                 agent_type=self._default_agent_type or "",
             ))
         return tasks
+
+    def _pair_context(self, file_path: str, defining: list[str]) -> str:
+        """Name the tasks behind a defect and show what each side changed."""
+        parts: list[str] = []
+        for path in [file_path, *defining]:
+            writers = self._wave_file_writers.get(path)
+            if not writers:
+                continue
+            diff = _bounded_diff(
+                self._wave_file_before.get(path) or "",
+                self._file_source_or_empty(path),
+                path,
+            )
+            parts.append(
+                f"\n\n`{path}` was changed this wave by task(s) "
+                f"{', '.join(writers)}:\n{diff}"
+            )
+        return "".join(parts)
 
     # -- helpers -----------------------------------------------------------
 
@@ -2827,22 +4053,95 @@ def _fixup_task_id(prefix: str, subject: str) -> str:
     return f"{slug}_{digest}"
 
 
-def _extract_sig(source: str) -> str | None:
-    """Return a normalized ``name(args) -> ret`` signature for the first function.
+def _post_wave_checks(
+    sources: Mapping[str, str], scope: frozenset[str]
+) -> list[CrossModuleDefect]:
+    """Every whole-repository check that judges ``scope`` against ``sources``."""
+    index = ModuleIndex(sources)
+    return [
+        *check_cross_module_api(sources, scope),
+        *check_module_attributes(index, scope),
+        *check_constructors(index, scope),
+        *check_overrides(index, scope),
+    ]
 
-    Returns ``None`` if the source cannot be parsed or contains no function.
-    Used to detect whether a committed edit changed a function's public contract.
-    """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = ast.unparse(node.args)
-            ret = f" -> {ast.unparse(node.returns)}" if node.returns else ""
-            return f"{node.name}({args}){ret}"
-    return None
+
+def _bounded_diff(before: str, after: str, path: str, limit: int = 3000) -> str:
+    """Return a unified diff of one file's wave, truncated to ``limit`` chars."""
+    text = "".join(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile=f"{path} (before this wave)",
+            tofile=f"{path} (now)",
+        )
+    )
+    if len(text) > limit:
+        return text[:limit] + "\n… (diff truncated)"
+    return text or "(no textual change)"
+
+
+def _describe_interface_change(
+    before: str | None, after: str | None, changed: set[str] | None
+) -> str:
+    """Return a short, readable account of an interface change."""
+    if before is None or after is None or changed is None:
+        return "its interface could not be read"
+    old, new = set(before.splitlines()), set(after.splitlines())
+    removed = [line.strip() for line in before.splitlines() if line not in new]
+    added = [line.strip() for line in after.splitlines() if line not in old]
+    parts = []
+    if removed:
+        parts.append("was: " + "; ".join(removed[:3]))
+    if added:
+        parts.append("now: " + "; ".join(added[:3]))
+    names = ", ".join(sorted(changed)[:5])
+    return f"{names}: " + (" / ".join(parts) or "its interface changed")
+
+
+def _describe_cascade(item: CascadeItem) -> str:
+    """Return one line (plus a bounded diff) describing a change to absorb."""
+    change = item.change
+    where = f"`{change.old.qualname}` in `{change.file}`"
+    if change.kind is SymbolChangeKind.DELETED:
+        hint = (
+            f" — it appears to be renamed to `{item.renamed_to}`"
+            if item.renamed_to else ""
+        )
+        return f"- {where} was deleted this wave{hint}."
+    assert change.new is not None
+    diff = _bounded_diff(
+        change.old.source, change.new.source, change.old.qualname, 1500
+    )
+    return (
+        f"- {where}: signature changed from `{change.old.signature}` to "
+        f"`{change.new.signature}`.\n{diff}"
+    )
+
+
+def _merge_fixups(fixes: list[SubTask], extra: list[SubTask]) -> list[SubTask]:
+    """Fold a fix-up into an earlier one that already targets its node."""
+    merged = list(fixes)
+    for task in extra:
+        home = next(
+            (
+                i for i, fix in enumerate(merged)
+                if set(task.target_nodes) <= set(fix.target_nodes)
+            ),
+            None,
+        )
+        if home is None:
+            merged.append(task)
+            continue
+        fix = merged[home]
+        merged[home] = replace(
+            fix,
+            description=f"{fix.description}\n\nAlso: {task.description}",
+            context_nodes=list(
+                dict.fromkeys([*fix.context_nodes, *task.context_nodes])
+            ),
+        )
+    return merged
 
 
 def _is_excluded(rel: str, exclude_patterns: tuple[str, ...]) -> bool:

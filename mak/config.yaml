@@ -94,6 +94,32 @@ git:
   # policy a project opts into rather than one MAK imposes.
   # require_clean_tree: false
 
+# Semantic conflicts (Wave 20): two edits on different nodes that are each right
+# and wrong together. Every setting below is optional; the values shown are the
+# defaults.
+# semantic:
+#   # What a commit does when a node its bundle carried changed underneath it:
+#   # accept_if_api_stable | revalidate | redispatch | reject.
+#   stale_read: "revalidate"
+#   # Split each node's lock into interface (node#api) and body (node).
+#   api_locks: true
+#   # A fragment write holds INTENT_WRITE on its file/class, so a whole-file or
+#   # whole-class rewrite cannot run beside it.
+#   intention_locks: true
+#   # Keyed registrar functions (register("<key>", ...) lists) take appends in
+#   # parallel and the kernel merges them; a repeated key is a collision.
+#   registry_keys: true
+#   # Dispatch dependents against a declared contract, not the implementation.
+#   contract_dispatch: false
+#   # Optional gates, all off by default. Findings become fix-up tasks.
+#   type_check: "off"        # off | pyright | mypy
+#   impact_tests: "off"      # off | on
+#   import_smoke: "off"      # off | on
+#   adjudicator: "off"       # off | <backend>:<model>
+#   adjudicator_max_calls: 5
+#   gate_timeout_s: 300
+#   impact_max_overlays: 12
+
 node_store:
   include_patterns:
     - "**/*.py"

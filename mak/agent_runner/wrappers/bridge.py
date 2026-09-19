@@ -86,10 +86,19 @@ def build_prompt(bundle: TaskBundle) -> str:
     for node_id in bundle.target_nodes:
         source = bundle.context.get(f"write_source:{node_id}", "")
         targets.append(f"### {node_id}\n{source}")
+    # Every read-only context kind the kernel ships, labelled by what it is:
+    # full source, an API digest (a dependency past the byte budget), or a
+    # declared contract (Wave 20). Rendering only ``read_source`` left a CLI
+    # agent blind to the other two.
+    labels = {
+        "contract": "declared contract",
+        "read_source": "read-only",
+        "read_api": "read-only API digest",
+    }
     reads = [
-        f"### {key[len('read_source:'):]} (read-only)\n{value}"
+        f"### {key.split(':', 1)[1]} ({labels[key.split(':', 1)[0]]})\n{value}"
         for key, value in bundle.context.items()
-        if key.startswith("read_source:")
+        if key.split(":", 1)[0] in labels
     ]
     context = ("\nRead-only context:\n" + "\n".join(reads) + "\n") if reads else ""
     ids = "\n".join(str(n) for n in bundle.target_nodes)
