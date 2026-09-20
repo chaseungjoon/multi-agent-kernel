@@ -42,6 +42,7 @@ from mak.config import model_caveat
 from mak.endpoints.types import EndpointConfig, Location
 from mak.local import OllamaError
 from mak.local.runtime import KIND_OLLAMA, KIND_OPENAI_COMPATIBLE
+from mak.models.refresh import RefreshReport
 
 _KEY_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
@@ -327,7 +328,65 @@ def _list_models(state: CliState, console: Console) -> None:
                 console.print(f"    {active} {spec}{rec}")
             else:
                 console.print(f"    [dim]○ {spec}[/dim]")
+    _print_endpoint_model_groups(state, console, for_planner=False)
     console.print()
+
+
+def _endpoint_model_rows(
+    endpoint: EndpointConfig, state: CliState, *, for_planner: bool
+) -> list[tuple[str, str]]:
+    """Return cached and manually selected models for one endpoint."""
+    rows = [
+        (entry.model_id, entry.planner_note())
+        for entry in registry().for_endpoint(endpoint.id)
+    ]
+    known = {model_id for model_id, _note in rows}
+    prefix = f"{endpoint.id}:"
+    selected = (
+        []
+        if for_planner
+        else [
+            spec[len(prefix) :]
+            for spec in state.selected_models
+            if spec.startswith(prefix)
+        ]
+    )
+    if for_planner and state.planner_endpoint_id == endpoint.id:
+        selected.append(state.planner_model)
+    rows.extend((model_id, "") for model_id in selected if model_id not in known)
+    return rows
+
+
+def _print_endpoint_model_groups(
+    state: CliState, console: Console, *, for_planner: bool
+) -> None:
+    """Show configured endpoints beside the built-in model providers."""
+    for endpoint in _configured_endpoints().values():
+        has_key = not endpoint.api_key_env or _endpoint_key_present(endpoint, state)
+        identity = (
+            endpoint.display_name
+            if endpoint.display_name == endpoint.id
+            else f"{endpoint.display_name} [dim]({endpoint.id})[/dim]"
+        )
+        console.print(
+            f"\n  [bold]{identity}[/bold]"
+            + ("" if has_key else " [dim]— no API key[/dim]")
+        )
+        rows = _endpoint_model_rows(endpoint, state, for_planner=for_planner)
+        if not rows:
+            console.print("    [dim]no models cached — /refresh-models[/dim]")
+            continue
+        for model_id, note in rows:
+            spec = f"{endpoint.id}:{model_id}"
+            selected = (
+                state.planner_endpoint_id == endpoint.id
+                and state.planner_model == model_id
+                if for_planner
+                else spec in state.selected_models
+            )
+            active = "[green]●[/green]" if selected else "[dim]○[/dim]"
+            suffix = f"  [dim]({note})[/dim]" if note else ""
+            console.print(f"    {active} {spec}{suffix}")
 
 
 def _cmd_max_agents(args: list[str], state: CliState, console: Console) -> None:
@@ -813,6 +872,7 @@ def _list_planner_models(state: CliState, console: Console) -> None:
                 console.print(f"    {active} {m.model_id}{tag}")
             else:
                 console.print(f"    [dim]○ {m.model_id}[/dim]")
+    _print_endpoint_model_groups(state, console, for_planner=True)
     console.print()
 
 
@@ -825,7 +885,7 @@ def _cmd_refresh_models(state: CliState, console: Console) -> None:
     console.print("\n  [dim]Fetching model lists…[/dim]")
     _refresh_local(state, console)
     try:
-        report = registry().refresh_now(state.api_keys)
+        report = _refresh_catalog(state)
     except Exception as exc:  # noqa: BLE001 - a refresh must never kill the prompt
         print_error(console, f"Refresh failed: {exc}")
         return
@@ -860,6 +920,27 @@ def _cmd_refresh_models(state: CliState, console: Console) -> None:
     # A model the user is actively using may have just been retired. Say so —
     # but change nothing: MAK never re-picks a model on the user's behalf.
     _warn_retired_selections(state, console)
+
+
+def _refresh_catalog(state: CliState) -> RefreshReport:
+    """Refresh built-in providers plus endpoints discovered at runtime."""
+    endpoints = tuple(_configured_endpoints().values())
+    if not endpoints:
+        return registry().refresh_now(state.api_keys)
+
+    from cli.core.api_keys import key_names_for, load_keys
+    from mak.endpoints.resolution import resolve_endpoints
+    from mak.models.providers import default_sources, sources_for_endpoints
+
+    keys = load_keys(key_names_for(endpoints))
+    keys.update({name: value for name, value in state.api_keys.items() if value})
+    resolved = resolve_endpoints(endpoints, env=keys)
+    sources = (
+        *default_sources(),
+        *sources_for_endpoints(tuple(resolved.values())),
+    )
+    key_envs = {endpoint.id: endpoint.api_key_env or "" for endpoint in endpoints}
+    return registry().refresh_now(keys, sources=sources, key_envs=key_envs)
 
 
 def _refresh_local(state: CliState, console: Console) -> None:

@@ -353,6 +353,33 @@ class TestWizardValidation:
         assert "already configured" in out
 
 
+class TestWizardSelection:
+    def test_using_endpoint_for_agents_replaces_the_old_roster(
+        self, state: CliState, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The success message must describe the roster that will actually run."""
+        import cli.endpoints.commands as commands
+
+        draft = wizard.Draft(
+            endpoint_id="openrouter",
+            model="vendor/model",
+            use_for_agents=True,
+        )
+        endpoint = _endpoint("openrouter", api_key_env=None)
+        monkeypatch.setattr(
+            commands,
+            "run_add",
+            lambda *_args, **_kwargs: (endpoint, draft),
+        )
+        monkeypatch.setattr(commands, "commit", lambda *_args: endpoint)
+        state.selected_models = ["anthropic:claude-sonnet-4-6"]
+
+        out = _run(["add", "openrouter"], state)
+
+        assert state.selected_models == ["openrouter:vendor/model"]
+        assert "Agents will use openrouter:vendor/model" in out
+
+
 class TestDispatch:
     def test_the_command_is_registered(self, state: CliState) -> None:
         console = Console(width=200, no_color=True, record=True)

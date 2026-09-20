@@ -274,6 +274,7 @@ class MakCompleter(Completer):
                         display_meta=PROVIDER_DISPLAY[provider] + key_note,
                     )
                 )
+        results.extend(self._complete_endpoint_models(partial, for_planner=False))
         return self._grouped(self._complete_local(partial), results)
 
     # ── Planner model completions ─────────────────────────────────────────────
@@ -298,7 +299,41 @@ class MakCompleter(Completer):
                         display_meta=PROVIDER_DISPLAY[provider] + warn + key_note,
                     )
                 )
+        results.extend(self._complete_endpoint_models(partial, for_planner=True))
         return self._grouped(self._complete_local(partial), results)
+
+    def _complete_endpoint_models(
+        self, partial: str, *, for_planner: bool
+    ) -> list[Completion]:
+        """Complete cached or selected models from configured endpoints."""
+        entries = all_models()
+        results: list[Completion] = []
+        seen: set[str] = set()
+        for endpoint_id in self._state.endpoint_ids:
+            models = [e.model_id for e in entries if e.endpoint_id == endpoint_id]
+            prefix = f"{endpoint_id}:"
+            if not for_planner:
+                models.extend(
+                    spec[len(prefix) :]
+                    for spec in self._state.selected_models
+                    if spec.startswith(prefix)
+                )
+            if for_planner and self._state.planner_endpoint_id == endpoint_id:
+                models.append(self._state.planner_model)
+            for model_id in models:
+                spec = f"{endpoint_id}:{model_id}"
+                if spec in seen or not spec.startswith(partial):
+                    continue
+                seen.add(spec)
+                results.append(
+                    Completion(
+                        spec,
+                        start_position=-len(partial),
+                        display=spec,
+                        display_meta=f"endpoint · {endpoint_id}",
+                    )
+                )
+        return results
 
     # ── Directory path completions ─────────────────────────────────────────────
 

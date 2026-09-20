@@ -142,8 +142,11 @@ def _sub_add(console: Console, state: CliState, profile: str) -> None:
     if not draft.model:
         return
     spec = f"{endpoint.id}:{draft.model}"
-    if draft.use_for_agents and spec not in state.selected_models:
-        state.selected_models.append(spec)
+    if draft.use_for_agents:
+        # "Use it for agents" is a roster selection, just like /models.  Adding
+        # it to the old roster made the confirmation lie: the previous models
+        # remained eligible and could receive every task before this one did.
+        state.selected_models = [spec]
         print_ok(console, f"Agents will use {spec}.")
     if draft.use_for_planner:
         state.planner_model = draft.model

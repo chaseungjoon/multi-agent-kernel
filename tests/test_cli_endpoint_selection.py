@@ -105,6 +105,33 @@ class TestModelSelection:
         _run("/models nvidia-work:model-a nvidia-work:model-b", state)
         assert len(state.selected_models) == 2
 
+    def test_the_model_browser_shows_a_configured_endpoint(
+        self, state: CliState
+    ) -> None:
+        save_user_endpoints((_endpoint("openrouter", key_env=None),))
+        state.endpoint_ids = ["openrouter"]
+        state.selected_models = ["openrouter:vendor/model"]
+
+        out = _run("/models", state)
+
+        assert "openrouter" in out
+        assert "openrouter:vendor/model" in out
+
+    def test_model_completion_includes_a_configured_endpoint(
+        self, state: CliState
+    ) -> None:
+        from cli.completer import MakCompleter
+        from prompt_toolkit.document import Document
+
+        state.endpoint_ids = ["openrouter"]
+        state.selected_models = ["openrouter:vendor/model"]
+        completions = MakCompleter(state).get_completions(
+            Document("/models open", 12),
+            None,  # type: ignore[arg-type]
+        )
+
+        assert "openrouter:vendor/model" in [item.text for item in completions]
+
 
 class TestPlannerSelection:
     def test_an_endpoint_spec_sets_route_and_model(

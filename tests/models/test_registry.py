@@ -117,6 +117,16 @@ class TestRefreshNow:
         assert report.ok is True
         assert "gpt-9" in report.results[0].added
 
+    def test_accepts_sources_discovered_at_runtime(self, tmp_path: Path) -> None:
+        reg = _registry(tmp_path)
+        reg.refresh_now(
+            {"OPENROUTER_API_KEY": "or"},
+            sources=[FakeSource("openrouter", ["vendor/model"])],
+            key_envs={"openrouter": "OPENROUTER_API_KEY"},
+        )
+
+        assert reg.find("vendor/model", "openrouter") is not None
+
     def test_failure_leaves_catalog_intact(self, tmp_path: Path) -> None:
         reg = _registry(
             tmp_path, [FakeSource("anthropic", raises=ModelFetchError("offline"))]

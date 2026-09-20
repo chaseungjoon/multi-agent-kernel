@@ -562,6 +562,24 @@ class TestStructuredOutputLadder:
         assert calls[1]["response_format"] == {"type": "json_object"}
         assert "response_format" not in calls[2]
 
+    def test_openrouter_upstream_wording_reaches_prompt_only_json(self) -> None:
+        """Novita names the capability, not the response_format field."""
+        client = ScriptedClient(
+            [
+                _format_rejection("model features structured outputs not support"),
+                _format_rejection("model features structured outputs not support"),
+                _reply(_GOOD),
+            ]
+        )
+        adapter = OpenAiApiAdapter(client=client, structured_output="auto")
+
+        assert adapter.parse_result(adapter.send("{}")).success is True
+        calls = client.chat.completions.calls
+        assert len(calls) == 3
+        assert calls[0]["response_format"]["type"] == "json_schema"
+        assert calls[1]["response_format"] == {"type": "json_object"}
+        assert "response_format" not in calls[2]
+
     def test_auto_starts_at_the_top_rung(self) -> None:
         adapter = OpenAiApiAdapter(
             client=_client_returning(_GOOD), structured_output="auto"

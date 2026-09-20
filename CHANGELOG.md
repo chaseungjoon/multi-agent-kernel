@@ -14,6 +14,20 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.8.1b] — 2026-09-20
+
+### Fixed
+- Selecting a newly added endpoint for agents now replaces the previous agent
+  roster, matching the CLI confirmation instead of silently retaining older
+  models.
+- Configured OpenAI-compatible endpoints now appear in `/models`, `/planner`,
+  and model completion menus, and are restored when the CLI restarts.
+- `/refresh-models` now fetches model catalogs from configured endpoints in
+  addition to the built-in providers.
+- OpenRouter upstream errors that report unsupported "structured outputs" are
+  recognized as response-format rejections, allowing agents to fall back from
+  JSON Schema through JSON Object to prompt-only JSON.
+
 ## [0.8.0b] — 2026-09-20
 
 ### Added

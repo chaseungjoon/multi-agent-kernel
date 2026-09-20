@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from typing import Any
 
 import cli.commands as commands
 import pytest
@@ -111,6 +112,36 @@ class TestOutput:
             "/refresh-models", CliState(api_keys=dict(KEYS)), console
         )
         assert "up to date" in buf.getvalue()
+
+    def test_configured_endpoints_are_included_in_manual_refresh(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from mak.endpoints.store import save_user_endpoints
+        from mak.endpoints.types import EndpointConfig, Location, Transport
+        from mak.models.refresh import RefreshReport
+
+        endpoint = EndpointConfig(
+            id="openrouter",
+            transport=Transport.OPENAI_CHAT,
+            base_url="https://openrouter.example/v1",
+            location=Location.HOSTED,
+        )
+        save_user_endpoints((endpoint,))
+        seen: list[str] = []
+        reg = ModelRegistry(manifest_path_=tmp_path / "models.json", sources=())
+
+        def capture(_keys: object, **kwargs: object) -> RefreshReport:
+            sources: Any = kwargs.get("sources", ())
+            seen.extend(source.provider for source in sources)
+            return RefreshReport()
+
+        monkeypatch.setattr(reg, "refresh_now", capture)
+        monkeypatch.setattr(commands, "registry", lambda: reg)
+        console, _buf = _console()
+
+        commands.handle_command("/refresh-models", CliState(), console)
+
+        assert "openrouter" in seen
 
 
 class TestRetiredSelectionWarnings:

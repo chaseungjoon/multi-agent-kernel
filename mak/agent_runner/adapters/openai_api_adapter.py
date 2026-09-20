@@ -113,6 +113,10 @@ _FORMAT_REJECTION_MARKERS = (
     "response_format",
     "json_schema",
     "json mode",
+    # OpenRouter preserves this wording from some upstream providers (notably
+    # Novita). It names the rejected capability without echoing the request's
+    # response_format field or the specific JSON-schema rung.
+    "structured outputs",
 )
 
 # A format rejection is a client error about the request body. A 5xx is the

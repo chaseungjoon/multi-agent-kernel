@@ -340,12 +340,19 @@ class MakCli:
         self.console.print(f"\n  [dim]Session ended{suffix}.[/dim]\n")
 
     def _init_state(self) -> CliState:
-        keys  = load_keys()
+        from cli.core.api_keys import key_names_for
+        from cli.endpoints.commands import all_endpoints
+
+        endpoints = all_endpoints()
+        keys = load_keys(key_names_for(endpoints))
         # Kick off a scheduled model-catalog refresh (1st/15th) in the
         # background. Returns immediately when not due, offline, keyless, or
         # opted out; it never prints — results show up in /models and /status.
         registry().maybe_auto_refresh(keys, enabled=_auto_refresh_enabled())
-        state = CliState(api_keys=keys)
+        state = CliState(
+            api_keys=keys,
+            endpoint_ids=[endpoint.id for endpoint in endpoints],
+        )
         # Reconnect to the hosts a previous session used (``/local url``);
         # offline, from the cached model lists.
         restore_saved_hosts(state)

@@ -171,18 +171,26 @@ class ModelRegistry:
 
     # ── Refresh ──────────────────────────────────────────────────────────────
 
-    def refresh_now(self, api_keys: Mapping[str, str]) -> RefreshReport:
+    def refresh_now(
+        self,
+        api_keys: Mapping[str, str],
+        *,
+        sources: Sequence[ModelSource] | None = None,
+        key_envs: Mapping[str, str] | None = None,
+    ) -> RefreshReport:
         """Fetch every provider synchronously and swap in the result.
 
         Ignores the schedule and the cooldown entirely — that is the whole point
         of the manual ``/refresh-models`` path: a model released on the 17th is
-        usable on the 17th.
+        usable on the 17th. Callers may add sources discovered at runtime, such
+        as endpoints saved by the interactive CLI.
         """
         manifest, report = refresh(
-            sources=self._sources,
+            sources=self._sources if sources is None else sources,
             api_keys=api_keys,
             manifest=self._manifest,
             now=_now(),
+            key_envs=key_envs,
         )
         self._apply(manifest)
         return report
