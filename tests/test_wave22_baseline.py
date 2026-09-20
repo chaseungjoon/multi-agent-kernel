@@ -41,7 +41,12 @@ def _config(*agents: AgentConfig) -> MakConfig:
 
 
 class TestRegistryIsKeyedByType:
-    """Today's routing key. Wave 22 Step 5 replaces it with the agent id."""
+    """The routing key, before and after Step 5 replaced type with agent id.
+
+    For a legacy roster the derived id *is* the type, so the first and third
+    tests here read identically on both sides of the change — which is the
+    point: an existing config routes exactly as it always did.
+    """
 
     def test_a_legacy_roster_registers_one_entry_per_type(self) -> None:
         registry = build_registry(
@@ -57,23 +62,36 @@ class TestRegistryIsKeyedByType:
             "openai_api",
         ]
 
-    def test_two_entries_of_one_type_collapse_to_a_single_factory(self) -> None:
-        """The bug Wave 22 exists to fix, pinned so the fix is visible.
+    def test_two_entries_of_one_type_are_now_refused_not_silently_merged(
+        self,
+    ) -> None:
+        """Inverted by Step 5 — this is the bug the wave exists to fix.
 
-        Two ``openai_api`` entries cannot coexist: the second silently
-        overwrites the first in the registry dict, so a roster naming two
-        OpenAI-compatible endpoints runs only the last one. Step 5 makes this a
-        raise, and the roster legal under distinct ids.
+        Before Wave 22 the second ``openai_api`` entry silently overwrote the
+        first in the registry dict, so a roster naming two OpenAI-compatible
+        endpoints ran only the last one and nothing said so. The collision is
+        now an error naming the id, and the roster becomes legal the moment the
+        two entries are given distinct ids.
         """
+        with pytest.raises(ConfigError, match="resolve to the id 'openai_api'"):
+            build_registry(
+                _config(
+                    AgentConfig(type="openai_api", model="first"),
+                    AgentConfig(type="openai_api", model="second"),
+                )
+            )
+
+    def test_the_same_roster_works_once_the_ids_differ(self) -> None:
         registry = build_registry(
             _config(
-                AgentConfig(type="openai_api", model="first"),
-                AgentConfig(type="openai_api", model="second"),
+                AgentConfig(type="openai_api", id="cloud", model="first"),
+                AgentConfig(type="openai_api", id="gateway", model="second"),
             )
         )
-        assert registry.list_types() == ["openai_api"]
-        adapter: Any = registry.get("openai_api")
-        assert adapter.model == "second"
+        assert registry.list_ids() == ["cloud", "gateway"]
+        first: Any = registry.get("cloud")
+        second: Any = registry.get("gateway")
+        assert (first.model, second.model) == ("first", "second")
 
     def test_default_agent_type_is_the_first_configured_entry(self) -> None:
         config = _config(
@@ -81,13 +99,17 @@ class TestRegistryIsKeyedByType:
         )
         assert default_agent_type(config) == "gemini_api"
 
-    def test_register_factory_overwrites_without_complaint(self) -> None:
-        """``AdapterRegistry`` itself permits the overwrite. Step 5 forbids it."""
+    def test_register_factory_refuses_a_duplicate_id(self) -> None:
+        """Inverted by Step 5: the bare dict assignment is gone.
+
+        ``replace_factory`` is the deliberate door for swapping in a double;
+        see ``tests/agent_runner/test_registry.py``.
+        """
         registry = AdapterRegistry()
         make: Any = lambda: object()  # noqa: E731
         registry.register_factory("dup", make)
-        registry.register_factory("dup", make)
-        assert registry.list_types() == ["dup"]
+        with pytest.raises(ConfigError, match="two agents are configured"):
+            registry.register_factory("dup", make)
 
 
 class TestSpecParsing:

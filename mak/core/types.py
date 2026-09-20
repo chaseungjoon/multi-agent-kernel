@@ -158,6 +158,10 @@ class SubTask:
     target_nodes: list[NodeId] = field(default_factory=list)
     context_nodes: list[NodeId] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
+    # The agent's **routing id**, not its transport. The field keeps its name so
+    # task bundles and recovery files written before Wave 22 still decode, and
+    # for a legacy roster the id *is* the type, so old files mean exactly what
+    # they always did. A future schema version renames it to ``agent_id``.
     agent_type: str = ""
     changes_api: bool | None = None
     api_targets: list[NodeId] = field(default_factory=list)

@@ -29,8 +29,9 @@ from mak.bootstrap import (
     LOCAL_AGENT_TYPES,
     agents_from_specs,
     build_registry,
-    default_agent_type,
-    healthy_agent_types,
+    default_agent_id,
+    healthy_agent_ids,
+    resolved_agents,
     validate_config,
 )
 from mak.cascade import CascadeApproval, run_cascade_waves
@@ -328,35 +329,39 @@ def build_session(
         persist_path=mak_dir / "lock_table.json",
         default_timeout=config.session.lock_timeout_s,
     )
-    registry = build_registry(config, sandbox=sandbox)
+    # Resolve once and pass the roster down, so the registry, the pool caps and
+    # the preflight cannot disagree about what is configured.
+    roster = resolved_agents(config)
+    registry = build_registry(config, sandbox=sandbox, agents=roster)
     # Health preflight: verify each configured agent is usable *before* dispatch,
     # so a missing CLI binary or absent API key surfaces now instead of as a
     # mid-run failure or a long timeout. The healthy set becomes the distribution
     # pool; the default agent must be among it.
-    default_type = args.agent or default_agent_type(config)
-    configured = [a.type for a in config.agents]
-    healthy, unhealthy, why = healthy_agent_types(registry, configured)
-    for agent_type in unhealthy:
+    default_id = args.agent or default_agent_id(config)
+    configured = [a.id for a in roster]
+    healthy, unhealthy, why = healthy_agent_ids(registry, configured)
+    for agent_id in unhealthy:
         # The adapter's own reason when it has one — "Ollama is not running at
         # http://localhost:11434", "model 'qwen2.5-coder:14b' is not pulled" —
         # because the generic line sends a local user to fix the wrong thing.
-        reason = why.get(agent_type) or "missing API key/SDK, or CLI not on PATH"
+        reason = why.get(agent_id) or "missing API key/SDK, or CLI not on PATH"
         print(
-            f"mak: warning: agent '{agent_type}' failed its health check "
+            f"mak: warning: agent '{agent_id}' failed its health check "
             f"({reason}) — it will not be used.",
             file=sys.stderr,
         )
-    if default_type not in healthy:
+    if default_id not in healthy:
         raise ConfigError(
-            f"the default agent '{default_type}' is not usable "
+            f"the default agent '{default_id}' is not usable "
             "(failed its health check); configure a working agent/key"
         )
     # Per-agent config knobs reach the runner here: the read timeout is the
     # largest configured agent timeout (so no agent is cut short), and each
-    # agent type's max_instances caps its retained idle subprocess pool.
+    # agent's max_instances caps its retained idle subprocess pool — keyed by
+    # id, so two agents sharing a transport get their own caps.
     agent_runner = AgentRunner(
-        timeout_s=max((a.timeout for a in config.agents), default=300),
-        pool_caps={a.type: a.max_instances for a in config.agents},
+        timeout_s=max((a.timeout for a in roster), default=300),
+        pool_caps={a.id: a.max_instances for a in roster},
         work_dir=str(work_dir),
     )
     planner = Planner(
@@ -368,6 +373,7 @@ def build_session(
         ),
         max_retries=config.planner.max_retries,
         agent_types=healthy,
+        agent_labels=[a.label() for a in roster if a.id in set(healthy)],
         strategy=config.planner.strategy,
         self_critique=config.planner.self_critique,
     )
@@ -392,7 +398,7 @@ def build_session(
         git_helper=git_helper,
         logger=logger,
         test_runner=build_test_runner(config.session.test_command, work_dir),
-        default_agent_type=default_type,
+        default_agent_type=default_id,
         agent_pool=healthy,
         # One owner per project. Taken in initialize()/recover(), before anything
         # reads or mutates .mak/, and released by close().

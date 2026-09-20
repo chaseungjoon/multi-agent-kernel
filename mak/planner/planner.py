@@ -42,7 +42,8 @@ below, or new ids for new symbols)
   - "context_nodes": array of node ids this sub-task needs to READ for context \
 (sibling methods, class attributes, imports) but will not modify
   - "depends_on": array of task_ids that must complete before this one
-  - "agent_type": the agent type to run this sub-task (e.g. "anthropic_api")
+  - "agent_type": the id of the agent to run this sub-task, from the \
+CONFIGURED AGENTS list below (e.g. "anthropic_api", "nvidia-llama")
 
 Optional interface declarations (MAK enforces each one when the task commits):
   - "changes_api": false when the task only changes function BODIES of its \
@@ -561,6 +562,7 @@ class Planner:
         *,
         max_retries: int = 3,
         agent_types: list[str] | None = None,
+        agent_labels: list[str] | None = None,
         strategy: str = "oneshot",
         self_critique: bool = False,
     ) -> None:
@@ -568,10 +570,18 @@ class Planner:
             raise ValueError("max_retries must be at least 1")
         self._llm = llm
         self._max_retries = max_retries
-        # The agent types actually configured for this run, so the plan can name a
-        # real one in each task's "agent_type" instead of guessing (an unconfigured
-        # type would otherwise have to be remapped by the session).
+        # The agent *ids* actually configured for this run, so the plan can name
+        # a real one in each task's "agent_type" instead of guessing (an
+        # unconfigured id would otherwise have to be remapped by the session).
+        # The serialized field keeps its name for compatibility; its value is a
+        # routing id (Wave 22).
         self._agent_types = list(agent_types or [])
+        # Optional human labels — "nvidia-llama — meta/llama-3.3-70b via NVIDIA
+        # Build" — so the model can choose sensibly between several agents. They
+        # carry the model and the endpoint's display name and deliberately carry
+        # **no** URL, header or credential variable: this string is sent to a
+        # model, and an internal hostname in it is a leak with no planning value.
+        self._agent_labels = list(agent_labels or [])
         self._strategy = strategy
         self._self_critique = self_critique
         # Tokens this planner has spent, summed across every call it makes —
@@ -590,10 +600,11 @@ class Planner:
     def _build_prompt(self, user_task: str, node_inventory: list[NodeId]) -> str:
         inventory = "\n".join(f"  - {nid}" for nid in node_inventory) or "  (empty)"
         if self._agent_types:
+            listed = self._agent_labels or self._agent_types
             agents = (
-                "\nCONFIGURED AGENT TYPES (set each task's \"agent_type\" to one of "
-                "these, or leave it empty to let MAK distribute the work):\n"
-                + "\n".join(f"  - {t}" for t in self._agent_types)
+                "\nCONFIGURED AGENTS (set each task's \"agent_type\" to one of "
+                "these ids, or leave it empty to let MAK distribute the work):\n"
+                + "\n".join(f"  - {t}" for t in listed)
                 + "\n"
             )
         else:

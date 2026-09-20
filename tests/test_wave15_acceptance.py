@@ -367,7 +367,7 @@ def test_a_stopped_server_is_reported_once_at_startup_with_the_reason() -> None:
     adapter = registry.get("ollama_api")
     assert isinstance(adapter, OllamaApiAdapter)
     adapter._client = _DownOllama()  # type: ignore[assignment]
-    registry.register_factory("ollama_api", lambda: adapter)
+    registry.replace_factory("ollama_api", lambda: adapter)
 
     healthy, unhealthy, why = healthy_agent_types(registry, ["ollama_api"])
     assert healthy == []
@@ -386,7 +386,7 @@ def test_an_unpulled_model_gets_its_own_reason() -> None:
     adapter = registry.get("ollama_api")
     assert isinstance(adapter, OllamaApiAdapter)
     adapter._client = FakeOllama(installed=("llama3.1:8b",))  # type: ignore[assignment]
-    registry.register_factory("ollama_api", lambda: adapter)
+    registry.replace_factory("ollama_api", lambda: adapter)
 
     _healthy, unhealthy, why = healthy_agent_types(registry, ["ollama_api"])
     assert unhealthy == ["ollama_api"]

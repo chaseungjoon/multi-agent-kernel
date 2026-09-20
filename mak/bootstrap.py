@@ -31,6 +31,9 @@ from mak.agent_runner.registry import AdapterRegistry
 from mak.agent_runner.sandbox import SandboxConfig
 from mak.config import AgentConfig, MakConfig, normalize_base_url
 from mak.core.exceptions import AgentError, ConfigError
+from mak.endpoints.agents import resolve_agents
+from mak.endpoints.resolution import ResolvedAgentConfig, resolve_endpoints
+from mak.endpoints.store import load_user_endpoints, merge_endpoints
 from mak.local.discovery import LOCAL_BASE_URL_ENV
 from mak.local.ollama_client import DEFAULT_BASE_URL as OLLAMA_DEFAULT_BASE_URL
 
@@ -244,16 +247,23 @@ def _resolve_api_key(agent: AgentConfig) -> str | None:
     return os.environ.get(agent.api_key_env)
 
 
-def _api_factory(agent: AgentConfig) -> Callable[[], AgentAdapter]:
-    """Build a zero-arg factory for a configured API adapter (lazy SDK client)."""
-    cls = _API_ADAPTER_CLASSES[agent.type]
+def _api_factory(agent: ResolvedAgentConfig) -> Callable[[], AgentAdapter]:
+    """Build a zero-arg factory for a configured API adapter (lazy SDK client).
+
+    Every option comes from the **resolved** agent, so the endpoint's decided
+    capabilities — not a re-derivation of them here — are what the adapter is
+    constructed with.
+    """
+    cls = _API_ADAPTER_CLASSES[agent.adapter_type]
+    endpoint = agent.endpoint
 
     def make() -> AgentAdapter:
-        key = _resolve_api_key(agent)
         # Each unset option is *omitted* rather than passed as None, so the
         # adapter's own default (including "resolve the budget from the model
         # catalog") stays the single place that decides it.
-        options: dict[str, Any] = {"api_key": key}
+        options: dict[str, Any] = {
+            "api_key": endpoint.api_key if endpoint else None,
+        }
         if agent.model is not None:
             options["model"] = agent.model
         if agent.max_tokens is not None:
@@ -263,18 +273,24 @@ def _api_factory(agent: AgentConfig) -> Callable[[], AgentAdapter]:
         # returned and the session hung shutting its pool down. The configured
         # per-agent value now reaches the SDK client that actually makes the call.
         options["timeout"] = float(agent.timeout)
+        # ``agent_id`` is the routing key the kernel uses; ``agent_type`` stays
+        # as transport/telemetry, so a log line still says which wire protocol
+        # spoke even when two agents share it.
+        options["agent_id"] = agent.id
         # Each new option reaches **only** the types whose constructor accepts
         # it: the Anthropic and Gemini adapters take none of them, so an
         # unconditional kwarg would be a TypeError at dispatch time.
-        if agent.type in _LOCAL_TYPES:
-            # So a ``local_api`` instance reports its own name rather than the
-            # class default it shares with cloud OpenAI (D1).
-            options["agent_type"] = agent.type
-            for name in _LOCAL_OPTIONS:
-                value = getattr(agent, name)
+        if agent.adapter_type in _LOCAL_TYPES:
+            options["agent_type"] = agent.adapter_type
+            if endpoint is not None and endpoint.base_url is not None:
+                options["base_url"] = endpoint.base_url
+            for name in ("structured_output", "repair_attempts"):
+                value = getattr(agent, name, None)
                 if value is not None:
                     options[name] = value
-        if agent.type == "ollama_api":
+            if "structured_output" not in options and endpoint is not None:
+                options["structured_output"] = endpoint.structured_output.value
+        if agent.adapter_type == "ollama_api":
             for name in _OLLAMA_ONLY_OPTIONS:
                 value = getattr(agent, name)
                 if value is not None:
@@ -286,10 +302,10 @@ def _api_factory(agent: AgentConfig) -> Callable[[], AgentAdapter]:
 
 
 def _cli_factory(
-    agent: AgentConfig, sandbox: SandboxConfig | None
+    agent: ResolvedAgentConfig, sandbox: SandboxConfig | None
 ) -> Callable[[], AgentAdapter]:
     """Build a zero-arg factory for a configured CLI adapter (cmd + sandbox)."""
-    cls = _CLI_ADAPTER_CLASSES[agent.type]
+    cls = _CLI_ADAPTER_CLASSES[agent.adapter_type]
 
     def make() -> AgentAdapter:
         if agent.cmd is not None:
@@ -311,24 +327,53 @@ def _unimplemented_factory(agent_type: str) -> Callable[[], AgentAdapter]:
     return make
 
 
+def resolved_agents(
+    config: MakConfig, *, env: dict[str, str] | None = None
+) -> tuple[ResolvedAgentConfig, ...]:
+    """Resolve the roster, merging project endpoints with the user store.
+
+    The single place a run decides which endpoints exist. Both the registry and
+    every caller that needs to know an agent's model or endpoint go through
+    here, so no two of them can disagree about what is configured.
+    """
+    user_endpoints, _diagnostic = load_user_endpoints()
+    merged = merge_endpoints(config.endpoints, user_endpoints)
+    return resolve_agents(
+        config, endpoints=resolve_endpoints(merged, env=env), env=env
+    )
+
+
 def build_registry(
-    config: MakConfig, *, sandbox: SandboxConfig | None = None
+    config: MakConfig,
+    *,
+    sandbox: SandboxConfig | None = None,
+    agents: tuple[ResolvedAgentConfig, ...] | None = None,
 ) -> AdapterRegistry:
-    """Register a config-bound adapter factory for every configured agent type.
+    """Register a config-bound adapter factory for every configured agent.
+
+    Keyed by **agent id**, so two agents backed by the same adapter class — two
+    OpenAI-compatible endpoints, say — both survive registration instead of the
+    second silently replacing the first.
 
     ``sandbox`` (when set) is threaded into CLI adapters so their subprocesses run
     inside a Docker container; API adapters ignore it (they make no subprocess).
+
+    ``agents`` accepts an already-resolved roster so a caller that has one (the
+    composition root does) does not resolve twice.
     """
     if not config.agents:
         raise ConfigError("no agents configured; cannot build an adapter registry")
+    roster = agents if agents is not None else resolved_agents(config)
     registry = AdapterRegistry()
-    for agent in config.agents:
-        if agent.type in _API_ADAPTER_CLASSES:
-            registry.register_factory(agent.type, _api_factory(agent))
-        elif agent.type in _CLI_ADAPTER_CLASSES:
-            registry.register_factory(agent.type, _cli_factory(agent, sandbox))
+    for agent in roster:
+        if agent.adapter_type in _API_ADAPTER_CLASSES:
+            registry.register_factory(agent.id, _api_factory(agent))
+        elif agent.adapter_type in _CLI_ADAPTER_CLASSES:
+            registry.register_factory(agent.id, _cli_factory(agent, sandbox))
         else:
-            registry.register_factory(agent.type, _unimplemented_factory(agent.type))
+            registry.register_factory(
+                agent.id, _unimplemented_factory(agent.adapter_type)
+            )
     return registry
 
 
@@ -372,28 +417,42 @@ def validate_config(config: MakConfig) -> None:
     time (where it would surface as a mid-run ``UnknownAgentTypeError``), and the
     same for a local-transport setting placed on a type that does not read it.
     """
-    unknown = sorted({a.type for a in config.agents if a.type not in KNOWN_AGENT_TYPES})
+    # An endpoint-backed entry has no ``type`` of its own — the endpoint's
+    # transport supplies it — so it is exempt from the type check and from the
+    # local-option rules, which exist to catch a setting placed on a type that
+    # would ignore it.
+    legacy = [a for a in config.agents if not a.endpoint]
+    unknown = sorted({a.type for a in legacy if a.type not in KNOWN_AGENT_TYPES})
     if unknown:
         known = ", ".join(sorted(KNOWN_AGENT_TYPES))
         raise ConfigError(
             f"unknown agent type(s) in config: {', '.join(unknown)}; "
             f"known types: {known}"
         )
-    for agent in config.agents:
+    for agent in legacy:
         _check_local_options(agent)
 
 
-def default_agent_type(config: MakConfig) -> str:
-    """Return the first configured agent: the default for bare tasks."""
+def default_agent_id(config: MakConfig) -> str:
+    """Return the first configured agent's routing id: the default for bare tasks.
+
+    For a legacy roster the id *is* the type, so this returns exactly what
+    ``default_agent_type`` always did.
+    """
     if not config.agents:
-        raise ConfigError("no agents configured; cannot pick a default agent type")
-    return config.agents[0].type
+        raise ConfigError("no agents configured; cannot pick a default agent")
+    return config.agents[0].routing_id()
 
 
-def healthy_agent_types(
-    registry: AdapterRegistry, agent_types: list[str]
+def default_agent_type(config: MakConfig) -> str:
+    """Return the default agent — deprecated alias of :func:`default_agent_id`."""
+    return default_agent_id(config)
+
+
+def healthy_agent_ids(
+    registry: AdapterRegistry, agent_ids: list[str]
 ) -> tuple[list[str], list[str], dict[str, str]]:
-    """Health-check each agent type once; return ``(healthy, unhealthy, why)``.
+    """Health-check each agent once; return ``(healthy, unhealthy, why)``.
 
     Order is preserved. An adapter that cannot even be constructed (missing SDK,
     missing key) or whose ``health_check`` returns False (e.g. a CLI whose binary
@@ -411,22 +470,29 @@ def healthy_agent_types(
     healthy: list[str] = []
     unhealthy: list[str] = []
     why: dict[str, str] = {}
-    for agent_type in agent_types:
+    for agent_id in agent_ids:
         adapter: AgentAdapter | None = None
         try:
-            adapter = registry.get(agent_type)
+            adapter = registry.get(agent_id)
             ok = adapter.health_check()
         except Exception as exc:
             ok = False
-            why[agent_type] = str(exc)
+            why[agent_id] = str(exc)
         if ok:
-            healthy.append(agent_type)
+            healthy.append(agent_id)
             continue
-        unhealthy.append(agent_type)
+        unhealthy.append(agent_id)
         detail = _health_detail(adapter)
         if detail:
-            why[agent_type] = detail
+            why[agent_id] = detail
     return healthy, unhealthy, why
+
+
+def healthy_agent_types(
+    registry: AdapterRegistry, agent_types: list[str]
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """Health-check each agent — deprecated alias of :func:`healthy_agent_ids`."""
+    return healthy_agent_ids(registry, agent_types)
 
 
 def _health_detail(adapter: AgentAdapter | None) -> str | None:

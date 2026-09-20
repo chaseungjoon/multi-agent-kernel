@@ -32,7 +32,13 @@ _TASK_ID_RE = re.compile(r"\[MAK-([^\]]+)\]")
 
 @dataclass(frozen=True, slots=True)
 class CommitInfo:
-    """A parsed MAK commit from ``git log``."""
+    """A parsed MAK commit from ``git log``.
+
+    ``agent_type`` keeps its name for compatibility with commits written before
+    Wave 22, but its value is now the agent's **routing id** — the same string
+    the registry, scheduler and logs use. For a legacy roster the two are
+    identical, so old and new commits read the same way.
+    """
 
     hash: str
     subject: str
@@ -131,7 +137,7 @@ class GitHelper:
         task_id: str,
         files: list[str],
         description: str,
-        agent_type: str,
+        agent_id: str,
         session_id: str,
     ) -> str | None:
         """Commit exactly ``files`` with MAK's structured message.
@@ -174,7 +180,7 @@ class GitHelper:
             body = (
                 f"Files: {', '.join(files)}\n"
                 f"Status: complete\n"
-                f"Agent: {agent_type}\n"
+                f"Agent: {agent_id}\n"
                 f"Session: {session_id}"
             )
             self._run(

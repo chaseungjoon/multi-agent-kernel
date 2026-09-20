@@ -152,24 +152,42 @@ class ResolvedAgentConfig:
 
     ``id`` is the routing key — registry, scheduler, pool caps, planner choice,
     logs and git metadata all use it. ``adapter_type`` only selects which class
-    to construct, and two agents may legitimately share it.
+    to construct, and two agents may legitimately share it. Separating the two
+    is the whole of Wave 22's structural change.
+
+    ``endpoint`` is ``None`` only for the CLI wrapper adapters (``claude_code``,
+    ``codex``, ``copilot``), which drive a local binary and have no URL,
+    credential or capability negotiation to resolve.
     """
 
     id: str
-    endpoint: ResolvedEndpoint
-    model: str | None
+    adapter_type: str
+    endpoint: ResolvedEndpoint | None = None
+    model: str | None = None
     max_instances: int = 2
     timeout: int = 300
     max_tokens: int | None = None
+    # A per-agent override of the endpoint's structured-output policy. Unset
+    # (the common case) means "use whatever the endpoint resolved to"; it exists
+    # because one small model behind an otherwise capable endpoint may need a
+    # lower rung than its neighbours.
+    structured_output: str | None = None
     repair_attempts: int | None = None
     num_ctx: int | None = None
     keep_alive: str | None = None
     temperature: float | None = None
+    cmd: str | None = None
 
     @property
-    def adapter_type(self) -> str:
-        """Return the adapter class selector for this agent."""
-        return self.endpoint.adapter_type
+    def is_local(self) -> bool:
+        """Whether this agent's work stays on the user's machine or network.
+
+        Reads the endpoint's explicit ``location`` rather than guessing from a
+        ``base_url`` — every hosted compatible service has one of those too.
+        """
+        if self.endpoint is None:
+            return False
+        return self.endpoint.location is not Location.HOSTED
 
     def label(self) -> str:
         """Return the planner-facing label: id, model and endpoint name.
@@ -179,7 +197,8 @@ class ResolvedAgentConfig:
         an information leak with no planning value.
         """
         model = self.model or "(adapter default)"
-        return f"{self.id} — {model} via {self.endpoint.display_name}"
+        via = self.endpoint.display_name if self.endpoint else self.adapter_type
+        return f"{self.id} — {model} via {via}"
 
 
 def _pick(explicit: _T | None, from_profile: _T | None, default: _T) -> _T:

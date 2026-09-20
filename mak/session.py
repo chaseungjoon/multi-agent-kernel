@@ -790,7 +790,7 @@ class Session:
             task_id=task_id,
             files=files,
             description="recovered interrupted commit",
-            agent_type="recovery",
+            agent_id="recovery",
             session_id=self.session_id,
         )
 
@@ -2782,7 +2782,7 @@ class Session:
             task_id=task_id,
             files=files,
             description=task.description,
-            agent_type=task.agent_type or "unknown",
+            agent_id=task.agent_type or "unknown",
             session_id=self.session_id,
         )
 

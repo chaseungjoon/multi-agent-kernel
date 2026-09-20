@@ -16,7 +16,18 @@ from mak.core.types import TaskBundle, TaskResult
 
 
 class AgentAdapter(ABC):
-    """Transport-agnostic adapter between MAK's protocol and an agent backend."""
+    """Transport-agnostic adapter between MAK's protocol and an agent backend.
+
+    The two identifiers are **not** interchangeable (Wave 22):
+
+    * ``agent_id`` is the configured routing key. The registry, the scheduler's
+      pool caps, the planner's choice of agent, the session log and the git
+      commit trailer all use it, and it is unique across a run.
+    * ``agent_type`` names the *transport* — which wire protocol this instance
+      speaks. Several agents may share one, which is exactly what lets a run
+      hold two OpenAI-compatible endpoints at once. It is telemetry, never a
+      lookup key.
+    """
 
     agent_id: str
     agent_type: str

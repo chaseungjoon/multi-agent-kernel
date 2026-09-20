@@ -6,7 +6,7 @@ import pytest
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
 from mak.agent_runner.registry import AdapterRegistry
-from mak.core.exceptions import UnknownAgentTypeError
+from mak.core.exceptions import ConfigError, UnknownAgentTypeError
 from mak.core.types import TaskBundle, TaskResult
 
 
@@ -53,11 +53,31 @@ class TestAdapterRegistry:
         registry.clear()
         assert registry.list_types() == []
 
-    def test_overwrite_registration(self) -> None:
+    def test_a_second_registration_of_one_id_is_refused(self) -> None:
+        """Wave 22: the overwrite that silently dropped a configured agent."""
         registry = AdapterRegistry()
         registry.register("stub", StubAdapter)
+        with pytest.raises(ConfigError, match="two agents are configured"):
+            registry.register("stub", StubAdapter)
+
+    def test_replace_factory_is_the_deliberate_door(self) -> None:
+        registry = AdapterRegistry()
         registry.register("stub", StubAdapter)
-        assert registry.list_types() == ["stub"]
+        double = StubAdapter()
+        registry.replace_factory("stub", lambda: double)
+        assert registry.get("stub") is double
+        assert registry.list_ids() == ["stub"]
+
+    def test_replacing_an_unregistered_id_is_refused(self) -> None:
+        """A typo here would create an agent nothing ever dispatches to."""
+        registry = AdapterRegistry()
+        with pytest.raises(UnknownAgentTypeError, match="cannot replace"):
+            registry.replace_factory("absent", StubAdapter)
+
+    def test_list_ids_is_the_current_name(self) -> None:
+        registry = AdapterRegistry()
+        registry.register("stub", StubAdapter)
+        assert registry.list_ids() == registry.list_types() == ["stub"]
 
     def test_registries_are_isolated(self) -> None:
         # Regression for the old module-global registry: instances must not share state.
