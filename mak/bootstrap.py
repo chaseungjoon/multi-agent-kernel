@@ -32,6 +32,7 @@ from mak.agent_runner.sandbox import SandboxConfig
 from mak.config import AgentConfig, MakConfig, normalize_base_url
 from mak.core.exceptions import AgentError, ConfigError
 from mak.endpoints.agents import resolve_agents
+from mak.endpoints.capabilities import CapabilityCache
 from mak.endpoints.resolution import ResolvedAgentConfig, resolve_endpoints
 from mak.endpoints.store import load_user_endpoints, merge_endpoints
 from mak.local.discovery import LOCAL_BASE_URL_ENV
@@ -247,12 +248,19 @@ def _resolve_api_key(agent: AgentConfig) -> str | None:
     return os.environ.get(agent.api_key_env)
 
 
-def _api_factory(agent: ResolvedAgentConfig) -> Callable[[], AgentAdapter]:
+def _api_factory(
+    agent: ResolvedAgentConfig, capabilities: CapabilityCache | None = None
+) -> Callable[[], AgentAdapter]:
     """Build a zero-arg factory for a configured API adapter (lazy SDK client).
 
     Every option comes from the **resolved** agent, so the endpoint's decided
     capabilities — not a re-derivation of them here — are what the adapter is
     constructed with.
+
+    ``capabilities`` is the session's shared capability cache. The registry
+    builds a fresh adapter per dispatch, so the memory of what an endpoint
+    actually supports cannot live on the instance; closing the factory over one
+    explicitly-owned object is how it survives without a module global.
     """
     cls = _API_ADAPTER_CLASSES[agent.adapter_type]
     endpoint = agent.endpoint
@@ -299,6 +307,8 @@ def _api_factory(agent: ResolvedAgentConfig) -> Callable[[], AgentAdapter]:
             options["headers"] = endpoint.headers
             options["endpoint_id"] = endpoint.id
             options["endpoint_name"] = endpoint.display_name
+            if capabilities is not None:
+                options["capabilities"] = capabilities
         if agent.adapter_type == "ollama_api":
             for name in _OLLAMA_ONLY_OPTIONS:
                 value = getattr(agent, name)
@@ -374,9 +384,12 @@ def build_registry(
         raise ConfigError("no agents configured; cannot build an adapter registry")
     roster = agents if agents is not None else resolved_agents(config)
     registry = AdapterRegistry()
+    # One cache per registry, so everything this run dispatches shares what it
+    # learns and two sessions in one process never do.
+    capabilities = CapabilityCache()
     for agent in roster:
         if agent.adapter_type in _API_ADAPTER_CLASSES:
-            registry.register_factory(agent.id, _api_factory(agent))
+            registry.register_factory(agent.id, _api_factory(agent, capabilities))
         elif agent.adapter_type in _CLI_ADAPTER_CLASSES:
             registry.register_factory(agent.id, _cli_factory(agent, sandbox))
         else:

@@ -40,6 +40,7 @@ nor its tests require the ``openai`` package unless a real call is made.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
@@ -56,6 +57,13 @@ from mak.agent_runner.protocol import (
 from mak.agent_runner.stop_signals import check_stop_reason, extract_usage
 from mak.core.exceptions import AgentError, AgentProtocolError
 from mak.core.types import TaskBundle, TaskResult
+from mak.endpoints.capabilities import (
+    STRUCTURED_OUTPUT_LADDER,
+    CapabilityCache,
+    rungs_from,
+)
+
+_LOG = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "gpt-5.6-sol"
 
@@ -64,15 +72,12 @@ _DEFAULT_MODEL = "gpt-5.6-sol"
 # and sending it is what stops the SDK reading a real one from the environment.
 _LOCAL_PLACEHOLDER_KEY = "local"
 
-# How the structured-output modes step down when a server rejects the one asked
-# for. Capability varies across Ollama, vLLM, llama.cpp, and LM Studio, and the
-# failure mode should be a slower call, not a dead run.
-_STRUCTURED_OUTPUT_DOWNGRADE: dict[str, str] = {
-    "json_schema": "json_object",
-    "json_object": "none",
-}
 
 _DEFAULT_STRUCTURED_OUTPUT = "json_object"
+
+# "Start at the best rung and find out." Distinct from a named mode, which is a
+# statement the user made and which the ladder never climbs above.
+_AUTO_STRUCTURED_OUTPUT = "auto"
 
 # Output-cap field names, mirroring ``mak.endpoints.types.TokenParameter``.
 # Duplicated as plain strings rather than imported so this adapter stays usable
@@ -83,15 +88,22 @@ TOKEN_PARAM_NONE = "none"
 TOKEN_PARAM_MAX_TOKENS = "max_tokens"
 TOKEN_PARAM_MAX_COMPLETION_TOKENS = "max_completion_tokens"
 
-# Substrings that mark a rejection of the *response format* specifically, as
-# opposed to any other 4xx. Matched case-insensitively against the error text,
-# because no local server reports this in a structured way.
+# Markers that identify a rejection of the *response format* specifically.
+# Deliberately narrow: the previous set included bare "unsupported" and "not
+# supported", which match plenty of unrelated 4xx — an unsupported *model*, an
+# unsupported parameter, an unsupported region — and every one of those was
+# being answered by silently retrying with a weaker output contract instead of
+# surfacing the real error.
 _FORMAT_REJECTION_MARKERS = (
     "response_format",
     "json_schema",
-    "unsupported",
-    "not supported",
+    "json mode",
 )
+
+# A format rejection is a client error about the request body. A 5xx is the
+# server failing, a 429 is quota, and neither is answered by asking for a looser
+# reply shape.
+_FORMAT_REJECTION_STATUSES = frozenset({400, 422})
 
 _JSON_SCHEMA_NAME = "task_result"
 
@@ -111,7 +123,23 @@ _SYSTEM_PROMPT = (
 
 
 def _is_format_rejection(exc: Exception) -> bool:
-    """Whether an SDK error reads as "I do not support that response format"."""
+    """Whether an SDK error is verifiably "I do not support that reply format".
+
+    Requires **both** a client-error status and a marker naming the response
+    format. Substring matching alone was answering unrelated 400s by retrying
+    with a weaker output contract, which turned a clear provider error — a
+    model that does not exist, a parameter that is not allowed — into a
+    confusing second failure one rung down.
+
+    An exception carrying no status is *not* treated as a format rejection: a
+    transport error has no opinion about the request body.
+    """
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int):
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    if status not in _FORMAT_REJECTION_STATUSES:
+        return False
     text = str(exc).lower()
     return any(marker in text for marker in _FORMAT_REJECTION_MARKERS)
 
@@ -138,6 +166,7 @@ class OpenAiCompatibleAdapter(AgentAdapter):
         headers: tuple[tuple[str, str], ...] = (),
         endpoint_id: str = "",
         endpoint_name: str = "",
+        capabilities: CapabilityCache | None = None,
     ) -> None:
         self.agent_id = agent_id
         # The *transport*, not the routing key: several agents may share it.
@@ -170,6 +199,10 @@ class OpenAiCompatibleAdapter(AgentAdapter):
         self._api_key = api_key
         self._client = client
         self._health_detail: str | None = None
+        # Session-lifetime, injected by the composition root. ``None`` means
+        # "no memory" — each dispatch rediscovers, which is correct for a bare
+        # construction in a test and never for a real run.
+        self._capabilities = capabilities
 
     def _get_client(self) -> Any:
         """Return the SDK client, constructing one lazily on first real use."""
@@ -255,37 +288,72 @@ class OpenAiCompatibleAdapter(AgentAdapter):
             **extra,
         )
 
+    def _starting_rungs(self) -> tuple[str, ...]:
+        """Return the structured-output modes to try, best first.
+
+        A cached mode for this endpoint/model pair wins outright: the session
+        has already paid to discover it, and paying again on every task is the
+        cost this cache exists to remove.
+
+        ``auto`` walks the full ladder from ``json_schema`` down. An explicitly
+        named mode walks from itself down, and never above — asking for a
+        *stronger* contract than the user configured would ignore a deliberate
+        choice.
+        """
+        cached = (
+            self._capabilities.structured_output(self.endpoint_id, self.model)
+            if self._capabilities is not None
+            else None
+        )
+        if cached is not None:
+            return (cached,)
+        if self.structured_output == _AUTO_STRUCTURED_OUTPUT:
+            return rungs_from(STRUCTURED_OUTPUT_LADDER[0])
+        return rungs_from(self.structured_output)
+
     def send(self, prompt: str) -> str:
         """Call Chat Completions and return the decodable result JSON.
 
-        Two bounded recoveries wrap the single call, both per-dispatch and
-        neither remembered afterwards (the registry rebuilds adapters per
-        dispatch, so anything kept across calls would be global mutable state):
+        Two bounded recoveries wrap the call:
 
-        - a server that rejects the requested ``response_format`` gets **one**
-          retry a rung down (``json_schema`` → ``json_object`` → ``none``);
+        - a server that rejects the requested ``response_format`` steps **all
+          the way** down the ladder (``json_schema`` → ``json_object`` →
+          ``none``) rather than once. A single downgrade made prompt-only JSON
+          unreachable from the top rung, so an endpoint supporting neither
+          schema nor object mode failed every task;
         - a reply that arrives but cannot be decoded gets ``repair_attempts``
           short follow-up turns rather than a whole-bundle re-dispatch.
+
+        The winning rung is recorded in the session's capability cache, so the
+        next task starts where this one finished instead of rediscovering it.
         """
         client = self._get_client()
         messages: Messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
-        mode = self.structured_output
-        downgraded = False
+        rungs = self._starting_rungs()
 
         def call(msgs: Messages) -> Any:
-            nonlocal mode, downgraded
-            try:
-                return self._create(client, msgs, mode)
-            except Exception as exc:
-                next_mode = _STRUCTURED_OUTPUT_DOWNGRADE.get(mode)
-                if downgraded or next_mode is None or not _is_format_rejection(exc):
-                    raise
-                downgraded = True
-                mode = next_mode
-                return self._create(client, msgs, mode)
+            last: Exception | None = None
+            for index, mode in enumerate(rungs):
+                try:
+                    response = self._create(client, msgs, mode)
+                except Exception as exc:
+                    # Only a verified format rejection descends, and only while
+                    # a lower rung exists. Anything else is the provider's real
+                    # answer and is raised unchanged.
+                    if index + 1 >= len(rungs) or not _is_format_rejection(exc):
+                        raise
+                    last = exc
+                    continue
+                if last is not None:
+                    self._note_downgrade(mode)
+                self._remember(mode)
+                return response
+            raise AgentError(  # pragma: no cover - the loop always returns or raises
+                "structured-output ladder exhausted without an outcome"
+            )
 
         return repair_loop(
             messages,
@@ -294,6 +362,31 @@ class OpenAiCompatibleAdapter(AgentAdapter):
             extract=self._extract_content,
             follow_up=_follow_up,
             repair_attempts=self.repair_attempts,
+        )
+
+    def _remember(self, mode: str) -> None:
+        """Record the mode that worked for this endpoint/model pair."""
+        if self._capabilities is not None:
+            self._capabilities.record_structured_output(
+                self.endpoint_id, self.model, mode
+            )
+
+    def _note_downgrade(self, mode: str) -> None:
+        """Log a descent once per endpoint/model pair.
+
+        Deliberately carries no response body: a provider error body can echo
+        request headers, and this line goes to a log file the user may share.
+        """
+        if self._capabilities is None:
+            return
+        if not self._capabilities.should_announce(self.endpoint_id, self.model):
+            return
+        _LOG.info(
+            "%s does not support the requested reply format for %s; "
+            "using '%s' for the rest of this session",
+            self.endpoint_name,
+            self.model,
+            mode,
         )
 
     def _read_meta(self, response: Any) -> ResponseMeta:

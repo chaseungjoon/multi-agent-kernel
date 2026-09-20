@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import types
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,6 +19,7 @@ from mak.core.exceptions import (
     AgentTruncatedError,
 )
 from mak.core.types import NodeId, TaskBundle
+from mak.endpoints.capabilities import CapabilityCache
 
 
 class FakeMessage:
@@ -502,9 +505,9 @@ class TestStructuredOutputModes:
         adapter.send("{}")
         assert "response_format" not in adapter._client.chat.completions.calls[0]
 
-    def test_unsupported_format_downgrades_once(self) -> None:
+    def test_unsupported_format_downgrades_one_rung(self) -> None:
         client = ScriptedClient(
-            [RuntimeError("400: response_format json_schema is unsupported"),
+            [_format_rejection("response_format json_schema is not supported"),
              _reply(_GOOD)]
         )
         adapter = OpenAiApiAdapter(client=client, structured_output="json_schema")
@@ -521,6 +524,175 @@ class TestStructuredOutputModes:
         with pytest.raises(RuntimeError, match="rate limited"):
             adapter.send("{}")
         assert len(client.chat.completions.calls) == 1
+
+
+class _ApiStatusError(Exception):
+    """An SDK-shaped error: a message plus the HTTP status that produced it."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _format_rejection(message: str, status: int = 400) -> _ApiStatusError:
+    return _ApiStatusError(message, status)
+
+
+class TestStructuredOutputLadder:
+    """Wave 22.5: the descent runs to the bottom and is remembered."""
+
+    def test_json_schema_can_reach_prompt_only_json(self) -> None:
+        """The bug: a single downgrade made 'none' unreachable from the top.
+
+        An endpoint supporting neither schema nor object mode therefore failed
+        every task, having tried exactly two of the three rungs.
+        """
+        client = ScriptedClient(
+            [
+                _format_rejection("json_schema is not supported"),
+                _format_rejection("response_format is not supported"),
+                _reply(_GOOD),
+            ]
+        )
+        adapter = OpenAiApiAdapter(client=client, structured_output="json_schema")
+        assert adapter.parse_result(adapter.send("{}")).success is True
+        calls = client.chat.completions.calls
+        assert len(calls) == 3
+        assert calls[0]["response_format"]["type"] == "json_schema"
+        assert calls[1]["response_format"] == {"type": "json_object"}
+        assert "response_format" not in calls[2]
+
+    def test_auto_starts_at_the_top_rung(self) -> None:
+        adapter = OpenAiApiAdapter(
+            client=_client_returning(_GOOD), structured_output="auto"
+        )
+        adapter.send("{}")
+        fmt = adapter._client.chat.completions.calls[0]["response_format"]
+        assert fmt["type"] == "json_schema"
+
+    def test_an_explicit_mode_never_climbs_above_itself(self) -> None:
+        """A named mode is a decision, not a starting suggestion."""
+        adapter = OpenAiApiAdapter(
+            client=_client_returning(_GOOD), structured_output="json_object"
+        )
+        adapter.send("{}")
+        assert adapter._client.chat.completions.calls[0]["response_format"] == {
+            "type": "json_object"
+        }
+
+    def test_a_non_format_400_propagates_unchanged(self) -> None:
+        """A model that does not exist is not answered by a looser reply shape."""
+        client = ScriptedClient(
+            [_format_rejection("model 'nope' does not exist"), _reply(_GOOD)]
+        )
+        adapter = OpenAiApiAdapter(client=client, structured_output="json_schema")
+        with pytest.raises(Exception, match="does not exist"):
+            adapter.send("{}")
+        assert len(client.chat.completions.calls) == 1
+
+    def test_a_statusless_error_is_not_a_format_rejection(self) -> None:
+        """A transport error has no opinion about the request body."""
+        client = ScriptedClient(
+            [RuntimeError("connection reset while reading response_format"),
+             _reply(_GOOD)]
+        )
+        adapter = OpenAiApiAdapter(client=client, structured_output="json_schema")
+        with pytest.raises(RuntimeError, match="connection reset"):
+            adapter.send("{}")
+        assert len(client.chat.completions.calls) == 1
+
+    def test_a_5xx_is_not_a_format_rejection(self) -> None:
+        client = ScriptedClient(
+            [_format_rejection("response_format exploded", status=503),
+             _reply(_GOOD)]
+        )
+        adapter = OpenAiApiAdapter(client=client, structured_output="json_schema")
+        with pytest.raises(Exception, match="exploded"):
+            adapter.send("{}")
+        assert len(client.chat.completions.calls) == 1
+
+    def test_the_status_may_live_on_a_response_attribute(self) -> None:
+        class _WithResponse(Exception):
+            def __init__(self) -> None:
+                super().__init__("response_format is not supported")
+                self.response = SimpleNamespace(status_code=400)
+
+        client = ScriptedClient([_WithResponse(), _reply(_GOOD)])
+        adapter = OpenAiApiAdapter(client=client, structured_output="json_object")
+        assert adapter.parse_result(adapter.send("{}")).success is True
+        assert len(client.chat.completions.calls) == 2
+
+
+class TestCapabilityCaching:
+    """The session pays for discovery once, not once per task."""
+
+    def _adapter(self, client: object, cache: CapabilityCache) -> OpenAiApiAdapter:
+        return OpenAiApiAdapter(
+            client=client,
+            structured_output="auto",
+            endpoint_id="gw",
+            model="m",
+            capabilities=cache,
+        )
+
+    def test_the_winning_rung_is_remembered(self) -> None:
+        cache = CapabilityCache()
+        client = ScriptedClient(
+            [_format_rejection("json_schema is not supported"), _reply(_GOOD)]
+        )
+        self._adapter(client, cache).send("{}")
+        assert cache.structured_output("gw", "m") == "json_object"
+
+    def test_the_next_dispatch_starts_at_the_cached_rung(self) -> None:
+        cache = CapabilityCache()
+        first = ScriptedClient(
+            [_format_rejection("json_schema is not supported"), _reply(_GOOD)]
+        )
+        self._adapter(first, cache).send("{}")
+
+        second = ScriptedClient([_reply(_GOOD)])
+        self._adapter(second, cache).send("{}")
+        calls = second.chat.completions.calls
+        assert len(calls) == 1
+        assert calls[0]["response_format"] == {"type": "json_object"}
+
+    def test_two_endpoints_offering_one_model_id_cache_separately(self) -> None:
+        """Same name, different server, different capabilities."""
+        cache = CapabilityCache()
+        cache.record_structured_output("openrouter", "claude-opus-5", "json_object")
+        assert cache.structured_output("anthropic", "claude-opus-5") is None
+
+    def test_a_downgrade_is_announced_once(self) -> None:
+        cache = CapabilityCache()
+        assert cache.should_announce("gw", "m") is True
+        assert cache.should_announce("gw", "m") is False
+
+    def test_without_a_cache_each_dispatch_rediscovers(self) -> None:
+        """A bare construction has no memory, which is correct for a test."""
+        for _ in range(2):
+            client = ScriptedClient(
+                [_format_rejection("json_schema is not supported"), _reply(_GOOD)]
+            )
+            OpenAiApiAdapter(client=client, structured_output="auto").send("{}")
+            assert len(client.chat.completions.calls) == 2
+
+    def test_the_log_line_carries_no_response_body(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A provider error body can echo request headers."""
+        cache = CapabilityCache()
+        client = ScriptedClient(
+            [
+                _format_rejection(
+                    "json_schema is not supported; Authorization: Bearer sk-secret"
+                ),
+                _reply(_GOOD),
+            ]
+        )
+        with caplog.at_level(logging.INFO):
+            self._adapter(client, cache).send("{}")
+        assert "sk-secret" not in caplog.text
+        assert "json_object" in caplog.text
 
 
 class TestProtocolClassification:
