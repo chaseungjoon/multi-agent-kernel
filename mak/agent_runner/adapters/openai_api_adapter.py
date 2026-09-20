@@ -1,36 +1,37 @@
-"""OpenAI Chat Completions adapter — cloud OpenAI *and* every local server.
+"""OpenAI Chat Completions adapter — the ``openai_chat`` transport.
 
 Like the Anthropic adapter, this talks to the API directly and forces structured
 output. The model is instructed to emit exactly the ``TaskResult`` field set,
 which is then decoded through MAK's wire protocol — no stdout scraping.
 
-**Two agent types, one class.** Nearly every local runtime (Ollama's compat
-layer, vLLM, llama.cpp's server, LM Studio, LocalAI) speaks this same wire
-format, so pointing the SDK at a ``base_url`` is all the transport a local model
-needs. It is registered twice, though: as ``openai_api`` (``base_url`` optional
-— a gateway or proxy) and as ``local_api`` (``base_url`` required). The registry
-is keyed by agent *type*, so with a single type a run could have cloud OpenAI
-**or** a local model and never both, and nothing downstream — the health
-preflight, the planner's agent-type list, warnings, logs, the TUI — could tell a
-local run from a cloud one. The instance therefore reports the type it was built
-as.
+**One class, any number of endpoints (Wave 22).** Cloud OpenAI, NVIDIA Build,
+OpenRouter, DeepSeek, Z.ai, vLLM, llama.cpp, LM Studio and Ollama's compat layer
+all speak this wire format, so they differ only in a URL, a credential, and
+which capability rungs they support — never in code. The registry keys on agent
+*id*, so a run may hold as many of them at once as the user configures; the
+adapter simply reports the id it was built under.
 
-**The key is never leaked.** With a ``base_url`` set, MAK sends the configured
-``api_key_env``'s value if the user named one and the literal placeholder
+**Nothing is inferred from the URL.** The old rule "a ``base_url`` means this is
+local" was wrong the moment a hosted compatible service appeared: NVIDIA and
+OpenRouter have base URLs and bill a real account. Location, token-parameter
+name, structured-output policy and health policy now all arrive **resolved**
+from ``mak.endpoints``, decided once at composition time.
+
+**The key is never leaked.** With a ``base_url`` set, MAK sends the resolved
+key if the endpoint named a credential variable and the literal placeholder
 ``"local"`` otherwise — and always sends *something*, so the SDK can never fall
 back to reading ``OPENAI_API_KEY`` from the environment and POSTing a real key to
-whatever host the config names. This is the one security property of the local
+whatever host the config names. This is the one security property of the
 transport and it has its own tests at unit and acceptance level.
 
 **Output budget.** No cap is sent unless one is configured, so the model's own
-maximum applies — the better default. The *field name* differs by transport
-(``max_completion_tokens`` for cloud OpenAI, ``max_tokens`` for a ``base_url``
-endpoint), because the compat layers in Ollama and llama.cpp implement only the
-older name: sending the newer one there either 400s or, worse, is ignored and
-the cap silently does not exist. ``finish_reason`` is still read either way: a
-length-truncated JSON-mode reply usually fails as invalid JSON, but "usually" is
-not a contract, and a cut landing on a closing brace would decode as a
-successful result with no work in it.
+maximum applies — the better default. The *field name* comes from the endpoint's
+resolved token policy: cloud OpenAI wants ``max_completion_tokens``, while most
+compatible layers implement only the older ``max_tokens``, where the newer name
+either 400s or, worse, is ignored and the cap silently does not exist.
+``finish_reason`` is still read either way: a length-truncated JSON-mode reply
+usually fails as invalid JSON, but "usually" is not a contract, and a cut landing
+on a closing brace would decode as a successful result with no work in it.
 
 The SDK is imported lazily and the client is injectable, so neither the adapter
 nor its tests require the ``openai`` package unless a real call is made.
@@ -73,6 +74,15 @@ _STRUCTURED_OUTPUT_DOWNGRADE: dict[str, str] = {
 
 _DEFAULT_STRUCTURED_OUTPUT = "json_object"
 
+# Output-cap field names, mirroring ``mak.endpoints.types.TokenParameter``.
+# Duplicated as plain strings rather than imported so this adapter stays usable
+# from a bare construction in a test without pulling the endpoint package in;
+# a contract test pins the two sets together.
+TOKEN_PARAM_AUTO = "auto"
+TOKEN_PARAM_NONE = "none"
+TOKEN_PARAM_MAX_TOKENS = "max_tokens"
+TOKEN_PARAM_MAX_COMPLETION_TOKENS = "max_completion_tokens"
+
 # Substrings that mark a rejection of the *response format* specifically, as
 # opposed to any other 4xx. Matched case-insensitively against the error text,
 # because no local server reports this in a structured way.
@@ -106,8 +116,8 @@ def _is_format_rejection(exc: Exception) -> bool:
     return any(marker in text for marker in _FORMAT_REJECTION_MARKERS)
 
 
-class OpenAiApiAdapter(AgentAdapter):
-    """OpenAI Chat Completions adapter — cloud, gateway, or local endpoint."""
+class OpenAiCompatibleAdapter(AgentAdapter):
+    """OpenAI Chat Completions adapter — any endpoint speaking that protocol."""
 
     agent_type = "openai_api"
 
@@ -124,10 +134,14 @@ class OpenAiApiAdapter(AgentAdapter):
         agent_type: str = "openai_api",
         structured_output: str | None = None,
         repair_attempts: int | None = None,
+        token_parameter: str = TOKEN_PARAM_AUTO,
+        headers: tuple[tuple[str, str], ...] = (),
+        endpoint_id: str = "",
+        endpoint_name: str = "",
     ) -> None:
         self.agent_id = agent_id
-        # Shadows the class attribute so a ``local_api`` instance reports its own
-        # type everywhere the kernel asks (health preflight, logs, the TUI).
+        # The *transport*, not the routing key: several agents may share it.
+        # ``agent_id`` above is what the registry, scheduler and logs key on.
         self.agent_type = agent_type
         self.model = model
         # None = send no cap and inherit the model's own maximum. Only a
@@ -139,6 +153,16 @@ class OpenAiApiAdapter(AgentAdapter):
         self.timeout = timeout
         self.base_url = base_url
         self.structured_output = structured_output or _DEFAULT_STRUCTURED_OUTPUT
+        # Which output-cap field name this endpoint accepts. Resolved upstream
+        # from the endpoint's profile; ``auto`` keeps the historical rule.
+        self.token_parameter = token_parameter
+        # Extra request headers, already resolved to literal values with any
+        # unset secret dropped. Names only ever reach status output and logs.
+        self.headers = headers
+        # For messages and the capability cache key. Two endpoints can offer the
+        # same model id and are still different choices.
+        self.endpoint_id = endpoint_id or agent_type
+        self.endpoint_name = endpoint_name or self.endpoint_id
         # One follow-up turn by default: it fires only on a reply that is
         # *already* a failed attempt, and one short turn is far cheaper than the
         # whole-bundle re-dispatch it replaces. ``0`` switches it off.
@@ -168,6 +192,11 @@ class OpenAiApiAdapter(AgentAdapter):
                 options["api_key"] = self._api_key
             if self.timeout is not None:
                 options["timeout"] = self.timeout
+            if self.headers:
+                # Validated upstream: MAK's own headers (Authorization,
+                # Content-Type, Host, User-Agent) cannot be overridden here, so
+                # this can add metadata but never re-route the credential.
+                options["default_headers"] = dict(self.headers)
             self._client = openai.OpenAI(**options)
         return self._client
 
@@ -192,15 +221,30 @@ class OpenAiApiAdapter(AgentAdapter):
         # all a server with no structured-output support can be asked for.
         return None
 
+    def _token_field(self) -> str | None:
+        """Return the output-cap field name to send, or None to send no cap.
+
+        ``auto`` reproduces the historical rule — ``max_completion_tokens`` for
+        the official OpenAI endpoint, ``max_tokens`` for anything with a
+        ``base_url`` — because the compat layers implement only the older name,
+        where the newer one is at best ignored and the cap silently does not
+        exist. An endpoint that knows better states it and is believed.
+        """
+        if self.token_parameter == TOKEN_PARAM_NONE:
+            return None
+        if self.token_parameter == TOKEN_PARAM_AUTO:
+            return (
+                TOKEN_PARAM_MAX_TOKENS
+                if self.base_url is not None
+                else TOKEN_PARAM_MAX_COMPLETION_TOKENS
+            )
+        return self.token_parameter
+
     def _create(self, client: Any, messages: Messages, mode: str) -> Any:
         """Make one Chat Completions call in ``mode``."""
         extra: dict[str, Any] = {}
-        if self.max_tokens is not None:
-            # D4: the compat layers implement only the older field name, so on a
-            # base_url endpoint the newer one is at best ignored.
-            field = (
-                "max_tokens" if self.base_url is not None else "max_completion_tokens"
-            )
+        field = self._token_field()
+        if self.max_tokens is not None and field is not None:
             extra[field] = self.max_tokens
         response_format = self._response_format(mode)
         if response_format is not None:
@@ -376,3 +420,9 @@ def _follow_up(messages: Messages, raw_text: str, instruction: str) -> Messages:
         {"role": "assistant", "content": raw_text},
         {"role": "user", "content": instruction},
     ]
+
+
+# The name this class carried before Wave 22 generalized it past "the OpenAI
+# adapter". Kept so existing imports — including the composition root's adapter
+# table and third-party code — keep working.
+OpenAiApiAdapter = OpenAiCompatibleAdapter

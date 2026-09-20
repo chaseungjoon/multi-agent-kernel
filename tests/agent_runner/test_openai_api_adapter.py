@@ -338,6 +338,101 @@ class TestLocalEndpoint:
         assert OpenAiApiAdapter().agent_type == "openai_api"
 
 
+class TestEndpointGeneralization:
+    """Wave 22.4: capabilities arrive resolved instead of being inferred."""
+
+    def test_the_old_class_name_still_imports(self) -> None:
+        from mak.agent_runner.adapters.openai_api_adapter import (
+            OpenAiApiAdapter as Alias,
+        )
+        from mak.agent_runner.adapters.openai_api_adapter import (
+            OpenAiCompatibleAdapter,
+        )
+
+        assert Alias is OpenAiCompatibleAdapter
+
+    def test_an_explicit_token_parameter_overrides_the_url_heuristic(self) -> None:
+        """A hosted compatible service has a base_url and may want either name."""
+        adapter = OpenAiApiAdapter(
+            client=_client_returning(_GOOD),
+            max_tokens=99,
+            base_url="https://integrate.example/v1",
+            token_parameter="max_completion_tokens",
+        )
+        adapter.send("{}")
+        call = adapter._client.chat.completions.calls[0]
+        assert call["max_completion_tokens"] == 99
+        assert "max_tokens" not in call
+
+    def test_token_parameter_none_sends_no_cap_at_all(self) -> None:
+        adapter = OpenAiApiAdapter(
+            client=_client_returning(_GOOD),
+            max_tokens=99,
+            base_url="https://h/v1",
+            token_parameter="none",
+        )
+        adapter.send("{}")
+        call = adapter._client.chat.completions.calls[0]
+        assert "max_tokens" not in call
+        assert "max_completion_tokens" not in call
+
+    def test_auto_keeps_the_historical_rule(self) -> None:
+        cloud = OpenAiApiAdapter(
+            client=_client_returning(_GOOD), max_tokens=1, token_parameter="auto"
+        )
+        cloud.send("{}")
+        assert "max_completion_tokens" in cloud._client.chat.completions.calls[0]
+
+        compat = OpenAiApiAdapter(
+            client=_client_returning(_GOOD),
+            max_tokens=1,
+            base_url="https://h/v1",
+            token_parameter="auto",
+        )
+        compat.send("{}")
+        assert "max_tokens" in compat._client.chat.completions.calls[0]
+
+    def test_resolved_headers_reach_the_sdk_constructor(self) -> None:
+        adapter = OpenAiApiAdapter(
+            base_url="https://openrouter.example/v1",
+            headers=(("HTTP-Referer", "https://mak.example"), ("X-Title", "MAK")),
+        )
+        assert _built(adapter)["default_headers"] == {
+            "HTTP-Referer": "https://mak.example",
+            "X-Title": "MAK",
+        }
+
+    def test_no_headers_means_no_kwarg(self) -> None:
+        assert "default_headers" not in _built(
+            OpenAiApiAdapter(base_url="https://h/v1")
+        )
+
+    def test_the_adapter_carries_its_endpoint_identity(self) -> None:
+        adapter = OpenAiApiAdapter(
+            agent_id="nvidia-llama",
+            endpoint_id="nvidia",
+            endpoint_name="NVIDIA Build",
+        )
+        assert adapter.agent_id == "nvidia-llama"
+        assert adapter.endpoint_id == "nvidia"
+        assert adapter.endpoint_name == "NVIDIA Build"
+
+    def test_a_hosted_compatible_endpoint_is_not_treated_as_local(self) -> None:
+        """The deleted heuristic: base_url no longer implies anything.
+
+        The adapter still sends an explicit key for any base_url — that rule is
+        about credential safety, not about location — but it makes no claim
+        about *where* the endpoint is.
+        """
+        adapter = OpenAiApiAdapter(
+            base_url="https://openrouter.ai/api/v1",
+            api_key="sk-or",
+            token_parameter="max_tokens",
+        )
+        assert _built(adapter)["api_key"] == "sk-or"
+        assert not hasattr(adapter, "is_local")
+
+
 class _ListingModels:
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail

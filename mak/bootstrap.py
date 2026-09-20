@@ -290,6 +290,15 @@ def _api_factory(agent: ResolvedAgentConfig) -> Callable[[], AgentAdapter]:
                     options[name] = value
             if "structured_output" not in options and endpoint is not None:
                 options["structured_output"] = endpoint.structured_output.value
+        if agent.adapter_type in _OPENAI_COMPATIBLE_TYPES and endpoint is not None:
+            # Capability decisions the adapter must not re-derive. The token
+            # field name in particular used to be guessed from whether a
+            # base_url was set, which is wrong for every hosted compatible
+            # service.
+            options["token_parameter"] = endpoint.token_parameter.value
+            options["headers"] = endpoint.headers
+            options["endpoint_id"] = endpoint.id
+            options["endpoint_name"] = endpoint.display_name
         if agent.adapter_type == "ollama_api":
             for name in _OLLAMA_ONLY_OPTIONS:
                 value = getattr(agent, name)
