@@ -143,9 +143,21 @@ def validate_endpoint_url(
 def parse_endpoint(raw: dict[str, Any]) -> EndpointConfig:
     """Build one ``EndpointConfig`` from a YAML mapping.
 
-    Applies the profile's defaults first, then the entry's explicit settings, so
-    a preset can be adopted wholesale (``{id: nvidia, profile: nvidia}``) or
-    overridden field by field.
+    A profile contributes to the two kinds of field differently, and the
+    difference is deliberate:
+
+    * **Identity** — transport, base URL, credential variable, location,
+      display name — is *materialized* from the profile at parse time. The
+      resulting config names the real host, so it can be validated now, shown by
+      ``/endpoint show``, and saved to the store as an exact record of what the
+      user agreed to. It also means a later change to the profile's URL cannot
+      silently redirect an endpoint a user already saved, which is a property
+      worth having rather than a limitation.
+    * **Capabilities** — discovery, health, structured output, token parameter —
+      are left **unset** unless the entry states them, and resolved against the
+      profile at composition time. That is what lets a correction to a profile's
+      capability defaults reach existing configs instead of being frozen into
+      every file written before the fix.
     """
     if "id" not in raw:
         raise ConfigError("each endpoint entry must have an 'id' field")
@@ -202,16 +214,14 @@ def parse_endpoint(raw: dict[str, Any]) -> EndpointConfig:
         display_name=str(
             raw.get("display_name") or (base.display_name if base else "") or ""
         ),
-        model_discovery=_enum(raw, "model_discovery", ModelDiscovery, where=where)
-        or (base.model_discovery if base else None),
-        health_check=_enum(raw, "health_check", HealthPolicy, where=where)
-        or (base.health_check if base else None),
+        # Capability fields stay unset unless stated — see the docstring. They
+        # are resolved against the profile in ``mak.endpoints.resolution``.
+        model_discovery=_enum(raw, "model_discovery", ModelDiscovery, where=where),
+        health_check=_enum(raw, "health_check", HealthPolicy, where=where),
         structured_output=_enum(
             raw, "structured_output", StructuredOutput, where=where
-        )
-        or (base.structured_output if base else None),
-        token_parameter=_enum(raw, "token_parameter", TokenParameter, where=where)
-        or (base.token_parameter if base else None),
+        ),
+        token_parameter=_enum(raw, "token_parameter", TokenParameter, where=where),
         headers=_parse_headers(raw.get("headers"), endpoint_id=endpoint_id),
     )
 
