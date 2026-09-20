@@ -307,6 +307,9 @@ def _api_factory(
             options["headers"] = endpoint.headers
             options["endpoint_id"] = endpoint.id
             options["endpoint_name"] = endpoint.display_name
+            options["health_check_policy"] = endpoint.health_check.value
+            options["chat_probe_ok"] = endpoint.chat_probe_allowed
+            options["api_key_env"] = endpoint.api_key_env
             if capabilities is not None:
                 options["capabilities"] = capabilities
         if agent.adapter_type == "ollama_api":

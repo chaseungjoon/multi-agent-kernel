@@ -21,7 +21,12 @@ from __future__ import annotations
 
 from mak.config import AgentConfig
 from mak.core.exceptions import ConfigError
-from mak.endpoints.types import EndpointConfig, Location, Transport
+from mak.endpoints.types import (
+    EndpointConfig,
+    HealthPolicy,
+    Location,
+    Transport,
+)
 
 # Legacy agent type -> (endpoint id, transport, conventional key env, location).
 # ``None`` for the key env means "this transport has no conventional credential"
@@ -89,4 +94,9 @@ def builtin_endpoint_for(agent: AgentConfig) -> EndpointConfig:
         api_key_env=key_env,
         location=location,
         display_name=_BUILTIN_DISPLAY.get(endpoint_id, endpoint_id),
+        # With no base_url the SDK talks to the provider's own default host, and
+        # MAK has never made a startup network call there — a registry build
+        # must stay free of them. There is nothing to probe, so the honest
+        # policy is "not probed" rather than a listing call nobody asked for.
+        health_check=HealthPolicy.MODELS if agent.base_url else HealthPolicy.NONE,
     )

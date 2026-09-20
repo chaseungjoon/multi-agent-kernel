@@ -62,6 +62,7 @@ from mak.endpoints.capabilities import (
     CapabilityCache,
     rungs_from,
 )
+from mak.endpoints.health import NOT_PROBED, classify_failure
 
 _LOG = logging.getLogger(__name__)
 
@@ -87,6 +88,20 @@ TOKEN_PARAM_AUTO = "auto"
 TOKEN_PARAM_NONE = "none"
 TOKEN_PARAM_MAX_TOKENS = "max_tokens"
 TOKEN_PARAM_MAX_COMPLETION_TOKENS = "max_completion_tokens"
+
+# Health policies, mirroring ``mak.endpoints.types.HealthPolicy`` as plain
+# strings for the same reason the token names are; the contract test pins them.
+HEALTH_MODELS = "models"
+HEALTH_CHAT = "chat"
+HEALTH_NONE = "none"
+
+# The adapter's own default, deliberately **not** one of the endpoint policies:
+# "probe if there is an address of our own to probe, otherwise treat a successful
+# client construction as the check". It preserves the rule that building a
+# registry makes no network call for the SDK's default host, and it is what a
+# bare construction in a test gets. A real run always passes the endpoint's
+# resolved policy explicitly, so this value never decides anything in production.
+HEALTH_AUTO = "auto"
 
 # Markers that identify a rejection of the *response format* specifically.
 # Deliberately narrow: the previous set included bare "unsupported" and "not
@@ -167,6 +182,9 @@ class OpenAiCompatibleAdapter(AgentAdapter):
         endpoint_id: str = "",
         endpoint_name: str = "",
         capabilities: CapabilityCache | None = None,
+        health_check_policy: str = HEALTH_AUTO,
+        chat_probe_ok: bool = False,
+        api_key_env: str | None = None,
     ) -> None:
         self.agent_id = agent_id
         # The *transport*, not the routing key: several agents may share it.
@@ -203,6 +221,13 @@ class OpenAiCompatibleAdapter(AgentAdapter):
         # "no memory" — each dispatch rediscovers, which is correct for a bare
         # construction in a test and never for a real run.
         self._capabilities = capabilities
+        self.health_check_policy = health_check_policy
+        # Whether the user has accepted that a chat probe may be billed. Without
+        # it a ``chat`` policy degrades to not-probed rather than spending.
+        self.chat_probe_ok = chat_probe_ok
+        # Named only so a credential failure can say *which* variable to check.
+        self.api_key_env = api_key_env
+        self._not_probed = False
 
     def _get_client(self) -> Any:
         """Return the SDK client, constructing one lazily on first real use."""
@@ -461,26 +486,58 @@ class OpenAiCompatibleAdapter(AgentAdapter):
     def health_check(self) -> bool:
         """Return whether the backend is usable, without dispatching a task.
 
-        For a cloud endpoint, constructing the client *is* the whole check —
-        building a registry must stay free of network calls. For a ``base_url``
-        endpoint it is not enough: "the server isn't running" is the single most
-        likely local failure, and without a probe it surfaces as three failed
-        dispatch attempts per task instead of one line at startup.
+        What "usable" means is the endpoint's configured policy, not a guess:
+
+        * ``models`` — list models once with a short timeout. The default for a
+          compatible endpoint, because "the server isn't running" is the most
+          likely failure and without a probe it surfaces as three failed
+          dispatch attempts per task instead of one line at startup.
+        * ``chat`` — a tiny real completion. It costs money, so it runs **only**
+          after the user has explicitly accepted that; without the acceptance
+          this degrades to not-probed rather than silently billing them.
+        * ``none`` — validate construction only, make no network call, and
+          report *not probed*. A service with no ``/models`` route is perfectly
+          usable through manual model entry, and dropping it from the pool for
+          lacking a listing it never claimed would be wrong.
+
+        Constructing the client is always checked first: a missing SDK or an
+        unbuildable client is a failure under every policy.
         """
         try:
             client = self._get_client()
         except Exception as exc:
-            self._health_detail = str(exc)
+            self._health_detail = classify_failure(
+                exc,
+                endpoint_id=self.endpoint_id,
+                api_key_env=self.api_key_env,
+                base_url=self.base_url,
+            ).message()
             return False
-        if self.base_url is None:
+
+        policy = self.health_check_policy
+        if policy == HEALTH_AUTO:
+            # Nothing of our own to probe means the SDK's default host, where a
+            # startup listing would be a network call MAK has never made.
+            policy = HEALTH_MODELS if self.base_url is not None else HEALTH_NONE
+        if policy == HEALTH_NONE or (policy == HEALTH_CHAT and not self.chat_probe_ok):
+            # Not probed is not the same as healthy, and health_status says which.
             self._health_detail = None
+            self._not_probed = True
             return True
+        self._not_probed = False
+
         try:
-            _probe_models(client)
+            if policy == HEALTH_CHAT:
+                _probe_chat(client, self.model)
+            else:
+                _probe_models(client)
         except Exception as exc:
-            self._health_detail = (
-                f"no OpenAI-compatible server answered at {self.base_url} ({exc})"
-            )
+            self._health_detail = classify_failure(
+                exc,
+                endpoint_id=self.endpoint_id,
+                api_key_env=self.api_key_env,
+                base_url=self.base_url,
+            ).message()
             return False
         self._health_detail = None
         return True
@@ -488,11 +545,36 @@ class OpenAiCompatibleAdapter(AgentAdapter):
     def health_detail(self) -> str | None:
         """Return why the last ``health_check`` failed, if it did.
 
-        Read by ``mak.bootstrap.healthy_agent_types`` so the startup warning can
-        name the endpoint instead of guessing at "missing key/SDK, or CLI not on
-        PATH" — which is never the reason a local server is unreachable.
+        Read by ``mak.bootstrap.healthy_agent_ids`` so the startup warning can
+        name the actual cause — a wrong base URL, an expired key, a quota
+        breach — instead of guessing at "missing key/SDK, or CLI not on PATH",
+        which is never the reason a running server refused a request.
         """
         return self._health_detail
+
+    def health_status(self) -> str:
+        """Return a human phrase for the last check: probed, or merely valid."""
+        if self._health_detail is not None:
+            return self._health_detail
+        return NOT_PROBED if self._not_probed else "healthy"
+
+
+def _probe_chat(client: Any, model: str) -> None:
+    """Send the smallest possible real completion, to prove the model answers.
+
+    Billed, so it runs only behind an explicit acceptance. Deliberately *not*
+    structured: this asks "does this model respond at all", and a server that
+    rejects ``response_format`` would otherwise fail a probe it should pass.
+    """
+    try:
+        probe = client.with_options(timeout=15.0)
+    except AttributeError:
+        probe = client
+    probe.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": "ping"}],
+        max_tokens=1,
+    )
 
 
 def _probe_models(client: Any) -> None:
