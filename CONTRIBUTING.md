@@ -1957,6 +1957,19 @@ task timeout.
   and `DEFAULT_KEY_ENV` are the public knobs the CLI reuses. `mak/__main__.py` is the
   thin CLI shell over these functions.
 
+**Keyed by agent id, not adapter type (Wave 22).** `_claim` used to key the
+registry by `agent_type` — plain dict assignment, so a second entry of the same
+type silently replaced the first and one of the two agents never ran, with
+nothing said about it. `register`/`register_factory` now key by `AgentConfig.id`
+(defaulted from `type` for a legacy config, so nothing written before Wave 22
+changes behavior) and `_claim` raises a `ConfigError` on a duplicate id instead of
+overwriting. This is what makes two endpoints on the same transport — two
+OpenAI-compatible services, or two models on one of them — coexist in one
+registry; see "Universal OpenAI-compatible endpoints" in the history section
+below for the full design. `replace_factory` is the one deliberate exception,
+for tests that need to swap a registered double; `list_ids()` returns every
+registered id and `list_types()` is kept as a deprecated alias.
+
 ### 7.4 The wire protocol
 
 `protocol.py` defines the single canonical wire schema — exactly the `TaskBundle` /
@@ -3038,6 +3051,42 @@ session:
                                    # that ran and passed opens the gate;
                                    # "allow_skip" is the opt-out for no suite
 
+# Endpoints (Wave 22, "Universal OpenAI-compatible endpoints" in the history
+# section below) — an optional list of named OpenAI-compatible services. An
+# agent or the planner names one by id instead of repeating its URL and
+# capabilities. `mak/endpoints/profiles.py` is the single source of truth for
+# every preset URL and key-env name; nothing below is duplicated anywhere else
+# in the tree (a test enforces this).
+# endpoints:
+#   - id: "nvidia"
+#     profile: "nvidia"        # nvidia | openrouter | deepseek | zai-general |
+#                               # zai-coding | custom — prefills base_url,
+#                               # api_key_env and capability defaults; every
+#                               # field it sets can still be overridden here
+#     location: "hosted"       # hosted | private | local — only affects what
+#                               # MAK tells you, never how it connects
+#   - id: "house-gateway"      # a service with no built-in profile
+#     transport: "openai_chat"
+#     base_url: "https://llm.internal.example/v1"  # the SDK base, never
+#                                                    # rewritten with a "/v1"
+#     api_key_env: "HOUSE_GATEWAY_KEY"  # the NAME of the env var; omit for a
+#                                        # keyless server — MAK sends a
+#                                        # non-secret placeholder, never an
+#                                        # ambient OPENAI_API_KEY
+#     model_discovery: "auto"   # auto | models | manual
+#     health_check: "models"    # models | chat | none
+#     structured_output: "auto" # auto | json_schema | json_object | none —
+#                                # starts strict and steps down on a verified
+#                                # rejection, remembering what worked
+#     token_parameter: "auto"   # auto | max_tokens | max_completion_tokens | none
+#     headers:                  # extra request headers; MAK owns Authorization,
+#                                # Content-Type, Host and User-Agent and refuses
+#                                # an entry that tries to set one
+#       - name: "X-Title"
+#         value: "MAK"          # a literal, public value
+#       - name: "X-Tenant-Token"
+#         value_env: "HOUSE_TENANT_TOKEN"  # a secret — read from the environment
+
 planner:
   model: "claude-opus-5"
   max_retries: 3
@@ -3051,6 +3100,12 @@ planner:
   # base_url: "http://localhost:11434"   # required for an "ollama"/local backend
   # api_key_env: "VLLM_TOKEN"            # for a token-protected gateway; unset
                                          # means the D2 placeholder key is sent
+  # endpoint: "nvidia"        # Wave 22 — route the planner through a configured
+                              # endpoint instead. Authoritative when set: MAK
+                              # does not guess the backend from the model name,
+                              # and the credential comes from the endpoint's own
+                              # api_key_env, never OPENAI_API_KEY. Mutually
+                              # exclusive with backend/base_url/api_key_env above
 
 agents:                         # first entry is the default agent
   - type: "anthropic_api"
@@ -3081,6 +3136,17 @@ agents:                         # first entry is the default agent
   #   model: "Qwen/Qwen2.5-Coder-32B-Instruct"
   #   base_url: "http://localhost:8000/v1" # required — MAK never guesses a port
   #   structured_output: "json_schema"
+  # Wave 22 — route through a configured endpoint instead of type/base_url:
+  # - id: "nvidia-llama"        # the routing key: scheduler, planner, logs and
+  #                             # the git trailer all use it, not the type
+  #   endpoint: "nvidia"        # type is derived from the endpoint's transport
+  #   model: "meta/llama-3.3-70b-instruct"
+  #   max_instances: 2
+  #   timeout: 600
+  # - id: "nvidia-qwen"         # a second model on the SAME endpoint — this is
+  #                             # exactly what pre-Wave-22 could not express
+  #   endpoint: "nvidia"
+  #   model: "qwen/qwen2.5-coder-32b-instruct"
 
 git:
   auto_commit: true
@@ -3352,11 +3418,26 @@ required** — because `main` rewrites the loaded `MakConfig` (a frozen dataclas
 
   With no `:model`, `AgentConfig.model` is left `None` and the adapter's built-in
   default applies — except `ollama`/`local`, where a local runtime has no
-  catalog default and a missing model is a `ConfigError` showing the syntax.
-  Because the `AdapterRegistry` is keyed by agent *type*, MAK runs **one model
-  per provider** per session — a repeated provider is rejected with a message
-  pointing at `--max-agents` for concurrency. The first entry becomes the
-  routing default (overridable with `--agent`).
+  catalog default and a missing model is a `ConfigError` showing the syntax. The
+  first entry becomes the routing default (overridable with `--agent`).
+
+  **A configured endpoint id is also accepted in the provider position (Wave
+  22).** `--models nvidia:meta/llama-3.3-70b-instruct` resolves `nvidia` against
+  the endpoints in `mak.yaml` plus the per-user endpoint store (`/endpoint add`,
+  §12.2) and is tried *before* the five built-in provider names above; a
+  reserved id (`anthropic`, `openai`, `gemini`, `google`, `local`, `ollama`) can
+  never be taken by a user endpoint, so a prefix has exactly one meaning. Because
+  the registry is keyed by **agent id**, not adapter type (§7.3), several models
+  on one endpoint and several endpoints on one transport are both legal in a
+  single roster — `--models nvidia:meta/llama-3.3-70b-instruct
+  nvidia:qwen/qwen2.5-coder-32b-instruct openrouter:some/model` runs all three at
+  once. This is the restriction Wave 22 removes: before it, the registry was
+  keyed by adapter type, so a second entry naming the same provider (or a second
+  OpenAI-compatible endpoint, which had no identity of its own) silently
+  replaced the first in the registry rather than running alongside it. A
+  collision is still rejected, but on the **agent id** two specs resolve to, not
+  on the provider — `--max-agents` is still how you get several *instances* of
+  one model running concurrently.
 
   **The full grammar is `provider[:model][@base_url]`.** `bootstrap._split_spec`
   splits on the **first** `@` (a URL may carry a userinfo segment,
@@ -3568,6 +3649,7 @@ dumps.
 | `/refresh-models` | Re-fetch the *cloud* model catalog now, ignoring the refresh schedule (§13) — says so explicitly in local mode, where `/local models` is the equivalent |
 | `/local [sub-command]` | Local-runtime setup — see below (Wave 15) |
 | `/mode [cloud\|local\|hybrid]` | Show or switch how this session gets its models (Wave 15) |
+| `/endpoint [sub-command]` | Add, edit, test, or remove a custom OpenAI-compatible endpoint — see below (Wave 22) |
 | `/max-agents N` | Set the concurrent-agents limit |
 | `/work-dir <path>` | Set MAK's working directory |
 | `/apikey` | Add or update API keys interactively |
@@ -3658,6 +3740,37 @@ the first task. `MakCompleter` (§12) offers `/local`'s sub-commands and
 small local table rather than importing `cli/local.py` — so every keystroke
 does not pay for `prompt_toolkit`'s styles and `rich`'s progress-bar imports.
 
+### `/endpoint` — custom OpenAI-compatible endpoints (Wave 22)
+
+`cli/endpoints/` is the interactive counterpart of the `endpoints:` config
+section (§11): `list`, `add`, `show`, `edit`, `test`, `models`, `remove`,
+`export`, `help`. `add` runs a gather-then-commit wizard (`wizard.py`) — every
+question is asked before anything is written, and a `CANCELLED` sentinel at any
+step discards the whole draft rather than leaving a half-filled entry; picking a
+preset (nvidia, openrouter, deepseek, zai-general, zai-coding) prefills the URL
+and credential variable from `mak/endpoints/profiles.py`, or `custom` starts
+from nothing for a service MAK ships no profile for. `export <id>` prints the
+same secret-free YAML block documented in §11, ready to paste into `mak.yaml`.
+`test <id>` runs the endpoint's configured health policy (`models` / `chat` /
+`none` — see "Universal OpenAI-compatible endpoints" in the history section
+below) on demand — the one place `/endpoint` is allowed to spend a request, and
+only on an explicit ask.
+
+Endpoints added this way are **saved**, not session-only — they persist across
+runs in `~/.config/mak/endpoints.json` (`mak/endpoints/store.py`, atomic `0600`
+write, schema-versioned) so they survive the process the wizard ran in. This is
+the one deliberate exception to "Session-only configuration" below, alongside
+`/local`'s save prompt: an endpoint is infrastructure a user configures once and
+reuses across many `mak` invocations, not a per-run override like `/models` or
+`/max-agents`. A project's own `mak.yaml` `endpoints:` entries and the user
+store are merged (`merge_endpoints`), with the project file winning on a
+matching id — so a team can commit shared endpoints while an individual still
+keeps personal ones.
+
+Credentials are never part of this file or this flow: `add`/`edit` ask for an
+**environment variable name**, never a key value, and `/apikey` (below) is where
+the value itself is written to `~/.config/mak/.env`.
+
 **Adding a new slash command:** add a handler in `commands.py` (print a one-line
 `print_ok`/`print_warn`/`print_error` confirmation if it mutates state — the
 bottom toolbar shows live state automatically), register it in
@@ -3719,6 +3832,18 @@ winning over both — and stored in `CliState.api_keys`. The first-run wizard
 (`cli/setup.py`) prompts and writes them to the user config dir. Keys are injected
 into `os.environ` before each MAK session so the adapters find them via their
 `api_key_env` fields.
+
+**Any variable name, not a fixed set (Wave 22).** Before Wave 22, `save_keys`
+only knew the three built-in providers' env var names and rewrote `.env` from
+that fixed set on every save — harmless while only three names existed, but it
+would have **deleted** an endpoint's credential the next time any key was saved,
+since a name it didn't recognize simply wasn't in what it wrote back. `save_keys`
+now parses the existing file, merges in only the names it was asked to set or
+clear, and renders the rest byte-for-byte unchanged (`cli/core/api_keys.py`,
+`parse_env_file`/`EnvLine`) — an atomic temp-file-plus-`os.replace` write, `0600`,
+same as before. `key_names_for(endpoints)` collects the `api_key_env` names an
+endpoint set actually needs, so `/apikey` can prompt for exactly those alongside
+the three built-in providers.
 
 ### Dependencies added by `cli/`
 
@@ -3793,6 +3918,23 @@ re-exports `mak.models.ModelEntry` as `ModelInfo` (one dataclass, not two — it
 `ModelRegistry()` singleton. There is deliberately **no** module-level
 `ALL_MODELS` list anymore — a list captured at import time cannot reflect a
 refresh; call `all_models()` instead.
+
+**Endpoint-scoped catalogs (Wave 22).** A third-party OpenAI-compatible service
+has no curated judgment table and no seed data — `sources_for_endpoints` builds
+an `OpenAiCompatibleSource` per configured endpoint and `refresh(key_envs=...)`
+fetches each in isolation, same failure-isolation guarantee as the three
+built-in providers: one endpoint's fetch failing never empties another's list.
+Every `ModelEntry` now carries `endpoint_id`, and the on-disk manifest moved to
+**schema v2**, keyed by `(endpoint_id, model_id)` instead of `model_id` alone —
+two services can offer a model of the same id (`meta/llama-3.3-70b-instruct` on
+both NVIDIA and a private gateway) and they are two independent entries, never
+one overwriting the other. A v1 manifest from before this wave is read and
+migrated forward automatically; nothing under a user's existing three-provider
+setup changes shape. `ModelRegistry.for_endpoint(endpoint_id)` and
+`find(model, endpoint_id)` are the new lookup surface; `evaluated` (whether a
+model has passed curation at all) is **derived from the provider at load time**
+rather than persisted, so a manifest cannot go stale about which entries are
+first-party.
 
 ## 14. Local runtimes (`mak/local/`)
 
@@ -3919,10 +4061,16 @@ cli/                       # interactive CLI app (prompt_toolkit + rich)
 ├── runner.py              # MAK library bridge + token counter + git diff helpers
 ├── setup.py               # first-run API key setup wizard
 ├── ui.py                  # all Rich rendering (welcome box, status, plan list, diff)
-└── core/
-    ├── api_keys.py        # load/save API keys from mak/.env
-    ├── models.py          # thin adapter over mak/models/ (ModelInfo = ModelEntry)
-    └── state.py           # CliState dataclass (models, agents, workdir, approval flag)
+├── core/
+│   ├── api_keys.py        # parse/merge/render ~/.config/mak/.env (Wave 22: any
+│   │                      #   var name, not a fixed set — §12.2)
+│   ├── models.py          # thin adapter over mak/models/ (ModelInfo = ModelEntry)
+│   └── state.py           # CliState dataclass (models, agents, workdir, approval flag)
+└── endpoints/              # /endpoint: add/edit/list/show/test/models/remove/export
+    ├── commands.py         #   (Wave 22, §12.2)
+    ├── wizard.py           # gather-then-commit add/edit flow, CANCELLED sentinel
+    ├── prompts.py
+    └── render.py           # table rendering + secret-free YAML export
 
 mak/
 ├── __main__.py            # CLI entry point: python -m mak --task "..."
@@ -3940,6 +4088,21 @@ mak/
 │   ├── logging.py         # append-only JSON-Lines session logger
 │   └── budget.py          # resolve_output_budget: shared catalog-driven token
 │                          #   budget resolver (Wave 12, §7.2.1)
+│
+├── endpoints/              # universal OpenAI-compatible endpoints (Wave 22, §7.3/§11)
+│   ├── types.py            # Transport/Location/HealthPolicy/StructuredOutput enums,
+│   │                       #   EndpointConfig — no I/O, no mak.config import
+│   ├── profiles.py         # the six built-in presets — single source of truth
+│   │                       #   for every preset URL and key-env name
+│   ├── parse.py            # YAML → EndpointConfig; identity materialized,
+│   │                       #   capabilities left deferred
+│   ├── resolution.py       # the precedence walk: explicit > profile > transport
+│   ├── builtin.py          # synthesizes built-in endpoints for the legacy
+│   │                       #   hosted/local agent types
+│   ├── agents.py           # resolve_agents / derive_agent_id / unique_agent_id
+│   ├── store.py            # per-user ~/.config/mak/endpoints.json, atomic 0600
+│   ├── capabilities.py     # the structured-output ladder + session CapabilityCache
+│   └── health.py           # failure classification + the three health policies
 │
 ├── node_store/
 │   ├── ingestion.py       # file → raw-source span-tiled fragments
@@ -4030,7 +4193,7 @@ in `tests/models/` touches the network — every provider fetch is a fake `Model
 Three gates must be green for every change — locally, in pre-commit, and in CI:
 
 ```bash
-pytest -q                  # the full suite (currently 1216 tests)
+pytest -q                  # the full suite (currently 2528 tests)
 mypy --strict mak cli      # zero errors
 ruff check mak cli tests   # zero findings
 ```
@@ -4753,6 +4916,149 @@ Each completed sweep also writes
 `benchmark/simulated_agent_scaling_1_result.json`. Keep the report's real-versus-
 modeled boundary explicit, preserve negative H1-H5 verdicts, and never infer real
 model calibration from the keyless smoke data.
+
+---
+
+## Wave 22: Universal OpenAI-compatible endpoint abstraction
+
+Before this wave, `AgentConfig.type` did three jobs at once: it selected which
+adapter class to build, it *was* the wire protocol, and it *was* the registry's
+routing key. That conflation made it impossible to point MAK at two
+OpenAI-compatible services in one run — NVIDIA Build and OpenRouter both need
+`type: "openai_api"`, so the second entry silently replaced the first in the
+registry (§7.3) and one of the two configured agents simply never ran, with
+nothing said about it. A hand-written `mak.yaml` pointing `base_url` at a
+third-party gateway worked by accident; the CLI's `--models` flag and the
+`/endpoint`-shaped features this wave adds did not exist at all. Wave 22 is
+incomplete, by its own acceptance criterion, if any surface still says "Unknown
+provider" for a service that speaks the OpenAI Chat Completions API.
+
+**Four identities, previously one.** The fix separates **transport** (the wire
+protocol an adapter speaks — `openai_chat`, `anthropic`, `ollama_native`, …),
+**provider profile** (a named set of documented defaults — NVIDIA's URL, its
+conventional key variable, what it's known to support), **endpoint** (one
+configured, addressable service: a URL, a credential *reference*, capability
+settings, all independent of any profile), and **agent id** (the routing key
+every scheduler, planner, and log line uses). `type` now does exactly one job —
+selecting a constructor — and every agent, endpoint-backed or legacy, resolves
+through the same path via synthesized built-in endpoints for the three hosted
+providers and the two local transports (`mak/endpoints/builtin.py`). `id`
+carries the routing key `type` used to (§7.3); reserved ids (`anthropic`,
+`openai`, `gemini`, `google`, `local`, `ollama`) keep `--models
+<prefix>:<model>` unambiguous, since a legacy provider prefix and a user
+endpoint id now share one namespace.
+
+**The new package, `mak/endpoints/`.** `types.py` is the leaf: `Transport`,
+`Location`, `ModelDiscovery`, `HealthPolicy`, `StructuredOutput`, and
+`TokenParameter` as `StrEnum`s, id/env-name validation, and `EndpointConfig`
+itself — no I/O, no dependency on `mak.config`, so every other module in the
+package can depend on it without a cycle. `profiles.py` is the single source of
+truth for the six shipped presets (nvidia, openrouter, deepseek, zai-general,
+zai-coding, custom) — a dedicated test greps `mak/` and `cli/` for every preset
+URL and key-env name and fails if either appears anywhere else, which is what
+stops the CLI, the config parser, and an example config from each carrying a
+copy that then drifts. `parse.py` turns YAML into an `EndpointConfig`,
+deliberately **materializing identity while deferring capabilities** — it does
+not bake a profile's capability defaults into the stored config, so a service
+whose documented default MAK gets wrong someday can be corrected in
+`profiles.py` for everyone still on `auto`, not just for entries written after
+the fix. `resolution.py` performs the precedence walk at the moment an endpoint
+is actually used: an explicit field on the endpoint beats the profile's
+default, which beats the transport's own default. The tri-state distinction is
+load-bearing here — an *unset* field (`None`) falls through the walk, but an
+*explicit* `"none"` stops it, so a profile that defaults to `json_object` can
+still be turned off for one endpoint without the walk picking the profile's
+value back up underneath the override.
+
+**Credentials are names, never values.** `api_key_env` names an environment
+variable; MAK reads the key from it at resolution time and never stores, logs,
+or forwards the value itself. An endpoint that names no variable is not treated
+as "use whatever's ambient" — the resolution layer sends a non-secret
+placeholder (`PLACEHOLDER_KEY = "local"`) instead, so an `OPENAI_API_KEY`
+exported for the hosted OpenAI provider can never leak to an unrelated
+`base_url` just because the SDK would otherwise pick it up by default. Extra
+request headers follow the same rule (`EndpointHeaderConfig`, one of
+`value`/`value_env`, never both) and MAK refuses an entry that tries to set
+`Authorization`, `Content-Type`, `Host`, or `User-Agent` itself.
+
+**The structured-output ladder now actually reaches its bottom rung.**
+Pre-Wave-22 the adapter tracked a single boolean `downgraded`, so a service
+rejecting both `json_schema` and `json_object` failed every task after using up
+its one allowed descent — `json_schema → json_object` and then nowhere to go.
+`capabilities.py`'s `rungs_from(mode)` now walks the full
+`("json_schema", "json_object", "none")` ladder, and a session-scoped
+`CapabilityCache` remembers which rung worked for each `(endpoint_id, model)`
+pair — **injected into the adapter, not a module global**, so two sessions in
+one process (or two tests) never share what one learned, and a lock protects
+every read and write for the scheduler's concurrent dispatch. Tightening the
+rejection detector was necessary to make the ladder trustworthy: it used to
+match the bare word `"unsupported"` anywhere in an error body, which meant an
+unsupported *model* or *region* was silently answered by stepping down the
+reply's own structure — the wrong response to the wrong problem. It now
+requires both a 400/422 status **and** a `response_format`/`json_schema`/`"json
+mode"` marker in the body.
+
+**Health is a policy, not an assumption.** `health.py` classifies failures
+(credentials, not-found, rate-limited, incompatible, unreachable, SDK missing,
+model missing, unknown) into one actionable line with secrets redacted, and
+three explicit policies — `models` (list once), `chat` (a one-token probe, and
+only when explicitly opted into, since it spends real money), `none` — replace
+an assumption that health equals reachability. "Not probed" is a distinct state
+from "healthy": a registry build must never make a network call for a builtin
+cloud endpoint with no `base_url` just to decide whether to start.
+
+**Model discovery and the manifest.** `sources_for_endpoints` builds a model
+source per configured endpoint and fetches each in isolation — one endpoint's
+failure never empties another's list, matching the guarantee the three
+built-in providers already had (§13). The on-disk manifest moved to **schema
+v2**, keyed by `(endpoint_id, model_id)` instead of `model_id` alone, migrated
+forward automatically from v1; two services offering a model under the same id
+are two independent entries now, never one silently overwriting the other.
+
+**`/endpoint` and the config surface.** The interactive CLI gets a full
+sub-command family — `add` (a gather-then-commit wizard: every question is
+asked before anything is written, and a `CANCELLED` sentinel at any step
+discards the whole draft), `list`, `show`, `edit`, `test`, `models`, `remove`,
+`export` — documented in §12.2, and `mak.yaml` gets an `endpoints:` section
+plus `id`/`endpoint` fields on `agents[]` and `planner`, documented in §11.
+`--models` accepts a configured endpoint id in the provider position
+(§12.1), and three or more OpenAI-compatible endpoints now run side by side in
+one roster — the wave's acceptance test spins up three in-process fake HTTP
+servers with different dialects (one rejecting `json_schema`, one with no
+`/models` route, one requiring a specific bearer token) and drives a real run
+across all three at once (`tests/support/fake_openai_server.py`,
+`tests/test_wave22_acceptance.py`).
+
+**Three deliberate behavior reversals**, each with its old test inverted and
+cross-referenced to the new one: the registry now **errors** on a duplicate id
+instead of silently overwriting (§7.3); a roster may now put **several models
+on one provider** instead of being capped at one, with uniqueness enforced by
+agent id instead (§12.1); and `save_keys` now **preserves** every name already
+in `.env` instead of truncating to a fixed set of three (§12.2, API keys). A
+`replace_factory` escape hatch was added to the registry for tests that
+deliberately swap in a double, so the new duplicate-id error doesn't also
+break legitimate test setup.
+
+**Found along the way, not caused by the wave but surfaced by it:** the
+endpoint store's failed-write cleanup could mask the real error behind a
+`NotADirectoryError` from an unconditional `unlink`, now wrapped and reported
+correctly; and a mid-implementation regression where the cloud path started
+making a real network call at startup (closed by the `HEALTH_AUTO`
+adapter-only default described above) would have broken every zero-config run
+the moment health policies landed, caught by the existing bootstrap test suite
+before it shipped. Two of the wave's own new tests briefly (in a since-reverted
+local commit) called `monkeypatch.undo()` inside a test body — pytest shares
+one `monkeypatch` instance with the autouse fixture that isolates `.env` file
+I/O from the real one, so an `undo()` inside the test reverted that isolation
+too. Both tests now save and restore `os.replace` by hand instead; a
+pre-existing, unrelated instance of the same pattern in
+`tests/test_wave19_acceptance.py` was noted as a follow-up rather than fixed
+here, since it belongs to a different wave's test file.
+
+The gates closed at 2528 passing tests, `ruff check mak cli tests` and `mypy
+--strict mak cli` both clean. Three failures in
+`tests/node_store/test_ingestion.py` were verified to fail identically on
+`main` at the branch point and are unrelated to this wave's changes.
 
 ---
 

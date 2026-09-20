@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.7.1 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.8.0 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -35,6 +35,7 @@ arbitrates shared memory between threads.
   - [CLI App](#cli-app)
   - [CLI Command](#cli-command)
 - [Local Models](#local-models)
+- [Custom & OpenAI-Compatible Endpoints](#custom--openai-compatible-endpoints)
 - [Configuration & API Keys](#configuration--api-keys)
 - [Benchmark](#benchmark)
 - [Contribute](#contribute)
@@ -264,14 +265,58 @@ See
 [mak/examples/](mak/examples/) for ready-made configs and [CONTRIBUTING.md §7.7/§14](CONTRIBUTING.md) for
 the full detail.
 
+## Custom & OpenAI-Compatible Endpoints
+
+Beyond the three built-in providers, MAK can talk to **any service that speaks
+the OpenAI Chat Completions API** — NVIDIA Build, OpenRouter, DeepSeek, Z.ai, a
+self-hosted vLLM gateway, or anything else. Add one from the interactive CLI:
+
+```bash
+mak       #  then: /endpoint add
+```
+
+`/endpoint add` walks you through a preset (NVIDIA, OpenRouter, DeepSeek, Z.ai)
+or a fully custom service, asks for the **name of the environment variable**
+holding your key (never the key itself), and saves it to
+`~/.config/mak/endpoints.json` so it's there on your next run. Other useful
+sub-commands: `/endpoint list`, `/endpoint test <id>`, `/endpoint models <id>`,
+`/endpoint export <id>` (prints a pasteable, secret-free `mak.yaml` block).
+
+Once configured, an endpoint id works anywhere a provider name does:
+
+```bash
+export NVIDIA_API_KEY=...
+mak run --task "your task" --work-dir /path/to/project \
+  --models nvidia:meta/llama-3.3-70b-instruct
+
+# Several models on the same endpoint, or several endpoints, in one run:
+mak run --task "your task" --work-dir /path/to/project \
+  --models nvidia:meta/llama-3.3-70b-instruct nvidia:qwen/qwen2.5-coder-32b-instruct \
+           openrouter:some/model
+```
+
+Or non-interactively:
+
+```bash
+mak examples hosted-openai-compatible > mak.yaml   # NVIDIA Build, ready to edit
+mak examples custom-endpoint > mak.yaml            # a provider-neutral template
+```
+
+MAK never accepts a raw API key in a config file, on the command line, or in a
+log — only the *name* of the environment variable that holds it. See
+[mak/endpoints/profiles.py](mak/endpoints/profiles.py) for the preset table and
+[CONTRIBUTING.md](CONTRIBUTING.md) (search "Universal OpenAI-compatible
+endpoints") for the full design.
+
 ## Configuration & API Keys
 
-> MAK drives hosted models from **three providers — Anthropic, OpenAI,
-and Google Gemini**. 
+> MAK drives hosted models from **three built-in providers — Anthropic, OpenAI,
+and Google Gemini** — plus any number of custom endpoints (see
+[above](#custom--openai-compatible-endpoints)).
 
 Keys are read from the environment
-(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or from
-`~/.config/mak/.env`.
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or an endpoint's own
+configured variable) or from `~/.config/mak/.env`.
 
 The TUI's `/apikey` command (and its first-run setup)
 writes them there for you, creating the file readable only by you.

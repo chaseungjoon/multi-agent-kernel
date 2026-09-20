@@ -14,6 +14,43 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.8.0b] — 2026-09-20
+
+### Added
+- **Universal OpenAI-compatible endpoint abstraction (Wave 22).** Any service
+  speaking the OpenAI Chat Completions API — NVIDIA Build, OpenRouter,
+  DeepSeek, Z.ai, or a self-hosted gateway — is now a first-class MAK
+  endpoint. New `mak/endpoints/` package separates transport, provider
+  profile, endpoint, and agent id, which were previously conflated into a
+  single `AgentConfig.type` field.
+- **`/endpoint` command** in the interactive CLI: `add` (a preset or fully
+  custom wizard), `list`, `show`, `edit`, `test`, `models`, `remove`,
+  `export`. Saved endpoints persist in `~/.config/mak/endpoints.json`.
+- **`endpoints:` config section**, plus `id`/`endpoint` fields on `agents[]`
+  and `planner`, so `mak.yaml` can name a configured endpoint instead of
+  repeating its URL and capabilities.
+- **Multiple simultaneous OpenAI-compatible endpoints in one run** —
+  `--models nvidia:<model> openrouter:<model>` and several models on the same
+  endpoint both now work; a configured endpoint id is accepted anywhere a
+  built-in provider name is.
+- Model discovery, health checks (`models`/`chat`/`none` policies), and a
+  four-rung structured-output ladder (`json_schema → json_object → none`)
+  that now actually reaches its bottom rung and remembers per-`(endpoint,
+  model)` what worked for the rest of the session.
+- Two new packaged examples: `mak examples hosted-openai-compatible` and
+  `mak examples custom-endpoint`.
+
+### Changed
+- `AdapterRegistry` is now keyed by **agent id**, not adapter type — a
+  duplicate id is a startup error instead of one agent silently replacing
+  another in the registry.
+- The model manifest moved to **schema v2**, keyed by `(endpoint_id,
+  model_id)` instead of `model_id` alone; a v1 manifest migrates forward
+  automatically.
+- `cli/core/api_keys.py`'s `save_keys` now parses, merges, and renders
+  `~/.config/mak/.env` instead of rewriting it from a fixed set of three
+  names — a save no longer risks deleting an unrelated key.
+
 ## [0.7.1b] — 2026-09-20
 
 ### Added
