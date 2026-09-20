@@ -150,7 +150,7 @@ def classify_failure(
     ``endpoint_id``, ``api_key_env`` and ``base_url`` only shape the message;
     they are never used to decide the kind.
     """
-    detail = _redact(str(exc)) or exc.__class__.__name__
+    detail = redact_secrets(str(exc)) or exc.__class__.__name__
     status = status_of(exc)
     if status is not None:
         kind = _BY_STATUS.get(status)
@@ -175,11 +175,13 @@ def classify_failure(
 _SECRET_PREFIXES = ("sk-", "bearer ", "api-key ", "token ")
 
 
-def _redact(text: str) -> str:
+def redact_secrets(text: str) -> str:
     """Return ``text`` with anything key-shaped replaced by a marker.
 
     Conservative by design: it is better to redact a harmless string than to
-    print a live credential into a log the user is about to share.
+    print a live credential into a log the user is about to share. Public
+    because every path that stores or prints provider text — health details,
+    model-fetch errors, status lines — has to go through exactly one rule.
     """
     out: list[str] = []
     for word in text.split(" "):

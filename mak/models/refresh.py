@@ -88,13 +88,18 @@ def _entry_for(
             ),
             FetchedModel(model_id=model_id),
         )
+    built_in = provider in PROVIDER_KEY_ENV
     return ModelEntry(
         provider=provider,
+        endpoint_id=provider,
         model_id=model_id,
         display_name=display_name_for(model_id, facts.display_name),
         context_window=facts.context_window,
         max_output=facts.max_output,
         source="api",
+        # A model from a third-party catalog has not been assessed by anyone,
+        # and the neutral judgment defaults must not read as an endorsement.
+        evaluated=built_in,
     )
 
 
@@ -105,24 +110,39 @@ def refresh(
     manifest: Manifest,
     now: datetime,
     timeout: float = DEFAULT_TIMEOUT,
+    key_envs: Mapping[str, str] | None = None,
 ) -> tuple[Manifest, RefreshReport]:
     """Fetch every source and fold successful results into a new manifest.
 
     ``api_keys`` is keyed by environment-variable name (as
-    ``cli.core.api_keys.load_keys`` returns it), so a provider with no key is
-    reported as an error rather than attempted.
+    ``cli.core.api_keys.load_keys`` returns it), so a source with no key is
+    reported as an error rather than attempted. ``key_envs`` maps a source's
+    name to the variable holding its credential, for endpoints whose variable
+    is not one of the three built-in conventions.
+
+    **Each source is independent.** One endpoint's missing key, unsupported
+    listing route, timeout or malformed response leaves that endpoint's
+    previous cache in place and does not touch any other's. A user who adds a
+    fifth endpoint and mistypes its key must not lose the four catalogs that
+    were working.
     """
     providers = dict(manifest.providers)
     seed = load_seed()
     results: list[ProviderResult] = []
     any_success = False
+    envs = dict(PROVIDER_KEY_ENV)
+    if key_envs:
+        envs.update(key_envs)
 
     for source in sources:
         provider = source.provider
         previous = tuple(e.model_id for e in manifest.models_for(provider))
-        key = api_keys.get(PROVIDER_KEY_ENV.get(provider, ""), "").strip()
+        key_env = envs.get(provider, "")
+        key = api_keys.get(key_env, "").strip() if key_env else ""
+        # An endpoint that needs no credential (a local vLLM) still lists.
+        needs_key = bool(key_env)
 
-        if not key:
+        if needs_key and not key:
             results.append(
                 ProviderResult(
                     provider=provider,
@@ -150,13 +170,22 @@ def refresh(
             continue
 
         by_id = {m.model_id: m for m in fetched}
-        # The seed's ids are known-valid aliases, so a dated snapshot the
-        # provider returns collapses onto the alias the user actually types.
-        kept_ids = filter_ids(
-            provider,
-            list(by_id),
-            known_aliases=[e.model_id for e in seed if e.provider == provider],
-        )
+        if provider in PROVIDER_KEY_ENV:
+            # A built-in provider: curation knows this catalog's shape, so
+            # non-chat endpoints are dropped and dated snapshots collapse onto
+            # the alias the user actually types.
+            kept_ids = filter_ids(
+                provider,
+                list(by_id),
+                known_aliases=[e.model_id for e in seed if e.provider == provider],
+            )
+        else:
+            # A third-party catalog. MAK's curation rules were written against
+            # three specific providers' naming; applying them here would drop
+            # real models whose ids happen to match a deny pattern, and would
+            # rewrite ids that are not dated snapshots at all. The endpoint's
+            # own list is the authority.
+            kept_ids = [m for m in by_id if m]
         entries = tuple(
             _entry_for(provider, model_id, by_id) for model_id in kept_ids
         )

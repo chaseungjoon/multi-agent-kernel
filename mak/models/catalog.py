@@ -53,12 +53,24 @@ KEY_ENV_TO_PROVIDER: dict[str, str] = {
 
 @dataclass(frozen=True, slots=True)
 class ModelEntry:
-    """One selectable model: provider facts joined with curated judgment.
+    """One selectable model: endpoint facts joined with curated judgment.
 
     ``source`` records provenance (``"seed"`` = shipped default, ``"api"`` =
-    seen in a provider fetch). ``retired`` marks an entry that a previous fetch
-    offered but the latest one did not — kept visible so a model the user has
+    seen in a fetch). ``retired`` marks an entry that a previous fetch offered
+    but the latest one did not — kept visible so a model the user has
     configured never silently disappears mid-session.
+
+    ``endpoint_id`` is what makes two identically-named models distinguishable.
+    ``anthropic/claude-opus-5`` served by OpenRouter and ``claude-opus-5``
+    served by Anthropic are different services with different capabilities,
+    pricing and availability, so they are different *entries*. For the three
+    built-in providers the endpoint id equals the provider name, which is why
+    every pre-Wave-22 cache migrates without losing anything.
+
+    ``evaluated`` says whether the judgment fields mean anything. MAK's curated
+    table covers models a human has actually assessed; a model from a
+    third-party catalog has not been, and the UI must say "not evaluated"
+    rather than silently presenting the neutral defaults as an endorsement.
     """
 
     provider: str
@@ -71,6 +83,13 @@ class ModelEntry:
     planner_recommended: bool = False
     source: str = "seed"
     retired: bool = False
+    endpoint_id: str = ""
+    evaluated: bool = True
+
+    def __post_init__(self) -> None:
+        """Default the endpoint id to the provider name for built-in entries."""
+        if not self.endpoint_id:
+            object.__setattr__(self, "endpoint_id", self.provider)
 
     @property
     def api_key_env(self) -> str:
@@ -88,10 +107,38 @@ class ModelEntry:
         except KeyError:
             raise ValueError(f"unknown provider: {self.provider!r}") from None
 
+    @property
+    def key(self) -> tuple[str, str]:
+        """Return the identity of this entry: its endpoint and model id."""
+        return (self.endpoint_id, self.model_id)
+
+    @property
+    def spec(self) -> str:
+        """Return the ``endpoint:model`` spec that selects this entry."""
+        return f"{self.endpoint_id}:{self.model_id}"
+
+    def planner_note(self) -> str:
+        """Return the planner-quality note for listings, or an empty string.
+
+        Three distinct states, and conflating any two of them misleads:
+        unevaluated (MAK has no opinion), known-weak (a human said so), and
+        fine (nothing to say).
+        """
+        if not self.evaluated:
+            return "not evaluated"
+        return "" if self.planner_ok else "may struggle with decomposition"
+
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the **facts** only — judgment is re-joined on load."""
+        """Serialize the **facts** only — judgment is re-joined on load.
+
+        ``evaluated`` is deliberately *not* written: it is derived from the
+        provider on load (see :meth:`from_dict`), so a provider later added to
+        the curated set upgrades every cached entry it already has instead of
+        keeping a stale ``false`` until the next refetch.
+        """
         return {
             "provider": self.provider,
+            "endpoint_id": self.endpoint_id,
             "model_id": self.model_id,
             "display_name": self.display_name,
             "context_window": self.context_window,
@@ -100,14 +147,22 @@ class ModelEntry:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> ModelEntry:
-        """Build an entry from a manifest/seed mapping (judgment defaults)."""
+        """Build an entry from a manifest/seed mapping (judgment defaults).
+
+        Whether the entry has been evaluated follows from its provider: MAK's
+        curated table covers the built-in three and nothing else, so an entry
+        from any other catalog has not been assessed by anyone.
+        """
+        provider = str(raw["provider"])
         return cls(
-            provider=str(raw["provider"]),
+            provider=provider,
             model_id=str(raw["model_id"]),
             display_name=str(raw.get("display_name") or raw["model_id"]),
             context_window=_opt_int(raw.get("context_window")),
             max_output=_opt_int(raw.get("max_output")),
             source=str(raw.get("source", "seed")),
+            endpoint_id=str(raw.get("endpoint_id") or provider),
+            evaluated=provider in PROVIDER_KEY_ENV,
         )
 
 
@@ -156,6 +211,10 @@ def with_judgment(entry: ModelEntry, judgment: Judgment) -> ModelEntry:
     Kept here (rather than in ``curation``) so the join direction is explicit:
     facts are the base record, judgment is layered on top and can be re-applied
     at any time without a refetch.
+
+    ``evaluated`` is preserved, not set: whether a human has assessed this model
+    is a property of the entry's origin, and applying a neutral default
+    judgment to an unreviewed third-party model must not make it look reviewed.
     """
     return replace(
         entry,

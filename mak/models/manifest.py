@@ -21,7 +21,13 @@ from pathlib import Path
 from mak.config import user_config_dir
 from mak.models.catalog import ModelEntry
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# The schema this one replaces. v1 blocks were keyed by *provider*; v2 keys them
+# by *endpoint id*. For the three built-in providers those names are identical,
+# so migration is a rename of the outer key and nothing else — and a user who
+# upgrades keeps every cached model instead of paying a refetch.
+PREVIOUS_SCHEMA_VERSION = 1
 
 # Scheduled refresh ticks: the 1st and the 15th of each month.
 REFRESH_DAYS: tuple[int, ...] = (1, 15)
@@ -33,7 +39,14 @@ COOLDOWN_HOURS = 6
 
 @dataclass(frozen=True, slots=True)
 class ProviderBlock:
-    """One provider's cached model facts and the time they were fetched."""
+    """One endpoint's cached model facts and the time they were fetched.
+
+    Named ``ProviderBlock`` still, because for the three built-in providers an
+    endpoint and a provider are the same thing and renaming the class would
+    churn every caller for no gain. What changed in v2 is the *key* it is
+    stored under: an endpoint id, so two services offering the same model id
+    cache separately.
+    """
 
     fetched_at: datetime | None = None
     models: tuple[ModelEntry, ...] = ()
@@ -51,16 +64,17 @@ class Manifest:
 
     last_refresh: datetime | None = None
     last_attempt: datetime | None = None
+    # Keyed by **endpoint id** as of schema v2 (was provider name in v1).
     providers: dict[str, ProviderBlock] = field(default_factory=dict)
 
-    def models_for(self, provider: str) -> tuple[ModelEntry, ...]:
-        """Return cached entries for ``provider`` (empty when never fetched)."""
-        block = self.providers.get(provider)
+    def models_for(self, endpoint_id: str) -> tuple[ModelEntry, ...]:
+        """Return cached entries for ``endpoint_id`` (empty when never fetched)."""
+        block = self.providers.get(endpoint_id)
         return block.models if block is not None else ()
 
-    def has(self, provider: str) -> bool:
-        """Return True when ``provider`` has a block from a successful fetch."""
-        return provider in self.providers
+    def has(self, endpoint_id: str) -> bool:
+        """Return True when ``endpoint_id`` has a block from a successful fetch."""
+        return endpoint_id in self.providers
 
 
 def manifest_path() -> Path:
@@ -89,7 +103,8 @@ def load_manifest(path: Path | None = None) -> Manifest:
         return Manifest()
     if not isinstance(raw, dict):
         return Manifest()
-    if raw.get("schema_version") != SCHEMA_VERSION:
+    version = raw.get("schema_version")
+    if version not in (SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION):
         # A future or unknown schema is treated as no cache: the seed still
         # works, and the next refresh rewrites the file in the current shape.
         return Manifest()
@@ -97,7 +112,7 @@ def load_manifest(path: Path | None = None) -> Manifest:
     providers: dict[str, ProviderBlock] = {}
     raw_providers = raw.get("providers")
     if isinstance(raw_providers, dict):
-        for provider, block in raw_providers.items():
+        for endpoint_id, block in raw_providers.items():
             if not isinstance(block, dict):
                 continue
             entries: list[ModelEntry] = []
@@ -106,11 +121,21 @@ def load_manifest(path: Path | None = None) -> Manifest:
                     continue
                 try:
                     entries.append(
-                        ModelEntry.from_dict({**item, "source": "api"})
+                        ModelEntry.from_dict(
+                            {
+                                # v1 entries carry no endpoint id; the block key
+                                # was the provider name, which *is* the built-in
+                                # endpoint id. Nothing is lost and nothing is
+                                # guessed.
+                                "endpoint_id": str(endpoint_id),
+                                **item,
+                                "source": "api",
+                            }
+                        )
                     )
                 except (KeyError, TypeError):
                     continue
-            providers[str(provider)] = ProviderBlock(
+            providers[str(endpoint_id)] = ProviderBlock(
                 fetched_at=_parse_dt(block.get("fetched_at")),
                 models=tuple(entries),
             )
@@ -135,13 +160,13 @@ def save_manifest(manifest: Manifest, path: Path | None = None) -> None:
             manifest.last_attempt.isoformat() if manifest.last_attempt else None
         ),
         "providers": {
-            provider: {
+            endpoint_id: {
                 "fetched_at": (
                     block.fetched_at.isoformat() if block.fetched_at else None
                 ),
                 "models": [entry.to_dict() for entry in block.models],
             }
-            for provider, block in manifest.providers.items()
+            for endpoint_id, block in manifest.providers.items()
         },
     }
     tmp = target.with_name(f"{target.name}.tmp")

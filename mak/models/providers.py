@@ -19,10 +19,14 @@ Field names below are taken from the installed SDKs, not guessed:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from mak.core.exceptions import MakError
+from mak.endpoints.health import redact_secrets
+from mak.endpoints.resolution import ResolvedEndpoint
+from mak.endpoints.types import ModelDiscovery, Transport
 
 DEFAULT_TIMEOUT = 10.0
 
@@ -179,6 +183,77 @@ class GeminiSource:
             raise ModelFetchError(f"gemini: {exc}") from exc
 
 
+class OpenAiCompatibleSource:
+    """``GET /models`` on any endpoint speaking the OpenAI protocol.
+
+    Distinct from :class:`OpenAiSource` in one way that matters: it is built
+    from a **resolved endpoint** rather than hard-coded to OpenAI's own host, so
+    NVIDIA, OpenRouter, DeepSeek, Z.ai, vLLM and llama.cpp all list through it
+    with no new code. ``provider`` is the endpoint id, because that is what the
+    catalog keys on.
+
+    The credential is taken from the endpoint, never from the ambient
+    environment: this is the model-listing half of the same rule the agent
+    adapter enforces for dispatch, and forgetting it here would send a real
+    OpenAI key to a third-party host just to ask what models it has.
+    """
+
+    def __init__(self, endpoint: ResolvedEndpoint) -> None:
+        self.provider = endpoint.id
+        self._endpoint = endpoint
+
+    def fetch(
+        self, api_key: str, *, timeout: float = DEFAULT_TIMEOUT
+    ) -> list[FetchedModel]:
+        """Fetch the endpoint's model list (ids; most services expose no limits)."""
+        try:
+            import openai
+        except ImportError as exc:
+            raise _missing_sdk("openai", exc) from exc
+        options: dict[str, Any] = {
+            # Always explicit, never left for the SDK to resolve.
+            "api_key": api_key or self._endpoint.effective_key() or "local",
+            "timeout": timeout,
+        }
+        if self._endpoint.base_url is not None:
+            options["base_url"] = self._endpoint.base_url
+        if self._endpoint.headers:
+            options["default_headers"] = dict(self._endpoint.headers)
+        try:
+            client = openai.OpenAI(**options)
+            return [
+                FetchedModel(
+                    model_id=str(m.id),
+                    # A few compatible services do return a friendly name; most
+                    # do not, and the id is then the honest label.
+                    display_name=str(getattr(m, "name", "") or ""),
+                )
+                for m in client.models.list()
+                if getattr(m, "id", None)
+            ]
+        except Exception as exc:  # noqa: BLE001 - any SDK failure is a fetch failure
+            raise ModelFetchError(
+                f"{self.provider}: {redact_secrets(str(exc))}"
+            ) from exc
+
+
 def default_sources() -> tuple[ModelSource, ...]:
-    """Return one source per supported provider, in display order."""
+    """Return one source per built-in provider, in display order."""
     return (AnthropicSource(), OpenAiSource(), GeminiSource())
+
+
+def sources_for_endpoints(
+    endpoints: Sequence[ResolvedEndpoint],
+) -> tuple[ModelSource, ...]:
+    """Return a source for each endpoint whose discovery policy allows listing.
+
+    ``manual`` endpoints are excluded entirely rather than included and skipped,
+    so "this endpoint makes no network call" is visible in the source list
+    itself instead of buried in a branch.
+    """
+    return tuple(
+        OpenAiCompatibleSource(endpoint)
+        for endpoint in endpoints
+        if endpoint.transport is Transport.OPENAI_CHAT
+        and endpoint.model_discovery is not ModelDiscovery.MANUAL
+    )

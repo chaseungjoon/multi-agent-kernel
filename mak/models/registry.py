@@ -82,9 +82,38 @@ class ModelRegistry:
         """Return the catalog entries belonging to ``provider``."""
         return tuple(e for e in self._entries if e.provider == provider)
 
-    def find(self, model_id: str) -> ModelEntry | None:
-        """Return the entry with ``model_id``, or None when unknown."""
-        return next((e for e in self._entries if e.model_id == model_id), None)
+    def for_endpoint(self, endpoint_id: str) -> tuple[ModelEntry, ...]:
+        """Return the catalog entries served by ``endpoint_id``.
+
+        The identity that matters once several services can offer the same
+        model id — ``for_provider`` answers "who made this model", which is a
+        different question and not the one a selection needs.
+        """
+        return tuple(e for e in self._entries if e.endpoint_id == endpoint_id)
+
+    def endpoint_ids(self) -> tuple[str, ...]:
+        """Return every endpoint id the catalog currently holds models for."""
+        seen: list[str] = []
+        for entry in self._entries:
+            if entry.endpoint_id not in seen:
+                seen.append(entry.endpoint_id)
+        return tuple(seen)
+
+    def find(self, model_id: str, endpoint_id: str = "") -> ModelEntry | None:
+        """Return a catalog entry by model id, optionally scoped to an endpoint.
+
+        Without ``endpoint_id`` this keeps its historical "first match wins"
+        behaviour for a bare model name. With one it is exact, which is what
+        every endpoint-aware caller wants: two endpoints may both offer
+        ``claude-opus-5`` and they are not interchangeable.
+        """
+        for entry in self._entries:
+            if entry.model_id != model_id:
+                continue
+            if endpoint_id and entry.endpoint_id != endpoint_id:
+                continue
+            return entry
+        return None
 
     def recommended_planner(self, provider: str) -> str:
         """Return the planner model to auto-select for ``provider``.
@@ -198,7 +227,14 @@ class ModelRegistry:
 
 
 def _build(manifest: Manifest) -> tuple[ModelEntry, ...]:
-    """Compose seed + manifest facts + curated judgment into a sorted catalog."""
+    """Compose seed + manifest facts + curated judgment into a sorted catalog.
+
+    Built-in providers come first and in their fixed display order; any other
+    endpoint's cached catalog follows, alphabetically by endpoint id, with its
+    entries left exactly as the endpoint reported them. Curated judgment is
+    joined only where the entry was actually evaluated — an unreviewed
+    third-party model keeps ``evaluated=False`` so the UI can say so.
+    """
     seed = load_seed()
     seed_order = {e.model_id: i for i, e in enumerate(seed)}
     by_provider: dict[str, list[ModelEntry]] = {}
@@ -239,4 +275,15 @@ def _build(manifest: Manifest) -> tuple[ModelEntry, ...]:
             )
         )
         ordered.extend(with_judgment(e, judgment_for(e.model_id)) for e in entries)
+
+    # Third-party endpoints: everything cached that is not one of the built-in
+    # providers. Their ids are sorted for a stable listing, and their models are
+    # left in the order the endpoint returned them — that order is the service's
+    # own and often meaningful (OpenRouter leads with what it recommends).
+    for endpoint_id in sorted(set(manifest.providers) - set(PROVIDER_ORDER)):
+        for entry in manifest.models_for(endpoint_id):
+            judgment = judgment_for(entry.model_id) if entry.evaluated else None
+            ordered.append(
+                with_judgment(entry, judgment) if judgment else entry
+            )
     return tuple(ordered)
