@@ -66,6 +66,11 @@ class ModelRegistry:
         manifest_path_: Path | None = None,
         sources: Sequence[ModelSource] | None = None,
     ) -> None:
+        # Remember whether the location was *given* or merely defaulted. The
+        # default resolves through ``XDG_CONFIG_HOME``, which a caller may
+        # legitimately change after this object exists — so a reload re-resolves
+        # it rather than trusting a path captured at construction.
+        self._explicit_path = manifest_path_
         self._path = manifest_path_ if manifest_path_ is not None else manifest_path()
         self._sources = tuple(sources) if sources is not None else default_sources()
         self._manifest = load_manifest(self._path)
@@ -142,6 +147,23 @@ class ModelRegistry:
                 return match.model_id
         return live[0].model_id
 
+    def reload(self) -> None:
+        """Re-read the manifest from disk and rebuild the catalog.
+
+        The registry caches its snapshot in memory, which is right for a long
+        session but wrong the moment something else writes the file — another
+        MAK process, or a test that seeds a cache. This is the supported way to
+        pick that up without constructing a second registry.
+
+        A registry using the default location re-resolves it first, because
+        that location depends on ``XDG_CONFIG_HOME`` and the process-wide
+        registry is built at import time, before a caller has had a chance to
+        set it.
+        """
+        if self._explicit_path is None:
+            self._path = manifest_path()
+        self._apply_without_saving(load_manifest(self._path))
+
     @property
     def last_refresh(self) -> datetime | None:
         """When the catalog was last successfully refreshed (None = never)."""
@@ -212,12 +234,16 @@ class ModelRegistry:
         finally:
             self._refreshing = False
 
-    def _apply(self, manifest: Manifest) -> None:
+    def _apply_without_saving(self, manifest: Manifest) -> None:
+        """Publish a manifest as the live snapshot, leaving the file alone."""
         # Build the new snapshot first, then publish both fields. Readers see
         # either the old or the new tuple, never a partially-built one.
         entries = _build(manifest)
         self._manifest = manifest
         self._entries = entries
+
+    def _apply(self, manifest: Manifest) -> None:
+        self._apply_without_saving(manifest)
         try:
             save_manifest(manifest, self._path)
         except OSError:

@@ -28,6 +28,7 @@ from cli.core.state import (
     LocalHost,
     mode_summary,
 )
+from cli.endpoints import cmd_endpoint
 from cli.local import (
     activate_host,
     apply_cloud_planner,
@@ -74,6 +75,8 @@ def handle_command(text: str, state: CliState, console: Console) -> str | None:
         _cmd_refresh_models(state, console)
     elif cmd == "/local":
         cmd_local(args, state, console)
+    elif cmd == "/endpoint":
+        cmd_endpoint(args, state, console)
     elif cmd == "/mode":
         _cmd_mode(args, state, console)
     elif cmd == "/status":

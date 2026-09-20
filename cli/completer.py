@@ -20,6 +20,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/models",     "Select agent models"),
     ("/planner",    "Switch the planner model"),
     ("/refresh-models", "Re-fetch cloud and local model lists"),
+    ("/endpoint",   "Add and manage OpenAI-compatible endpoints"),
     ("/local",      "Show local runtimes and remote hosts (Ollama, vLLM, LM Studio)"),
     ("/mode",       "Switch between cloud, local, and hybrid"),
     ("/max-agents", "Set how many agents run in parallel"),
@@ -49,11 +50,37 @@ _LOCAL_SUBCOMMANDS: list[tuple[str, str]] = [
     ("help",    "list the /local sub-commands"),
 ]
 
+# ``/endpoint``'s sub-commands. Mirrors ``cli.endpoints.commands.SUBCOMMANDS``,
+# kept here for the same reason ``_LOCAL_SUBCOMMANDS`` is: the completer must not
+# import the wizard module, or every keystroke pays for prompt_toolkit's styles
+# and the endpoint store's file read.
+_ENDPOINT_SUBCOMMANDS: list[tuple[str, str]] = [
+    ("list",   "show every configured endpoint"),
+    ("add",    "set up a new endpoint (preset or custom)"),
+    ("show",   "all non-secret settings of one endpoint"),
+    ("edit",   "change an endpoint's URL, location or credential"),
+    ("test",   "probe one endpoint using its health policy"),
+    ("models", "browse or refresh one endpoint's model list"),
+    ("remove", "forget an endpoint"),
+    ("export", "print a pasteable, secret-free YAML entry"),
+    ("help",   "list the /endpoint sub-commands"),
+]
+
+# Sub-commands whose next argument is an endpoint id.
+_ENDPOINT_ID_ARGS = frozenset({"show", "edit", "test", "models", "remove", "export"})
+
 _KEY_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai":    "OPENAI_API_KEY",
     "gemini":    "GEMINI_API_KEY",
 }
+
+
+def _profile_ids() -> tuple[str, ...]:
+    """Return the built-in profile ids (imported lazily, per keystroke)."""
+    from mak.endpoints.profiles import profile_ids
+
+    return profile_ids()
 
 
 class MakCompleter(Completer):
@@ -124,6 +151,9 @@ class MakCompleter(Completer):
                     ),
                 ]
             return self._complete_path(arg, complete_event)
+
+        if cmd == "/endpoint":
+            return self._complete_endpoint(arg)
 
         if cmd == "/mode":
             partial = arg.strip()
@@ -271,6 +301,47 @@ class MakCompleter(Completer):
         return self._grouped(self._complete_local(partial), results)
 
     # ── Directory path completions ─────────────────────────────────────────────
+
+    def _complete_endpoint(self, arg: str) -> list[Completion]:
+        """Complete ``/endpoint`` sub-commands, then profiles or endpoint ids."""
+        parts = arg.split(None, 1)
+        sub = parts[0].lower() if parts else ""
+        typing_sub = len(parts) <= 1 and not arg.endswith(" ")
+        if typing_sub:
+            return [
+                Completion(
+                    name,
+                    start_position=-len(sub),
+                    display=name,
+                    display_meta=desc,
+                )
+                for name, desc in _ENDPOINT_SUBCOMMANDS
+                if name.startswith(sub)
+            ]
+        partial = (parts[1] if len(parts) > 1 else "").strip().lower()
+        if sub == "add":
+            return [
+                Completion(
+                    profile,
+                    start_position=-len(partial),
+                    display=profile,
+                    display_meta="preset",
+                )
+                for profile in _profile_ids()
+                if profile.startswith(partial)
+            ]
+        if sub in _ENDPOINT_ID_ARGS:
+            return [
+                Completion(
+                    endpoint_id,
+                    start_position=-len(partial),
+                    display=endpoint_id,
+                    display_meta="endpoint",
+                )
+                for endpoint_id in self._state.endpoint_ids
+                if endpoint_id.startswith(partial)
+            ]
+        return []
 
     def _complete_path(
         self, arg: str, complete_event: CompleteEvent

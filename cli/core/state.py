@@ -81,6 +81,19 @@ class CliState:
     local_hosts: list[LocalHost] = field(default_factory=list)
     planner_backend: str = ""     # "" = infer from the model id
     planner_base_url: str = ""
+    # ── Endpoints (Wave 22) ──────────────────────────────────────────────────
+    # The endpoint the planner routes through. When set it is authoritative:
+    # the planner's key comes from that endpoint's credential variable, not
+    # from guessing at the model name's prefix.
+    planner_endpoint_id: str = ""
+    # Ids of endpoints this session knows about, in configured order. Held so
+    # /status, the toolbar and the completer can name them without re-reading
+    # the store on every keystroke.
+    endpoint_ids: list[str] = field(default_factory=list)
+
+    def planner_endpoint_display(self) -> str:
+        """Return the planner's endpoint for /status ('inferred' when unset)."""
+        return self.planner_endpoint_id or "inferred from the model id"
 
     def uses_local_agents(self) -> bool:
         """Whether this session's agents run on a local runtime."""
