@@ -1,0 +1,66 @@
+# A hosted OpenAI-compatible service, using NVIDIA Build as the worked example.
+#
+#   mak examples hosted-openai-compatible > mak.yaml
+#   export NVIDIA_API_KEY=...
+#   mak run --task "..." --work-dir /path/to/project
+#
+# The same shape works for any service speaking OpenAI Chat Completions —
+# OpenRouter, DeepSeek, Z.ai — by changing the profile and the model. Use the
+# interactive CLI's `/endpoint add` to be walked through it, then
+# `/endpoint export <id>` to print an entry like the one below.
+#
+# NOTE ON SECRETS: `api_key_env` names the *environment variable* that holds the
+# key. MAK never reads a key from this file, and never writes one into it. That
+# is what makes this file safe to commit.
+
+endpoints:
+  - id: "nvidia"
+    # A profile supplies the official URL, the conventional credential variable,
+    # and the capability defaults that service is known to support. Everything
+    # it sets can be overridden by writing the field here.
+    profile: "nvidia"
+    # Stated explicitly rather than inferred: a `base_url` has never meant
+    # "local", and this one bills a real account.
+    location: "hosted"
+
+planner:
+  model: "meta/llama-3.3-70b-instruct"
+  # The authoritative route. With this set, MAK does not guess the planner's
+  # backend from the model name, and the credential comes from the endpoint's
+  # own `api_key_env` — never from OPENAI_API_KEY.
+  endpoint: "nvidia"
+
+agents:
+  # `id` is the routing key: the scheduler, the planner's choice of agent, the
+  # session log and the git trailer all use it. Two agents may share an endpoint
+  # or a transport, so long as their ids differ.
+  - id: "nvidia-llama"
+    endpoint: "nvidia"
+    model: "meta/llama-3.3-70b-instruct"
+    max_instances: 2
+    # Hosted inference on a large model is measured in tens of seconds; the
+    # per-agent timeout is what bounds the call.
+    timeout: 600
+
+  # A second model on the *same* endpoint. This is what the pre-Wave-22 schema
+  # could not express: both entries used one adapter type, so the second
+  # silently replaced the first in the registry.
+  - id: "nvidia-qwen"
+    endpoint: "nvidia"
+    model: "qwen/qwen2.5-coder-32b-instruct"
+    max_instances: 1
+    timeout: 600
+
+session:
+  max_concurrent_agents: 3
+  # Hosted endpoints are metered. This is the only thing that bounds a run's
+  # total cost — attempts times iterations times cascade waves multiply out to
+  # no ceiling otherwise.
+  # max_total_tokens: 2000000
+
+models:
+  auto_refresh: true
+
+git:
+  auto_commit: true
+  auto_push: false

@@ -1,0 +1,93 @@
+# Any OpenAI-compatible service MAK ships no profile for.
+#
+#   mak examples custom-endpoint > mak.yaml
+#   # edit base_url and model, then:
+#   mak run --task "..." --work-dir /path/to/project
+#
+# Deliberately provider-neutral: this is the shape for a self-hosted vLLM, a
+# llama.cpp server, an internal gateway, or a service that appeared after this
+# release. Nothing here assumes a vendor.
+#
+# "OpenAI-compatible" is a family resemblance, not a contract. The capability
+# settings below exist because implementations genuinely differ; leaving them
+# unset lets MAK negotiate on the first request and remember what worked.
+
+endpoints:
+  - id: "house-gateway"
+    display_name: "House LLM gateway"
+    transport: "openai_chat"
+    # The SDK *base*, not a full /chat/completions URL. MAK never adds or
+    # strips a "/v1" segment, because several services legitimately do not use
+    # one — give the exact root the service documents.
+    base_url: "https://llm.internal.example/v1"
+    # `hosted` requires https and warns about cost/privacy. Use `local` for a
+    # server on this machine, or `private` for one on your own network — the
+    # difference is what MAK tells you about where your code is going.
+    location: "private"
+    # The NAME of the variable holding the key, never the key. Omit it entirely
+    # for a keyless server: MAK then sends a non-secret placeholder and will
+    # not fall back to an ambient OPENAI_API_KEY.
+    api_key_env: "HOUSE_GATEWAY_KEY"
+
+    # ── Capability settings, all optional ────────────────────────────────────
+    # Each is commented out so MAK negotiates it. Set one only when you know
+    # the service's answer and want to skip the discovery request.
+    #
+    # How the model list is obtained. `manual` makes no network call at all,
+    # which is the setting for a service with no /models route.
+    # model_discovery: "auto"      # auto | models | manual
+    #
+    # What a health probe is allowed to do. `chat` costs money and only runs
+    # after you accept that; `none` reports "not probed" rather than claiming
+    # health MAK has not verified.
+    # health_check: "models"       # models | chat | none
+    #
+    # How the reply's shape is constrained. `auto` starts at strict JSON schema
+    # and steps down to json_object, then to prompt-only, on a verified
+    # rejection — and remembers which rung worked.
+    # structured_output: "auto"    # auto | json_schema | json_object | none
+    #
+    # Which output-cap field name this service accepts. Most compatible layers
+    # implement only the older `max_tokens`, where the newer name is silently
+    # ignored and the cap does not exist.
+    # token_parameter: "auto"      # auto | max_tokens |
+    #                              # max_completion_tokens | none
+
+    # Extra request headers. A literal value is for public metadata; anything
+    # secret must use `value_env` so it stays out of this file. MAK owns
+    # Authorization, Content-Type, Host and User-Agent, and will refuse an
+    # entry that tries to set one.
+    # headers:
+    #   - name: "X-Title"
+    #     value: "MAK"
+    #   - name: "X-Tenant-Token"
+    #     value_env: "HOUSE_TENANT_TOKEN"
+
+planner:
+  model: "REPLACE-WITH-A-MODEL-ID"
+  endpoint: "house-gateway"
+
+agents:
+  - id: "house-agent"
+    endpoint: "house-gateway"
+    model: "REPLACE-WITH-A-MODEL-ID"
+    max_instances: 2
+    timeout: 900
+    # A smaller model slips on reply shape more often, and one short repair
+    # turn is far cheaper than re-sending the whole bundle.
+    repair_attempts: 2
+
+session:
+  max_concurrent_agents: 2
+  # Sized for a mid-range context window. The adapter refuses a bundle that
+  # will not fit rather than letting the server truncate it silently, and these
+  # are the two settings it will name.
+  dependency_context_bytes: 16000
+  cross_file_context_bytes: 20000
+
+models:
+  auto_refresh: true
+
+git:
+  auto_commit: true
+  auto_push: false

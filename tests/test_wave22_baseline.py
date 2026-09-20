@@ -131,9 +131,15 @@ class TestSpecParsing:
         (agent,) = agents_from_specs(["local:m@http://host:8000/v1"])
         assert agent.base_url == "http://host:8000/v1"
 
-    def test_one_model_per_provider_is_todays_rule(self) -> None:
-        """Deliberately reversed by Step 14 — uniqueness moves to the agent id."""
-        with pytest.raises(ConfigError, match="more than once"):
+    def test_a_repeated_legacy_provider_still_collides(self) -> None:
+        """Inverted by Step 14: the *reason* changed, not the outcome.
+
+        Uniqueness moved from "one model per provider" to "one agent per id".
+        A legacy spec derives its id from its type, so repeating one still
+        fails — but now because both claim ``openai_api``, and two models on
+        one endpoint are legal.
+        """
+        with pytest.raises(ConfigError, match="agent id 'openai_api'"):
             agents_from_specs(["openai:gpt-5.6-sol", "openai:gpt-5.5"])
 
     def test_base_url_is_refused_for_providers_that_would_ignore_it(self) -> None:

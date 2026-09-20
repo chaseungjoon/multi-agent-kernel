@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from mak.agent_runner.adapters.openai_api_adapter import OpenAiApiAdapter
-from mak.bootstrap import build_registry
+from mak.bootstrap import agents_from_specs, build_registry
 from mak.config import AgentConfig, MakConfig
 from mak.core.exceptions import ConfigError
 from mak.endpoints.agents import (
@@ -305,3 +305,105 @@ class TestDerivedIds:
 
     def test_a_free_id_is_returned_unchanged(self) -> None:
         assert unique_agent_id("nvidia-m", set()) == "nvidia-m"
+
+
+class TestSpecResolution:
+    """Wave 22.13: ``--models`` resolves configured endpoints first."""
+
+    def _save(self, *endpoints: EndpointConfig) -> None:
+        from mak.endpoints.store import save_user_endpoints
+
+        save_user_endpoints(endpoints)
+
+    def test_an_endpoint_spec_builds_an_endpoint_backed_agent(self) -> None:
+        from mak.bootstrap import agents_from_specs
+
+        self._save(_endpoint("nvidia-work", "https://nv/v1", "NV_KEY"))
+        (agent,) = agents_from_specs(["nvidia-work:meta/llama-3.3-70b-instruct"])
+        assert agent.endpoint == "nvidia-work"
+        assert agent.model == "meta/llama-3.3-70b-instruct"
+        assert agent.id == "nvidia-work-meta-llama-3-3-70b-instruct"
+
+    def test_two_models_on_one_endpoint_are_legal(self) -> None:
+        """The restriction Wave 22 removes."""
+        from mak.bootstrap import agents_from_specs
+
+        self._save(_endpoint("nvidia-work", "https://nv/v1", "NV_KEY"))
+        agents = agents_from_specs(
+            ["nvidia-work:model-a", "nvidia-work:model-b"]
+        )
+        assert len(agents) == 2
+        assert len({a.routing_id() for a in agents}) == 2
+
+    def test_two_endpoints_on_one_transport_are_legal(self) -> None:
+        from mak.bootstrap import agents_from_specs
+
+        self._save(
+            _endpoint("nvidia-work", "https://nv/v1", "NV_KEY"),
+            _endpoint("openrouter-work", "https://or/v1", "OR_KEY"),
+        )
+        agents = agents_from_specs(
+            ["nvidia-work:model-a", "openrouter-work:model-b"]
+        )
+        assert [a.endpoint for a in agents] == [
+            "nvidia-work",
+            "openrouter-work",
+        ]
+
+    def test_a_derived_id_collision_gets_a_suffix(self) -> None:
+        """Two ids differing only in dropped characters must both stay usable."""
+        from mak.bootstrap import agents_from_specs
+
+        self._save(_endpoint("gw", "https://gw/v1", "GW_KEY"))
+        agents = agents_from_specs(["gw:a/b", "gw:a-b"])
+        ids = [a.routing_id() for a in agents]
+        assert ids == ["gw-a-b", "gw-a-b-2"]
+
+    def test_a_legacy_spec_still_works(self) -> None:
+        from mak.bootstrap import agents_from_specs
+
+        self._save(_endpoint("nvidia-work", "https://nv/v1", "NV_KEY"))
+        (agent,) = agents_from_specs(["anthropic:claude-opus-5"])
+        assert agent.type == "anthropic_api"
+        assert agent.api_key_env == "ANTHROPIC_API_KEY"
+
+    def test_a_legacy_base_url_spec_still_works(self) -> None:
+        from mak.bootstrap import agents_from_specs
+
+        (agent,) = agents_from_specs(["local:m@http://localhost:8000/v1"])
+        assert agent.type == "local_api"
+        assert agent.base_url == "http://localhost:8000/v1"
+
+    def test_an_endpoint_spec_rejects_a_redundant_url(self) -> None:
+        from mak.bootstrap import agents_from_specs
+
+        self._save(_endpoint("gw", "https://gw/v1", "GW_KEY"))
+        with pytest.raises(ConfigError, match="already has an address"):
+            agents_from_specs(["gw:m@https://other/v1"])
+
+    def test_an_endpoint_spec_with_no_model_says_how_to_list_them(self) -> None:
+        from mak.bootstrap import agents_from_specs
+
+        self._save(_endpoint("gw", "https://gw/v1", "GW_KEY"))
+        with pytest.raises(ConfigError, match="/endpoint models gw"):
+            agents_from_specs(["gw"])
+
+    def test_the_model_id_keeps_every_colon_after_the_first(self) -> None:
+        from mak.bootstrap import agents_from_specs
+
+        self._save(_endpoint("gw", "https://gw/v1", "GW_KEY"))
+        (agent,) = agents_from_specs(["gw:qwen2.5-coder:14b"])
+        assert agent.model == "qwen2.5-coder:14b"
+
+    def test_an_unreadable_store_does_not_break_legacy_specs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--models must keep working when the endpoint store is broken."""
+        import mak.endpoints.store as store
+
+        def boom(*_: object, **__: object) -> None:
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(store, "load_user_endpoints", boom)
+        (agent,) = agents_from_specs(["anthropic:claude-opus-5"])
+        assert agent.type == "anthropic_api"

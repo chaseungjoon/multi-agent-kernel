@@ -50,11 +50,23 @@ class TestAgentsFromSpecs:
         assert agent.model == "gemini-3-pro"
 
     def test_unknown_provider_raises(self) -> None:
-        with pytest.raises(ConfigError, match="unknown provider 'mistral'"):
+        with pytest.raises(
+            ConfigError, match="unknown endpoint or provider 'mistral'"
+        ):
             agents_from_specs(["mistral"])
 
-    def test_duplicate_provider_raises(self) -> None:
-        with pytest.raises(ConfigError, match="more than once"):
+    def test_the_unknown_message_offers_the_endpoint_route(self) -> None:
+        with pytest.raises(ConfigError, match="/endpoint add"):
+            agents_from_specs(["mistral"])
+
+    def test_a_repeated_provider_collides_on_its_derived_id(self) -> None:
+        """Wave 22 moved uniqueness from provider to agent id.
+
+        A legacy spec derives its id from its type, so repeating one still
+        collides — but the message now names the id and says how to fix it,
+        and two models on one *endpoint* are legal.
+        """
+        with pytest.raises(ConfigError, match="agent id 'anthropic_api'"):
             agents_from_specs(["anthropic", "anthropic:claude-opus-4-8"])
 
     def test_empty_specs_raises(self) -> None:

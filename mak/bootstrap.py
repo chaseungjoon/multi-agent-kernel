@@ -197,48 +197,116 @@ def agents_from_specs(specs: list[str]) -> tuple[AgentConfig, ...]:
     rejected for ``anthropic``/``gemini``, which have no such notion and would
     otherwise ignore it silently.
 
-    The adapter registry is keyed by agent *type*, so MAK runs **one model per
-    provider** in a single session — repeating a provider is rejected with a clear
-    message (use ``--max-agents`` to set how many workers run concurrently).
+    A **configured endpoint id** is accepted in the provider position and is
+    tried first: ``--models nvidia:meta/llama-3.3-70b-instruct`` resolves
+    against the endpoints in ``mak.yaml`` and the user store. Reserved ids can
+    never be taken by a user endpoint, so a prefix has exactly one meaning.
+
+    Several models on one endpoint, and several endpoints on one transport, are
+    both legal — uniqueness is by **agent id**, not by provider. That is the
+    restriction Wave 22 removes: the registry used to be keyed by adapter type,
+    so a second OpenAI-compatible entry silently replaced the first.
     """
     if not specs:
         raise ConfigError(f"--models needs at least one entry: {_SPEC_SYNTAX}")
+    endpoints = _configured_endpoint_ids()
     agents: list[AgentConfig] = []
-    seen: dict[str, str] = {}
+    taken: set[str] = set()
     for spec in specs:
         provider, model, url = _split_spec(spec)
-        if provider not in _PROVIDER_TO_API and provider not in _PROVIDER_TO_LOCAL:
-            raise ConfigError(
-                f"unknown provider {provider!r}; MAK supports "
-                f"{', '.join(SUPPORTED_PROVIDERS)} — write {_SPEC_SYNTAX}"
-            )
-        if url and provider not in _BASE_URL_PROVIDERS:
-            raise ConfigError(
-                f"provider {provider!r} does not take an '@<base_url>'; only "
-                f"{', '.join(sorted(_BASE_URL_PROVIDERS))} do"
-            )
-        if provider in _PROVIDER_TO_LOCAL:
-            agent = _local_agent(provider, model, url, spec)
+        if provider in endpoints:
+            agent = _endpoint_agent(provider, model, url, spec, taken)
+        elif provider in _PROVIDER_TO_API or provider in _PROVIDER_TO_LOCAL:
+            agent = _legacy_agent(provider, model, url, spec)
         else:
-            agent_type, key_env = _PROVIDER_TO_API[provider]
-            agent = AgentConfig(
-                type=agent_type,
-                model=model or None,
-                api_key_env=key_env,
-                base_url=(
-                    normalize_base_url(url, where=f"--models entry {spec!r}")
-                    if url
-                    else None
-                ),
-            )
-        if agent.type in seen:
+            known = ", ".join(sorted({*SUPPORTED_PROVIDERS, *endpoints}))
             raise ConfigError(
-                f"provider {provider!r} given more than once; MAK runs one model per "
-                f"provider — use --max-agents N to set how many agents run at once"
+                f"unknown endpoint or provider {provider!r}; MAK knows "
+                f"{known} — write {_SPEC_SYNTAX}, or add an endpoint with "
+                "'/endpoint add' in the interactive CLI"
             )
-        seen[agent.type] = provider
+        agent_id = agent.routing_id()
+        if agent_id in taken:
+            raise ConfigError(
+                f"{spec!r} resolves to the agent id '{agent_id}', which another "
+                "entry already claims. Two models on one endpoint need distinct "
+                "ids — name them in mak.yaml with an explicit 'id'."
+            )
+        taken.add(agent_id)
         agents.append(agent)
     return tuple(agents)
+
+
+def _configured_endpoint_ids() -> frozenset[str]:
+    """Return the ids of every configured endpoint, or an empty set.
+
+    Total: ``--models`` has to keep working when the endpoint store is
+    unreadable, and the store's own diagnostic is surfaced by ``/endpoint``.
+    """
+    try:
+        from mak.endpoints.store import load_user_endpoints
+
+        saved, _diagnostic = load_user_endpoints()
+    except Exception:  # noqa: BLE001 - a broken store must not break the CLI
+        return frozenset()
+    ids = {e.id for e in saved}
+    try:
+        from mak.config import discover_config_path, load_config
+
+        ids |= {e.id for e in load_config(discover_config_path()).endpoints}
+    except Exception:  # noqa: BLE001 - the config reports its own problems
+        pass
+    return frozenset(ids)
+
+
+def _endpoint_agent(
+    endpoint_id: str, model: str, url: str, spec: str, taken: set[str]
+) -> AgentConfig:
+    """Build the roster entry for an ``<endpoint>:<model>`` spec."""
+    from mak.endpoints.agents import derive_agent_id, unique_agent_id
+
+    if url:
+        raise ConfigError(
+            f"{spec!r} names endpoint {endpoint_id!r} and also an '@<base_url>'; "
+            "the endpoint already has an address. Edit it with "
+            f"'/endpoint edit {endpoint_id}' to change where it points."
+        )
+    if not model:
+        raise ConfigError(
+            f"{spec!r} names no model; write {endpoint_id}:<model> — "
+            f"'/endpoint models {endpoint_id}' lists what it offers"
+        )
+    return AgentConfig(
+        # Filled from the endpoint's transport during resolution.
+        type="",
+        id=unique_agent_id(derive_agent_id(endpoint_id, model), taken),
+        endpoint=endpoint_id,
+        model=model,
+    )
+
+
+def _legacy_agent(
+    provider: str, model: str, url: str, spec: str
+) -> AgentConfig:
+    """Build the roster entry for a legacy ``provider[:model][@url]`` spec."""
+    if url and provider not in _BASE_URL_PROVIDERS:
+        raise ConfigError(
+            f"provider {provider!r} does not take an '@<base_url>'; only "
+            f"{', '.join(sorted(_BASE_URL_PROVIDERS))} do"
+        )
+    if provider in _PROVIDER_TO_LOCAL:
+        return _local_agent(provider, model, url, spec)
+    agent_type, key_env = _PROVIDER_TO_API[provider]
+    return AgentConfig(
+        type=agent_type,
+        model=model or None,
+        api_key_env=key_env,
+        base_url=(
+            normalize_base_url(url, where=f"--models entry {spec!r}")
+            if url
+            else None
+        ),
+    )
 
 
 def _resolve_api_key(agent: AgentConfig) -> str | None:

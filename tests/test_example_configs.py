@@ -23,11 +23,19 @@ _LOCAL_EXAMPLES = (
     "fully-local-offline",
 )
 
+# Examples written against the Wave 22 endpoint schema. They route by agent id
+# and name an endpoint, so their agents carry no ``type`` of their own.
+_ENDPOINT_EXAMPLES = (
+    "hosted-openai-compatible",
+    "custom-endpoint",
+)
+
 
 class TestPackagedExamples:
     def test_the_expected_examples_ship(self) -> None:
         assert set(list_examples()) == {
             *_LOCAL_EXAMPLES,
+            *_ENDPOINT_EXAMPLES,
             "hybrid-cloud-planner-local-agents",
         }
 
@@ -42,8 +50,10 @@ class TestPackagedExamples:
         # this is a pure "the wiring is real" check.
         config = load_config(example_path(name))
         registry = build_registry(config)
+        # Keyed by routing id, which for a legacy entry is its type and for an
+        # endpoint-backed one is its explicit ``id``.
         for agent in config.agents:
-            assert registry.get(agent.type) is not None
+            assert registry.get(agent.routing_id()) is not None
 
     @pytest.mark.parametrize("name", _LOCAL_EXAMPLES)
     def test_the_local_examples_declare_a_local_agent_with_an_endpoint(
@@ -54,6 +64,31 @@ class TestPackagedExamples:
             assert agent.type in LOCAL_AGENT_TYPES
             assert agent.base_url is not None
             assert agent.base_url.startswith("http")
+
+    @pytest.mark.parametrize("name", _ENDPOINT_EXAMPLES)
+    def test_the_endpoint_examples_route_by_id(self, name: str) -> None:
+        config = load_config(example_path(name))
+        assert config.endpoints, name
+        declared = {e.id for e in config.endpoints}
+        for agent in config.agents:
+            assert agent.endpoint in declared
+            assert agent.id, "an endpoint-backed example should name its ids"
+        assert config.planner.endpoint in declared
+
+    @pytest.mark.parametrize("name", _ENDPOINT_EXAMPLES)
+    def test_the_endpoint_examples_carry_no_secret(self, name: str) -> None:
+        """They are meant to be committed; a key in one would travel with it."""
+        text = example_path(name).read_text(encoding="utf-8")
+        assert "sk-" not in text
+        assert "api_key:" not in text
+
+    def test_the_hosted_example_shows_two_models_on_one_endpoint(self) -> None:
+        """The arrangement the pre-Wave-22 schema could not express."""
+        config = load_config(example_path("hosted-openai-compatible"))
+        endpoints = [a.endpoint for a in config.agents]
+        assert len(endpoints) == 2
+        assert len(set(endpoints)) == 1
+        assert len({a.routing_id() for a in config.agents}) == 2
 
     def test_the_hybrid_example_keeps_a_hosted_planner_and_local_agents(self) -> None:
         config = load_config(example_path("hybrid-cloud-planner-local-agents"))
