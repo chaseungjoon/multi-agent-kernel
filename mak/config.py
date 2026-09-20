@@ -11,6 +11,12 @@ from urllib.parse import urlsplit
 import yaml
 
 from mak.core.exceptions import ConfigError
+from mak.endpoints.parse import parse_endpoints
+from mak.endpoints.types import (
+    EndpointConfig,
+    validate_agent_id,
+    validate_endpoint_id,
+)
 from mak.node_store.store import (
     DEFAULT_VERSION_RETENTION,
     MIN_VERSION_RETENTION,
@@ -244,6 +250,19 @@ class AgentConfig:
     ``keep_alive`` (e.g. ``"30m"``) keeps the model resident between tasks, which
     is otherwise a multi-second reload per task. ``temperature`` unset leaves the
     server's own default, which is tuned for chat rather than for code.
+
+    ``id`` and ``endpoint`` are Wave 22's separation of concerns. ``id`` is the
+    **routing key**: the registry, scheduler, pool caps, planner choice, logs and
+    git metadata all key on it, which is what lets two agents share an adapter
+    class (two OpenAI-compatible endpoints, say) without one overwriting the
+    other. Unset, it is derived from ``type`` so every existing config keeps
+    today's behaviour exactly.
+
+    ``endpoint`` names an entry in the top-level ``endpoints:`` section. When it
+    is set, ``type`` is *derived* from that endpoint's transport and must not be
+    written by hand — an entry naming both an endpoint and a contradictory
+    ``type``/``base_url``/``api_key_env`` is rejected rather than silently
+    resolved one way.
     """
 
     type: str
@@ -259,6 +278,17 @@ class AgentConfig:
     num_ctx: int | None = None
     keep_alive: str | None = None
     temperature: float | None = None
+    id: str | None = None
+    endpoint: str | None = None
+
+    def routing_id(self) -> str:
+        """Return this agent's routing key: the explicit id, else the type.
+
+        The fallback is what keeps every pre-Wave-22 config behaving identically
+        — a roster of ``anthropic_api``/``openai_api``/``gemini_api`` derives
+        exactly the ids the registry used to key on.
+        """
+        return self.id or self.type
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +379,13 @@ class PlannerConfig:
     fail the run before a single call. ``api_key_env`` names the variable holding
     a token for a protected gateway (``vllm --api-key``); a local runtime needs
     none, and leaving it unset is what lets the placeholder-key rule apply.
+
+    ``endpoint`` (Wave 22) is the authoritative planner route when set: it names
+    an entry in the top-level ``endpoints:`` section and supersedes both the
+    model-prefix inference and the legacy ``backend``/``base_url`` pair. Naming
+    an endpoint *and* a contradictory ``backend``/``base_url``/``api_key_env`` is
+    rejected at load rather than silently resolved — a planner pointed at the
+    wrong host is a privacy failure, not a preference.
     """
 
     model: str = ""
@@ -359,6 +396,7 @@ class PlannerConfig:
     backend: str | None = None
     base_url: str | None = None
     api_key_env: str | None = None
+    endpoint: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -495,13 +533,32 @@ class MakConfig:
     node_store: NodeStoreConfig = field(default_factory=NodeStoreConfig)
     models: ModelsConfig = field(default_factory=ModelsConfig)
     semantic: SemanticConfig = field(default_factory=SemanticConfig)
+    # Declared endpoints, portable and secret-free: a project may commit these
+    # so a teammate inherits the URLs and credential *variable names* without
+    # inheriting anyone's key. User-created endpoints live in the per-user store
+    # (``mak.endpoints.store``) and are merged on top at composition time.
+    endpoints: tuple[EndpointConfig, ...] = ()
+
+
+# Settings an endpoint already decides. Writing one *and* naming an endpoint is
+# rejected rather than resolved: whichever way MAK broke the tie, half of the
+# users who wrote it would get the other host — and one of those outcomes sends
+# a credential somewhere the config did not name.
+_ENDPOINT_OWNED_AGENT_FIELDS: tuple[str, ...] = ("type", "base_url", "api_key_env")
 
 
 def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
+    endpoint = _opt_str(raw, "endpoint")
+    if endpoint is not None:
+        return _parse_endpoint_agent(raw, endpoint)
     if "type" not in raw:
-        raise ConfigError("each agent entry must have a 'type' field")
+        raise ConfigError(
+            "each agent entry must have a 'type' field (or an 'endpoint' "
+            "naming an entry in the 'endpoints:' section)"
+        )
     return AgentConfig(
         type=str(raw["type"]),
+        id=_opt_agent_id(raw),
         max_instances=_as_int(raw, "max_instances", 2),
         timeout=_as_int(raw, "timeout", 300),
         model=_opt_str(raw, "model"),
@@ -509,6 +566,53 @@ def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
         cmd=_opt_str(raw, "cmd"),
         max_tokens=_opt_positive_int(raw, "max_tokens"),
         base_url=_opt_url(raw, "base_url"),
+        structured_output=_as_choice(
+            raw, "structured_output", None, _STRUCTURED_OUTPUT_MODES
+        ),
+        repair_attempts=_opt_non_negative_int(raw, "repair_attempts"),
+        num_ctx=_opt_positive_int(raw, "num_ctx"),
+        keep_alive=_opt_str(raw, "keep_alive"),
+        temperature=_opt_float(raw, "temperature"),
+    )
+
+
+def _opt_agent_id(raw: dict[str, Any]) -> str | None:
+    """Return the agent's explicit routing id, validated, or None when unset."""
+    value = raw.get("id")
+    if value is None:
+        return None
+    return validate_agent_id(str(value))
+
+
+def _parse_endpoint_agent(raw: dict[str, Any], endpoint: str) -> AgentConfig:
+    """Parse an agent entry that names an endpoint rather than a type.
+
+    The adapter ``type`` is *derived* from the endpoint's transport, so the
+    canonical form carries no redundant transport field. Generation limits
+    (``max_tokens``, ``timeout``, ``num_ctx`` …) stay on the agent, because they
+    belong to this model's use of the endpoint rather than to the endpoint.
+    """
+    endpoint_id = validate_endpoint_id(endpoint)
+    contradictions = [f for f in _ENDPOINT_OWNED_AGENT_FIELDS if f in raw]
+    if contradictions:
+        raise ConfigError(
+            f"agent entry for endpoint '{endpoint_id}' also sets "
+            f"{', '.join(repr(f) for f in contradictions)}, which the endpoint "
+            "already decides. Remove them from the agent, or drop 'endpoint' "
+            "and configure the agent the legacy way — MAK will not guess which "
+            "host you meant."
+        )
+    return AgentConfig(
+        # Filled in by resolution from the endpoint's transport; the placeholder
+        # is never used to construct anything, because an endpoint-backed agent
+        # always goes through ``mak.endpoints.resolution``.
+        type="",
+        id=_opt_agent_id(raw),
+        endpoint=endpoint_id,
+        max_instances=_as_int(raw, "max_instances", 2),
+        timeout=_as_int(raw, "timeout", 300),
+        model=_opt_str(raw, "model"),
+        max_tokens=_opt_positive_int(raw, "max_tokens"),
         structured_output=_as_choice(
             raw, "structured_output", None, _STRUCTURED_OUTPUT_MODES
         ),
@@ -545,13 +649,35 @@ _TEST_POLICIES = ("require_pass", "allow_skip")
 _PLANNER_STRATEGIES = ("oneshot", "outline")
 
 
+# Planner settings an endpoint already decides. Same reasoning as
+# ``_ENDPOINT_OWNED_AGENT_FIELDS``, with more at stake: the planner is what sees
+# the whole repository inventory, so an ambiguous route is a privacy question.
+_ENDPOINT_OWNED_PLANNER_FIELDS: tuple[str, ...] = (
+    "backend",
+    "base_url",
+    "api_key_env",
+)
+
+
 def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
     strategy = str(raw.get("strategy", "oneshot"))
     if strategy not in _PLANNER_STRATEGIES:
         raise ConfigError(
             f"planner 'strategy' must be one of {_PLANNER_STRATEGIES}, got {strategy!r}"
         )
+    endpoint = _opt_str(raw, "endpoint")
+    if endpoint is not None:
+        endpoint = validate_endpoint_id(endpoint)
+        contradictions = [f for f in _ENDPOINT_OWNED_PLANNER_FIELDS if f in raw]
+        if contradictions:
+            raise ConfigError(
+                f"planner names endpoint '{endpoint}' and also sets "
+                f"{', '.join(repr(f) for f in contradictions)}, which the "
+                "endpoint already decides. The planner sees your whole "
+                "repository inventory — MAK will not guess which host you meant."
+            )
     return PlannerConfig(
+        endpoint=endpoint,
         model=str(raw.get("model", "")),
         max_retries=_as_int(raw, "max_retries", 3),
         validate=_as_bool(raw, "validate", True),
@@ -822,7 +948,7 @@ def load_config(path: Path | str) -> MakConfig:
         raise ConfigError(
             "'agents' section is required with at least one entry")
 
-    return MakConfig(
+    config = MakConfig(
         session=_parse_session(data.get("session", {})),
         planner=_parse_planner(data.get("planner", {})),
         agents=agents,
@@ -830,7 +956,41 @@ def load_config(path: Path | str) -> MakConfig:
         node_store=_parse_node_store(data.get("node_store", {})),
         models=_parse_models(data.get("models", {})),
         semantic=_parse_semantic(_section(data, "semantic")),
+        endpoints=parse_endpoints(data.get("endpoints")),
     )
+    check_endpoint_references(config)
+    return config
+
+
+def check_endpoint_references(config: MakConfig) -> None:
+    """Raise ``ConfigError`` if an agent or the planner names a missing endpoint.
+
+    Run at load rather than at composition so a typo in an endpoint id fails
+    where the user can see the file, not as an ``UnknownAgentTypeError`` once a
+    run is already holding locks.
+
+    A reference may legitimately resolve against the *user* endpoint store,
+    which this module does not read. So the check runs only when the file
+    declares endpoints of its own: that is the single-file case, where a missing
+    name is unambiguously a typo. The composition root re-checks every
+    reference against the merged set once the user store has been loaded.
+    """
+    declared = {e.id for e in config.endpoints}
+    if not declared:
+        return
+    for agent in config.agents:
+        if agent.endpoint and agent.endpoint not in declared:
+            raise ConfigError(
+                f"agent '{agent.routing_id()}' names endpoint "
+                f"'{agent.endpoint}', which this config does not declare; "
+                f"declared endpoints: {', '.join(sorted(declared))}"
+            )
+    planner_endpoint = config.planner.endpoint
+    if planner_endpoint and planner_endpoint not in declared:
+        raise ConfigError(
+            f"planner names endpoint '{planner_endpoint}', which this config "
+            f"does not declare; declared endpoints: {', '.join(sorted(declared))}"
+        )
 
 
 def _section(data: dict[str, Any], key: str) -> dict[str, Any]:

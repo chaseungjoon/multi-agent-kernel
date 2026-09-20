@@ -105,7 +105,7 @@ class TestHeaderConfig:
 
 class TestEndpointConfig:
     def _endpoint(self, **kw: object) -> EndpointConfig:
-        base = {
+        base: dict[str, object] = {
             "id": "nvidia",
             "transport": Transport.OPENAI_CHAT,
             "base_url": "https://integrate.api.nvidia.com/v1",
