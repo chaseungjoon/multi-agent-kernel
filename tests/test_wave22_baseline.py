@@ -190,21 +190,24 @@ class TestApiKeyStorage:
         monkeypatch.setenv("GEMINI_API_KEY", "from-env")
         assert api_keys.load_keys()["GEMINI_API_KEY"] == "from-env"
 
-    def test_only_the_known_names_are_written_today(self) -> None:
-        """Pins the truncation Step 10 removes.
+    def test_unrelated_lines_now_survive_a_save(self) -> None:
+        """Inverted by Step 10 — the truncation that made this a bug.
 
-        ``save_keys`` renders the file from its fixed name tuple, so any line it
-        does not know about — a comment, a per-endpoint credential — is lost on
-        the next save. Step 10 replaces this with parse-merge-render and
-        inverts this assertion.
+        ``save_keys`` used to render the file from its fixed name tuple, so any
+        line it did not know about — a comment, another endpoint's credential —
+        was destroyed on the next save. With per-endpoint keys that would mean
+        saving one endpoint's key deletes another's.
         """
         path = user_config_dir() / ".env"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("# a comment\nNVIDIA_API_KEY=nv-secret\n", encoding="utf-8")
+        path.write_text(
+            "# a comment\nOTHER_SERVICE_KEY=other-secret\n", encoding="utf-8"
+        )
         api_keys.save_keys({"OPENAI_API_KEY": "sk-only"})
         body = path.read_text(encoding="utf-8")
-        assert "NVIDIA_API_KEY" not in body
-        assert "# a comment" not in body
+        assert "OTHER_SERVICE_KEY=other-secret" in body
+        assert "# a comment" in body
+        assert "OPENAI_API_KEY=sk-only" in body
 
 
 class TestPlannerKeyInference:

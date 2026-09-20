@@ -201,19 +201,28 @@ class TestWriteSafety:
             save_user_endpoints((_endpoint(),), blocked / "endpoints.json")
 
     def test_the_previous_file_survives_a_failed_write(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
-        """Atomicity: a crash mid-write must not destroy the saved endpoints."""
+        """Atomicity: a crash mid-write must not destroy the saved endpoints.
+
+        ``os.replace`` is restored by hand rather than through
+        ``monkeypatch.undo()``: the suite's autouse isolation fixture shares one
+        ``monkeypatch`` instance with the test, so an ``undo()`` here would also
+        revert ``XDG_CONFIG_HOME``.
+        """
         path = tmp_path / "endpoints.json"
         save_user_endpoints((_endpoint("original"),), path)
+        real_replace = os.replace
 
         def boom(src: object, dst: object) -> None:
             raise OSError("disk full")
 
-        monkeypatch.setattr(os, "replace", boom)
-        with pytest.raises(ConfigError):
-            save_user_endpoints((_endpoint("replacement"),), path)
-        monkeypatch.undo()
+        os.replace = boom  # type: ignore[assignment]
+        try:
+            with pytest.raises(ConfigError):
+                save_user_endpoints((_endpoint("replacement"),), path)
+        finally:
+            os.replace = real_replace  # type: ignore[assignment]
         loaded, _ = load_user_endpoints(path)
         assert [e.id for e in loaded] == ["original"]
 
