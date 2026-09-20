@@ -83,7 +83,7 @@ def print_status(console: Console, state: CliState) -> None:
     rows = [
         ("mode", f"{state.mode_display()} — {mode_summary(state.mode)}"),
         ("models", state.models_display()),
-        ("planner", state.planner_model),
+        ("planner", _planner_display(state)),
         ("agents", str(state.max_agents)),
         ("workdir", state.work_dir_display()),
         ("config", state.config_display()),
@@ -94,10 +94,45 @@ def print_status(console: Console, state: CliState) -> None:
         # A local run's endpoint is the thing most likely to be wrong, and it is
         # invisible everywhere else.
         rows.insert(1, ("runtime", state.local_display()))
+    if state.endpoint_ids:
+        rows.insert(1, ("endpoints", _endpoints_display(state)))
     console.print()
     for label, value in rows:
         console.print(f"  [dim]{label:>9}[/dim]  {value}")
     console.print()
+
+
+def _planner_display(state: CliState) -> str:
+    """Return the planner line: model, and the route when one is explicit."""
+    if state.planner_endpoint_id:
+        return f"{state.planner_endpoint_id}:{state.planner_model}"
+    return state.planner_model
+
+
+def _endpoints_display(state: CliState) -> str:
+    """Return each known endpoint with where its traffic actually goes.
+
+    Hosted, private and local are labelled distinctly rather than collapsed into
+    "not local": a LAN gateway does leave this machine, and a user checking this
+    line before a run is checking exactly that.
+    """
+    try:
+        from cli.endpoints.commands import all_endpoints
+        from cli.endpoints.render import location_label
+
+        configured = {e.id: e for e in all_endpoints()}
+    except Exception:  # noqa: BLE001 - status must never fail on a broken store
+        return "  ".join(state.endpoint_ids)
+    parts: list[str] = []
+    for endpoint_id in state.endpoint_ids:
+        endpoint = configured.get(endpoint_id)
+        if endpoint is None:
+            parts.append(f"{endpoint_id} (missing)")
+            continue
+        # Parentheses, not brackets: rich reads "[hosted]" as a style tag
+        # and swallows it.
+        parts.append(f"{endpoint_id} ({location_label(endpoint.location)})")
+    return "  ".join(parts)
 
 
 # ── One-line feedback for slash commands ──────────────────────────────────────

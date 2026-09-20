@@ -39,6 +39,7 @@ from cli.local import (
 )
 from cli.ui import ACCENT, print_error, print_ok, print_status, print_warn
 from mak.config import model_caveat
+from mak.endpoints.types import EndpointConfig, Location
 from mak.local import OllamaError
 from mak.local.runtime import KIND_OLLAMA, KIND_OPENAI_COMPATIBLE
 
@@ -137,9 +138,20 @@ def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
         _list_models(state, console)
         return
 
+    configured = _configured_endpoints()
     valid: list[str] = []
     for spec in args:
         provider = spec.split(":")[0].lower()
+        # A configured endpoint wins over every legacy rule. Reserved ids can
+        # never reach here (the parser refuses them), so there is no case where
+        # this shadows a built-in provider.
+        endpoint = configured.get(provider)
+        if endpoint is not None:
+            resolved = _endpoint_spec(spec, endpoint, state, console)
+            if resolved is None:
+                return
+            valid.append(resolved)
+            continue
         if provider in _LOCAL_PROVIDERS:
             resolved = _local_spec(spec, state, console)
             if resolved is None:
@@ -148,7 +160,12 @@ def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
             continue
         key_env = _KEY_ENV.get(provider)
         if key_env is None:
-            print_error(console, f"Unknown provider: {provider}")
+            known = ", ".join(sorted({*_KEY_ENV, *_LOCAL_PROVIDERS, *configured}))
+            print_error(
+                console,
+                f"Unknown endpoint or provider: {provider}  "
+                f"[dim]— known: {known}. '/endpoint add' sets up a new one.[/dim]",
+            )
             return
         if not state.api_keys.get(key_env, "").strip():
             print_error(
@@ -167,7 +184,10 @@ def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
         return
 
     state.selected_models = valid
-    if any(spec.startswith(_LOCAL_SPEC_PREFIXES) for spec in valid) and (
+    # Only a genuinely local runtime flips the mode. A hosted compatible
+    # endpoint is cloud work with a different URL, and switching to local mode
+    # for one would launch the local wizard at a user who has no local runtime.
+    if any(_spec_is_local(spec, state) for spec in valid) and (
         state.mode == MODE_CLOUD
     ):
         state.mode = MODE_LOCAL
@@ -176,6 +196,62 @@ def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
         caveat = model_caveat(spec.partition(":")[2].partition("@")[0])
         if caveat:
             print_warn(console, caveat)
+
+
+def _configured_endpoints() -> dict[str, EndpointConfig]:
+    """Return every configured endpoint by id, or an empty map if none load.
+
+    Total by construction: ``/models`` must stay usable when the endpoint store
+    or the project config is broken, and ``/endpoint list`` is where that
+    problem gets reported.
+    """
+    try:
+        from cli.endpoints.commands import all_endpoints
+
+        return {e.id: e for e in all_endpoints()}
+    except Exception:  # noqa: BLE001 - a broken store must not break /models
+        return {}
+
+
+def _endpoint_spec(
+    spec: str, endpoint: EndpointConfig, state: CliState, console: Console
+) -> str | None:
+    """Validate an ``endpoint:model`` spec, or report why and return None.
+
+    The model id keeps **everything** after the first colon, so a slug like
+    ``meta/llama-3.3-70b-instruct`` and an Ollama tag like
+    ``qwen2.5-coder:14b`` both survive.
+    """
+    _, _, model = spec.partition(":")
+    if not model:
+        print_error(
+            console,
+            f"'{spec}' names no model — write {endpoint.id}:<model>, or list "
+            f"what it offers with [bold]/endpoint models {endpoint.id}[/bold].",
+        )
+        return None
+    if endpoint.api_key_env and not _endpoint_key_present(endpoint, state):
+        print_error(
+            console,
+            f"No key for {endpoint.display_name} — set {endpoint.api_key_env} "
+            "or run [bold]/apikey[/bold].",
+        )
+        return None
+    if endpoint.id not in state.endpoint_ids:
+        state.endpoint_ids.append(endpoint.id)
+    return spec
+
+
+def _endpoint_key_present(endpoint: EndpointConfig, state: CliState) -> bool:
+    """Whether this endpoint's credential is available from any source."""
+    import os
+
+    name = endpoint.api_key_env or ""
+    if state.api_keys.get(name, "").strip() or os.environ.get(name, "").strip():
+        return True
+    from cli.core.api_keys import load_all_stored
+
+    return bool(load_all_stored().get(name, "").strip())
 
 
 def _local_spec(spec: str, state: CliState, console: Console) -> str | None:
@@ -313,6 +389,11 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
         return
 
     raw = args[0]
+    configured = _configured_endpoints()
+    endpoint = configured.get(raw.split(":")[0].lower())
+    if endpoint is not None:
+        _set_endpoint_planner(raw, endpoint, state, console)
+        return
     # A local model is not in the catalog by construction (mak/local's whole
     # premise is that the running server is the authority), so the catalog
     # lookup below must be skipped for one rather than rejecting it.
@@ -354,6 +435,46 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
     caveat = model_caveat(model_id)
     if caveat:
         print_warn(console, caveat)
+
+
+def _set_endpoint_planner(
+    raw: str, endpoint: EndpointConfig, state: CliState, console: Console
+) -> None:
+    """Point the planner at ``endpoint:model``, making the endpoint the route.
+
+    Sets both the model *and* the route, and clears the legacy
+    ``planner_backend`` / ``planner_base_url`` pair. Leaving those set beside an
+    endpoint would give the planner two answers to "where does this go", and
+    the resolution order would silently pick one.
+    """
+    _, _, model = raw.partition(":")
+    if not model:
+        print_error(
+            console,
+            f"'{raw}' names no model — write {endpoint.id}:<model>.",
+        )
+        return
+    if endpoint.api_key_env and not _endpoint_key_present(endpoint, state):
+        print_error(
+            console,
+            f"No key for {endpoint.display_name} — set {endpoint.api_key_env} "
+            "or run [bold]/apikey[/bold].",
+        )
+        return
+    state.planner_model = model
+    state.planner_endpoint_id = endpoint.id
+    state.planner_backend = ""
+    state.planner_base_url = ""
+    if endpoint.id not in state.endpoint_ids:
+        state.endpoint_ids.append(endpoint.id)
+    print_ok(console, f"Planner: {endpoint.id}:{model}")
+
+    entry = registry().find(model, endpoint.id)
+    note = entry.planner_note() if entry is not None else "not evaluated"
+    if note:
+        # "Not evaluated" is a third state, distinct from "fine" and from
+        # "known to struggle"; conflating any two of them misleads.
+        print_warn(console, f"Planner quality for {model}: {note}.")
 
 
 def _is_installed_locally(model: str, state: CliState) -> bool:
@@ -423,7 +544,38 @@ def _where(is_local: bool) -> str:
 
 
 def _planner_is_local(state: CliState) -> bool:
+    """Whether the planner's traffic stays on this machine or network.
+
+    A selected endpoint answers by its explicit ``location``. The legacy
+    ``planner_base_url`` fallback still means local, because the only thing that
+    ever set it was the ``/local`` wizard.
+    """
+    if state.planner_endpoint_id:
+        return _endpoint_is_local(state.planner_endpoint_id)
     return bool(state.planner_base_url)
+
+
+def _endpoint_is_local(endpoint_id: str) -> bool:
+    """Whether an endpoint's traffic stays off the public internet.
+
+    Reads the endpoint's stated ``location``. The old test — "does it have a
+    base_url" — called NVIDIA, OpenRouter, DeepSeek and Z.ai local, because
+    every one of them has one.
+
+    A ``private`` endpoint counts as local for *mode* purposes (it is not a
+    hosted provider) while still being reported distinctly wherever privacy is
+    described, because its traffic does leave this machine.
+    """
+    endpoint = _configured_endpoints().get(endpoint_id)
+    return endpoint is not None and endpoint.location is not Location.HOSTED
+
+
+def _spec_is_local(spec: str, state: CliState) -> bool:
+    """Whether one selected model spec runs off the public internet."""
+    prefix = spec.split(":")[0].lower()
+    if prefix in _configured_endpoints():
+        return _endpoint_is_local(prefix)
+    return spec.startswith(_LOCAL_SPEC_PREFIXES)
 
 
 def _agents_are_local(state: CliState) -> bool | None:
@@ -434,7 +586,7 @@ def _agents_are_local(state: CliState) -> bool | None:
     """
     if not state.selected_models:
         return None
-    local = [spec.startswith(_LOCAL_SPEC_PREFIXES) for spec in state.selected_models]
+    local = [_spec_is_local(spec, state) for spec in state.selected_models]
     if all(local):
         return True
     if not any(local):

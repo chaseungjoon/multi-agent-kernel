@@ -67,12 +67,19 @@ def _apply_state_to_config(config: MakConfig, state: CliState) -> MakConfig:
 
 
 def _resolve_planner_api_key(state: CliState) -> str | None:
-    """Return the key for the planner's provider, or None for a local planner.
+    """Return the key for the planner's route, or None when it needs none.
 
     None is the *correct* answer for a local planner, not a fallback: it is what
     lets the adapter send its placeholder rather than forwarding a real cloud key
     to a local host.
+
+    A selected endpoint is authoritative (Wave 22). Guessing from the model
+    name's prefix is only a fallback for a bare model id, and guessing wrong
+    there would send one service's credential to another's host — an endpoint
+    named its credential variable precisely so MAK does not have to infer it.
     """
+    if state.planner_endpoint_id:
+        return _endpoint_planner_key(state)
     if state.planner_backend == "ollama" or state.planner_base_url:
         return None
     model = state.planner_model.lower()
@@ -83,6 +90,26 @@ def _resolve_planner_api_key(state: CliState) -> str | None:
     if model.startswith(("gpt", "o1", "o3", "o4")):
         return state.api_keys.get("OPENAI_API_KEY")
     return None
+
+
+def _endpoint_planner_key(state: CliState) -> str | None:
+    """Return the key named by the planner's endpoint, or None if it needs none."""
+    import os
+
+    try:
+        from cli.endpoints.commands import all_endpoints
+    except ImportError:  # pragma: no cover - the package is always present
+        return None
+    endpoint = next(
+        (e for e in all_endpoints() if e.id == state.planner_endpoint_id), None
+    )
+    if endpoint is None or not endpoint.api_key_env:
+        return None
+    return (
+        state.api_keys.get(endpoint.api_key_env)
+        or os.environ.get(endpoint.api_key_env)
+        or None
+    )
 
 
 def build_session(task: str, state: CliState) -> Session:
@@ -116,8 +143,20 @@ def build_session(task: str, state: CliState) -> Session:
         planner=replace(
             config.planner,
             model=state.planner_model,
-            backend=state.planner_backend or config.planner.backend,
-            base_url=state.planner_base_url or config.planner.base_url,
+            # An endpoint decides the route on its own, so the legacy pair is
+            # cleared rather than merged — carrying both would leave two
+            # answers to "where does the planner's request go".
+            endpoint=state.planner_endpoint_id or config.planner.endpoint,
+            backend=(
+                None
+                if state.planner_endpoint_id
+                else (state.planner_backend or config.planner.backend)
+            ),
+            base_url=(
+                None
+                if state.planner_endpoint_id
+                else (state.planner_base_url or config.planner.base_url)
+            ),
         ),
     )
 

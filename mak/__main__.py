@@ -26,7 +26,6 @@ from mak.agent_runner.runner import AgentRunner
 from mak.agent_runner.sandbox import SandboxConfig, docker_available
 from mak.bootstrap import (
     DEFAULT_KEY_ENV,
-    LOCAL_AGENT_TYPES,
     agents_from_specs,
     build_registry,
     default_agent_id,
@@ -52,6 +51,12 @@ from mak.core.exceptions import (
 )
 from mak.core.logging import SessionLogger
 from mak.core.types import SubTask
+from mak.endpoints.resolution import (
+    ResolvedEndpoint,
+    require_endpoint,
+    resolve_endpoints,
+)
+from mak.endpoints.store import load_user_endpoints, merge_endpoints
 from mak.execution_result import ExecutionResult
 from mak.git_integration.git import GitHelper
 from mak.lock_manager.lock_table import LockTable
@@ -238,15 +243,36 @@ def _cli_cascade_approval(*, no_review: bool) -> CascadeApproval:
     return approve
 
 
-def _planner_api_key(config: MakConfig) -> str | None:
-    """Resolve the planner's API key: explicit env var, then inference, then none.
+def planner_endpoint(config: MakConfig) -> ResolvedEndpoint | None:
+    """Return the planner's resolved endpoint, or None when it names none.
 
-    ``planner.api_key_env`` wins when set — it is the only way to name the token
+    Resolved against the merged endpoint set, so a planner may route through an
+    endpoint the user saved interactively and never wrote into this file.
+    """
+    if not config.planner.endpoint:
+        return None
+    user_endpoints, _diagnostic = load_user_endpoints()
+    merged = merge_endpoints(config.endpoints, user_endpoints)
+    resolved = resolve_endpoints(merged)
+    return require_endpoint(resolved, config.planner.endpoint, where="planner")
+
+
+def _planner_api_key(config: MakConfig) -> str | None:
+    """Resolve the planner's API key: endpoint, explicit env var, then inference.
+
+    An endpoint is authoritative when one is named: it stated which variable
+    holds its credential, so there is nothing to infer, and inferring anyway
+    would let one service's key reach another's host.
+
+    ``planner.api_key_env`` wins next — it is the only way to name the token
     for a protected gateway (``vllm --api-key``), whose model id tells us
     nothing. Falling through to ``None`` is deliberate rather than an oversight:
     a local planner has no key, and ``None`` is what lets the adapter apply its
     placeholder rule instead of forwarding a real cloud key to a local host.
     """
+    endpoint = planner_endpoint(config)
+    if endpoint is not None:
+        return endpoint.api_key
     if config.planner.api_key_env:
         return os.environ.get(config.planner.api_key_env)
     model = config.planner.model.lower()
@@ -298,9 +324,24 @@ def warn_local_planner_mismatch(config: MakConfig) -> None:
     """
     if not config.agents:
         return
-    if any(a.type not in LOCAL_AGENT_TYPES for a in config.agents):
+    try:
+        roster = resolved_agents(config)
+    except ConfigError:
+        # A config that will not resolve has a louder problem than this warning.
         return
-    if config.planner.backend == "ollama" or config.planner.base_url is not None:
+    # Reads each agent's resolved location, not its type. The old test used a
+    # fixed set of "local" agent types, so a roster of hosted compatible
+    # endpoints — NVIDIA, OpenRouter — counted as not-local and the warning
+    # never fired; worse, a local endpoint configured the new way would not
+    # have matched either.
+    if any(not agent.is_local for agent in roster):
+        return
+    route = planner_endpoint(config)
+    if route is not None and not route.is_hosted:
+        return
+    if route is None and (
+        config.planner.backend == "ollama" or config.planner.base_url is not None
+    ):
         return
     print(
         "mak: warning: every agent is local, but the planner "
@@ -310,6 +351,28 @@ def warn_local_planner_mismatch(config: MakConfig) -> None:
         "this if a cloud planner with local agents is what you want.",
         file=sys.stderr,
     )
+
+
+def _planner_backend(
+    config: MakConfig, route: ResolvedEndpoint | None
+) -> str | None:
+    """Return the planner backend name for the configured route."""
+    if route is None:
+        return config.planner.backend
+    # Every endpoint-backed planner speaks one of the transports
+    # ``build_planner_llm`` already knows; the OpenAI-compatible client is the
+    # one that takes an arbitrary base URL.
+    return _TRANSPORT_TO_PLANNER_BACKEND.get(route.transport.value, "openai")
+
+
+# Transport -> the planner backend that speaks it. Only the four API transports
+# appear; a CLI wrapper never drives the planner.
+_TRANSPORT_TO_PLANNER_BACKEND: dict[str, str] = {
+    "openai_chat": "openai",
+    "anthropic": "anthropic",
+    "gemini": "gemini",
+    "ollama_native": "ollama",
+}
 
 
 def build_session(
@@ -364,11 +427,14 @@ def build_session(
         pool_caps={a.id: a.max_instances for a in roster},
         work_dir=str(work_dir),
     )
+    route = planner_endpoint(config)
     planner = Planner(
         build_planner_llm(
             config.planner.model,
-            backend=config.planner.backend,
-            base_url=config.planner.base_url,
+            # A named endpoint supplies the transport and the address; the
+            # legacy backend/base_url pair is only consulted when there is none.
+            backend=_planner_backend(config, route),
+            base_url=route.base_url if route is not None else config.planner.base_url,
             api_key=_planner_api_key(config),
         ),
         max_retries=config.planner.max_retries,
