@@ -302,11 +302,25 @@ mak examples hosted-openai-compatible > mak.yaml   # NVIDIA Build, ready to edit
 mak examples custom-endpoint > mak.yaml            # a provider-neutral template
 ```
 
+**Models that don't support structured outputs work anyway.** MAK asks for a
+strict JSON schema when it can, because that is what stops an agent replying
+with prose instead of a result. Plenty of models — most free OpenRouter routes,
+and anything behind an upstream provider that hasn't implemented it — don't
+accept that request. You don't have to know which, or configure anything: MAK
+reads what the endpoint publishes about each model, asks for the strongest
+reply format that model actually supports, and falls back to a prompt-only JSON
+contract for the ones that support none. A model whose limits aren't published
+is discovered once per session, not once per task.
+
+This is per **exact** model id, suffix included: `some/model` and
+`some/model:free` are different products and are often routed to different
+providers with different capabilities.
+
 MAK never accepts a raw API key in a config file, on the command line, or in a
 log — only the *name* of the environment variable that holds it. See
 [mak/endpoints/profiles.py](mak/endpoints/profiles.py) for the preset table and
 [CONTRIBUTING.md](CONTRIBUTING.md) (search "Universal OpenAI-compatible
-endpoints") for the full design.
+endpoints" and "Capability-aware OpenRouter") for the full design.
 
 ## Configuration & API Keys
 

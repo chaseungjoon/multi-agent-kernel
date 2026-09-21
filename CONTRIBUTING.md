@@ -2170,14 +2170,27 @@ by URL) instead of a hosted API — the shared design decisions live in `TASKS.m
   Ollama's and llama.cpp's OpenAI-compat layers implement only the older
   name — sending the newer one there is at best ignored, so the cap silently
   would not exist.
-- **`structured_output` and the one-shot downgrade (D5).** `AgentConfig.structured_output`
-  is `json_object` (today's default), `json_schema` (strict schema /
-  constrained decoding — the `ollama_api` default, where it is native and
-  free), or `none`. A call rejected for naming an unsupported response format
-  is retried **once**, one rung down (`json_schema → json_object → none`);
-  anything else propagates unchanged. No adaptive memory across calls — the
-  registry rebuilds adapters per dispatch, so anything remembered would be
-  global mutable state (`AGENTS.md` forbids it).
+- **`structured_output` and the capability ladder (D5; revised by Waves 22 and
+  24).** `AgentConfig.structured_output` is `auto`, `json_object`,
+  `json_schema` (strict schema / constrained decoding — the `ollama_api`
+  default, where it is native and free), or `none`. A call rejected for naming
+  an unsupported response format descends **all the way**
+  (`json_schema → json_object → none`), not once: a single downgrade made the
+  bottom rung unreachable from the top, so a server supporting neither schema
+  nor object mode failed every task. Anything that is not a verified format
+  rejection propagates unchanged.
+
+  The original "no adaptive memory across calls" rule was right about the
+  hazard and wrong about the conclusion. The registry does rebuild adapters per
+  dispatch, so memory cannot live on the instance — but the answer is an object
+  the composition root **owns and injects**
+  (`mak/endpoints/capabilities.py::CapabilityCache`), not a module-level dict.
+  That is not the global mutable state `AGENTS.md` forbids: nothing is
+  importable-and-mutable and two sessions in one process each get their own.
+  Without it a forty-task run against a server with no structured-output
+  support paid forty wasted requests to rediscover the same fact. Wave 24 adds
+  the other half — the endpoint's *published* capabilities choose the starting
+  rung, so the common case costs zero wasted requests rather than one.
 - **The parse → repair → retry turn (D6), shared via `repair.py::repair_loop`.**
   A decode failure used to cost a full re-dispatch — the whole bundle (write
   sources, sibling context, caller context: tens of KB) sent again to
@@ -3079,6 +3092,12 @@ session:
 #                                # starts strict and steps down on a verified
 #                                # rejection, remembering what worked
 #     token_parameter: "auto"   # auto | max_tokens | max_completion_tokens | none
+#     provider_routing: "none"  # none | openrouter (Wave 24) — whether this
+#                                # endpoint's body may carry a provider-routing
+#                                # extension. Only the `openrouter` preset sets
+#                                # `openrouter`, and it is never inferred from a
+#                                # hostname: a proxied or renamed endpoint would
+#                                # then be guessed wrong in both directions.
 #     headers:                  # extra request headers; MAK owns Authorization,
 #                                # Content-Type, Host and User-Agent and refuses
 #                                # an entry that tries to set one
@@ -4101,7 +4120,12 @@ mak/
 │   │                       #   hosted/local agent types
 │   ├── agents.py           # resolve_agents / derive_agent_id / unique_agent_id
 │   ├── store.py            # per-user ~/.config/mak/endpoints.json, atomic 0600
-│   ├── capabilities.py     # the structured-output ladder + session CapabilityCache
+│   ├── capabilities.py     # the structured-output ladder, the rung→parameter
+│   │                       #   table, catalog-seeded start rungs, and the
+│   │                       #   single-flight session CapabilityCache (Wave 24)
+│   ├── error_classification.py  # why a structured request was refused —
+│   │                       #   parses the provider's error body, not str(exc)
+│   │                       #   (Wave 24)
 │   └── health.py           # failure classification + the three health policies
 │
 ├── node_store/
@@ -5059,6 +5083,233 @@ The gates closed at 2528 passing tests, `ruff check mak cli tests` and `mypy
 --strict mak cli` both clean. Three failures in
 `tests/node_store/test_ingestion.py` were verified to fail identically on
 `main` at the branch point and are unrelated to this wave's changes.
+
+---
+
+## Wave 24: Capability-aware OpenRouter structured-output negotiation
+
+A user pointed MAK at `openrouter:inclusionai/ling-3.0-flash-vl:free`. The
+planner worked — its request is ordinary text generation. Every *agent* task
+failed, because MAK adds a `response_format` contract to get a `TaskResult`
+back and that model's route does not implement the parameter. The session log
+carried two refusals from the same OpenRouter/Novita route:
+
+```text
+model features structured outputs not support
+model: inclusionai/ling-3.0-flash-vl does not support feature: structured-outputs
+```
+
+The 0.8.1 hotfix added the literal `"structured outputs"` to
+`_FORMAT_REJECTION_MARKERS`. It matches the first spelling and misses the
+second, so `_is_format_rejection()` returned false, the ladder never descended,
+and the scheduler re-dispatched each failed task — amplifying one predictable
+capability mismatch into repeated provider calls.
+
+**Why extending the tuple was the wrong fix.** That sentence is written by
+whichever upstream provider OpenRouter happened to route to. MAK does not get
+to enumerate the spellings of a string it does not own, and the next provider
+would have broken it again. Four deeper causes sat underneath the missed
+substring: the catalog *discarded* the capability metadata OpenRouter publishes;
+the endpoint policy was per-endpoint while support is per exact model variant;
+MAK never told OpenRouter which parameters it needed honored; and several agents
+starting together each ran the same failing probe ladder concurrently.
+
+### What the live API actually said
+
+Every design decision below was checked against the real service before it was
+written down, because the wave's planning notes contained two assumptions that
+turned out to be wrong.
+
+`GET /api/v1/models` returns 446 models and publishes `supported_parameters` on
+each. The incident model's two variants are opposites:
+
+```text
+inclusionai/ling-3.0-flash-vl        -> response_format ✓  structured_outputs ✓
+inclusionai/ling-3.0-flash-vl:free   -> response_format ✗  structured_outputs ✗
+```
+
+**This is not one bad model.** 70 of the 446 publish no `response_format` at
+all, and a further 30 publish `response_format` without `structured_outputs`.
+
+**`response_format` and `structured_outputs` are two parameters, not one
+feature.** `google/gemma-4-31b-it:free` publishes only the former. Probed
+against it, `{"type": "json_object"}` routes fine and a strict `json_schema`
+does not. So the mapping onto MAK's ladder is exact, and it is measured rather
+than assumed:
+
+| MAK rung | Reported parameter that authorizes it |
+|---|---|
+| `json_schema` | `structured_outputs` |
+| `json_object` | `response_format` |
+| `none` | — |
+
+Gating the whole ladder on `response_format` — the obvious reading, and what
+the wave originally planned — would have kept sending those 30 models a schema
+they cannot honor, one wasted call per task, forever.
+
+**An empty report means *unknown*, not *unsupported*.** Three catalog entries
+(`openrouter/fusion`, `openrouter/pareto-code`, `openrouter/bodybuilder`, all
+auto-routers) publish `supported_parameters: []`. Probing confirmed
+`openrouter/fusion` **succeeds** with a strict schema. So only a *non-empty*
+report that omits the parameter is a known negative; an empty one is a service
+declining to enumerate.
+
+**The routing guard fails with 404, outside the format window.** OpenRouter
+documents combining `response_format` with `provider.require_parameters: true`
+so routing only considers providers that honor the request. Its failure mode is
+a **404** carrying `metadata.failed_routing_step: "Filter by Parameters"` — not
+a 400 or 422. Sending it unconditionally, as originally planned, would
+therefore have converted a *recoverable* provider rejection into a hard failure
+the ladder's 400/422 gate could never descend from. The guard as designed would
+have made MAK strictly less robust.
+
+### The four pieces of the fix
+
+**1. The catalog keeps capabilities (`mak/models/`).**
+`OpenAiCompatibleSource` now reads `supported_parameters` — openai 3.16.2 keeps
+unknown `/models` keys as pydantic extras, and `providers.py::reported_parameters`
+is the single place that knows it, preferring `model_extra` so a future real SDK
+field of that name cannot shadow the server's value. It flows through
+`FetchedModel` → `ModelEntry` → manifest **schema v3**, serialized as a sorted
+list for a byte-stable file and omitted entirely when unknown.
+
+The field is **tri-state**, and all three states are load-bearing: `None` (the
+service published nothing — every OpenAI/Anthropic/Gemini model and most
+compatible `/models` routes), `frozenset()` (published and empty), and a
+non-empty set. A boolean would conflate "known unsupported" with "unknown" and
+silently disable structured output for every endpoint that lists bare ids.
+Schema v1 and v2 records simply have no such key, which reads as `None`, so a
+cache upgrades with no model loss and no refetch.
+
+**2. Classification reads the error, not the string
+(`mak/endpoints/error_classification.py`).**
+A new leaf module, so the adapter keeps to transport and ladder control. It
+parses in priority order — HTTP status, then `exc.body`, then
+`response.json()`, then OpenRouter's `error.message`/`code`/`metadata`, then
+`error.metadata.raw` (JSON-decoded when it is a JSON string, which is where the
+useful sentence lives), with `str(exc)` last for compatibility. Text is
+normalized to NFKC, casefolded, and every run of non-alphanumerics collapsed to
+one space — which is what makes `structured outputs`, `structured-outputs` and
+`structured_outputs` one token sequence matched by one marker.
+
+A capability claim requires **all three**: a 400/422 status, a marker naming the
+reply format, and language asserting an absent capability. An invalid JSON
+Schema names the format but claims no missing capability, so it propagates —
+hiding a MAK defect behind a quieter rung would be worse than the 400. So do
+auth, missing model, quota, context limit, safety, transport failure and 5xx.
+The verdict is a typed `RejectionAnalysis`, and it distinguishes a provider
+format refusal from the routing-guard 404, because the two have different
+recoveries.
+
+**3. Catalog evidence picks the rung; runtime evidence wins.**
+`CapabilityCache` now holds two kinds of fact in two fields, deliberately never
+merged: *reported* parameters (a claim — it lowers the **starting** rung and
+leaves descent below it available) and a *proven* mode (a real successful call —
+it pins exactly). Merging them would let a stale catalog claim masquerade as a
+verified fact, unfixable within the session. Both are clamped to what the user
+configured, so neither a catalog nor another agent's discovery can raise an
+agent above its own `structured_output` ceiling.
+
+Seeding happens once at the composition root:
+`ModelRegistry` → `ReportedCapabilities` → `bootstrap.seed_capabilities`. The
+lookup is **injected** into `build_registry`, so that function stays pure, no
+adapter factory reads the disk, and a test states what the catalog says without
+writing a manifest. Only the reported set is seeded, never a mode — choosing
+the rung belongs to the adapter, which is the only layer that knows the user's
+ceiling.
+
+Cache identity keeps the **whole** model id. `…-flash-vl` and
+`…-flash-vl:free` are different products with opposite capabilities, so
+canonicalizing a variant suffix away would attribute one's support to the other.
+
+**4. The routing guard, sent only where the catalog confirms the rung.**
+`provider_routing` is a typed policy (`ProviderRouting`) on the **profile**,
+resolved through `ResolvedEndpoint` → `ResolvedAgentConfig` → `_api_factory()` →
+adapter, and set on the `openrouter` preset alone. It is never inferred from a
+hostname: a user can proxy OpenRouter, rename the endpoint, or point a `custom`
+endpoint at the same domain, and a URL check answers wrongly in all three
+cases. The `provider` object is added through the SDK's `extra_body`, so no
+second SDK and no loosened typing for the ordinary parameters beside it.
+
+It is sent only on a rung whose backing parameter the catalog *positively*
+confirms — never on unknown, never on an empty report, never on the prompt-only
+rung. And because OpenRouter's model-level aggregate can still disagree with the
+endpoint it picks (measured: `gemma-4-31b-it:free` reports `response_format`
+while its only route does not), a guard 404 **retries the same rung with the
+guard dropped** rather than descending. Descending would surrender a capability
+the model actually has.
+
+**Single-flight discovery.** `CapabilityCache.discovering()` is a context
+manager: the first caller for an unknown pair owns the ladder and the rest wait
+on a per-key event, then start from what it proved. No network call happens
+while the cache's lock is held; waiters are released on success **and** on
+exception; a failed owner does not poison the key (the next caller becomes the
+owner); keys are removed on completion so the cache stays bounded; and the wait
+is bounded, so a wedged provider costs one agent its timeout rather than
+stalling the pool. Before this, four agents starting together each paid for the
+same two rejected formats.
+
+### Invariants to preserve
+
+- **Never widen the marker tuples to fix a new provider's wording.** If a
+  refusal is not classified, the normalization or the priority-ordered parse is
+  what needs work. A literal spelling is the thing this wave removed.
+- **A rejection needs a status.** An exception with no HTTP status is never a
+  rejection: a transport error has no opinion about the request body, even when
+  a proxy echoed the request into its message.
+- **Unknown, empty and reported are three states.** Any code that collapses
+  them re-introduces the bug in one direction or the other. `None` must never
+  become `frozenset()` on any hop.
+- **Only positive confirmation gates the guard.** Its failure is a 404, so a
+  speculative guard is a hard failure rather than a recoverable one.
+- **A seed lowers, never raises.** The user's configured mode is a ceiling.
+- **Raw bodies are read in memory and never logged.** Classification may
+  inspect `metadata.raw`; only the short, `redact_secrets`-filtered `reason`
+  reaches a log line, bounded to 200 characters. A provider body can echo
+  request headers and user content, and these lines end up in shared issue
+  reports.
+
+### Debugging a structured-output problem
+
+1. `INFO` logs one line per endpoint/model pair: the selected rung and the
+   evidence (`catalog` or `runtime_rejection`). `catalog` means the endpoint
+   published the limitation — look it up, it is a fact you can verify.
+   `runtime_rejection` means MAK discovered it by being refused, which may be
+   stale by tomorrow.
+2. `DEBUG` logs a dropped routing guard, which is normal and self-healing: it
+   costs one extra request and no capability.
+3. To see what an endpoint claims:
+   `curl -H "Authorization: Bearer $KEY" https://openrouter.ai/api/v1/models`
+   and read `supported_parameters` for the **exact** id, suffix included. The
+   per-model `…/models/<id>/endpoints` route shows it per upstream provider,
+   which is where an aggregate and a route disagree.
+4. `MAK_NO_MODEL_REFRESH=1` freezes the catalog, which separates "the seed is
+   wrong" from "the runtime negotiation is wrong".
+
+### Results
+
+The acceptance case completes a real agent task against
+`openrouter:inclusionai/ling-3.0-flash-vl:free` in **one** provider call with
+no `response_format` and no `provider` object on the wire — verified live, not
+only against a fake. With no catalog data at all the reactive ladder still
+recovers within one dispatch, walking `json_schema → json_object → none`
+against both real Novita spellings. A capable model keeps strict schema
+enforcement and receives the guard.
+
+The gates closed at 2683 passing tests — 109 new, including real-loopback-HTTP
+acceptance over the actual openai SDK and sleep-free deterministic concurrency
+tests — with `ruff check` and `mypy` clean. Four failures
+(`tests/node_store/test_ingestion.py`, three parametrizations, plus
+`tests/models/test_cli_adapter.py::test_every_entry_resolves_its_key_env`) were
+verified to fail identically on `main` at the branch point.
+
+**Found along the way, not fixed here.**
+`ModelEntry.api_key_env` raises `ValueError` for any provider outside the
+built-in three, so a catalog containing third-party endpoint entries breaks
+`test_every_entry_resolves_its_key_env` — and `cli/commands.py` reads that
+property. It reproduces on `main` and belongs to the model-catalog surface
+rather than to capability negotiation, so it is recorded as a follow-up instead
+of being folded into this wave.
 
 ---
 
