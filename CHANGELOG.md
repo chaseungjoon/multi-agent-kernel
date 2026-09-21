@@ -14,6 +14,82 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.9.1b] — 2026-09-22
+
+### Fixed
+- **A cascade repair can no longer report success without repairing anything
+  (Wave 26).** An agent's success is only a transport claim — it says the model
+  returned usable source, not that the defect is gone. A repair that swapped
+  one nonexistent import for another nonexistent import at the same site was
+  therefore accepted, committed, and re-detected on the next wave.
+
+  Every generated fix-up now carries kernel-owned `RepairObligation`s that the
+  planner and the coding agent cannot declare or weaken. Before a repair
+  commits, MAK substitutes the staged sources into a whole-repository view and
+  reruns the deterministic cross-module checks; an obligation still true in that
+  prospective repository rolls the edit back **before** the node-store
+  transaction and the git audit commit, so a hallucinated fix never becomes
+  durable. Each obligation records both the finding's exact identity and a
+  stable *family* identity for its syntactic site, so substituting a different
+  guessed name at the same import site is not mistaken for progress.
+- **Cascade loops that cannot converge now stop instead of asking again.**
+  Before presenting another wave, the loop fingerprints the implicated source,
+  the repair scope, and the obligation families. An immediate repeat of the
+  previous broken state stops as `stalled`; a non-adjacent repeat (A → B → A)
+  stops as `oscillating`. Fingerprints are persisted alongside the task graph,
+  so a session recovered after a crash cannot resume the same approval loop from
+  the beginning.
+- **`no_changes_required` can no longer close a live repair.** The same
+  prospective predicate gates the no-op acceptance path, so an agent cannot
+  discharge a fix-up task by declaring there was nothing to do.
+- **An unresolved import against an empty provider no longer invites a
+  caller-only rename.** When the provider exports no statically visible symbol
+  that could satisfy the use, the provider becomes a writable target of the
+  repair and the originally requested binding must exist when the edit commits —
+  deleting the caller's use is not a valid fix.
+- **Ordinary caller edits can no longer introduce a new cross-module defect
+  against an untouched provider.** Prospective validation compares the candidate
+  repository against the committed baseline and rejects newly introduced
+  defects, including newly created import cycles.
+- **A repair no longer optimizes for the latest diagnostic at the expense of the
+  request.** The original user objective — supplied through `plan()` or through
+  `install_plan(..., objective=...)` — is carried in the scheduler annotations,
+  survives crash recovery, and is repeated in every generated repair
+  description, so deleting the feature that caused a defect is not a
+  structurally clean way out.
+
+### Added
+- **`RepairObligation`** (`mak/core/types.py`, exported from `mak.core`) and the
+  `SubTask.repair_obligations` field. Obligations are serialized with the task
+  graph for crash recovery, shown during plan review as a `must resolve=` line,
+  preserved when `_merge_fixups` folds several fix-ups into one task, and
+  reattached to the right downstream task after a reviewer edits a generated
+  plan. An edited plan that keeps neither the caller nor the provider is
+  rejected outright as unrepairable.
+- **`CascadeOutcome.stalled`, `.oscillating`, `.unrepairable`, and
+  `.stop_reason`**, joining the existing `declined` and `limit_reached`. Each
+  non-clean stop is now reported by name with deterministic evidence — in the
+  `mak` CLI on stderr and in the interactive app's cascade summary — and counts
+  against `ok`, so the run exits non-zero instead of returning the last
+  successful wave as if the work had finished.
+- `Session.cascade_state_fingerprint()`, `.cascade_history()`, and
+  `.remember_cascade_state()`, the session-side API behind stall and oscillation
+  detection. A state is remembered only once a concrete repair plan is about to
+  run, so a declined wave does not poison a later recovery.
+- 19 new tests across cascade control flow, prospective repair validation, plan
+  review rendering, and crash recovery.
+
+### Changed
+- `install_plan()` accepts an optional `objective=` keyword so a caller that
+  bypasses the planner can still supply the durable repair context.
+- `CrossModuleDefect` gained `subject` and `site` fields plus `exact_key` and
+  `family_key` properties. `site` identifies the syntactic location of an import
+  or call and survives a name substitution there, which is what makes
+  "a different wrong name in the same place" detectable as a non-repair.
+- A clean finish and the wave ceiling still get one final confirmation pass; the
+  other stop paths now retain the batch that forced the stop, so `unresolved`
+  names what was actually outstanding at that moment.
+
 ## [0.9.0b] — 2026-09-21
 
 ### Fixed
