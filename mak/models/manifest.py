@@ -21,13 +21,23 @@ from pathlib import Path
 from mak.config import user_config_dir
 from mak.models.catalog import ModelEntry
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
-# The schema this one replaces. v1 blocks were keyed by *provider*; v2 keys them
-# by *endpoint id*. For the three built-in providers those names are identical,
-# so migration is a rename of the outer key and nothing else — and a user who
-# upgrades keeps every cached model instead of paying a refetch.
-PREVIOUS_SCHEMA_VERSION = 1
+# The schemas this one replaces, all of which load without a refetch.
+#
+# v1 blocks were keyed by *provider*; v2 keys them by *endpoint id*. For the
+# three built-in providers those names are identical, so that migration is a
+# rename of the outer key and nothing else.
+#
+# v3 (Wave 24) adds per-entry ``supported_parameters``. A v1 or v2 record simply
+# has no such key, which ``ModelEntry.from_dict`` reads as *unknown* — the
+# tri-state's whole purpose. So the migration is a no-op on the data and a
+# user who upgrades keeps every cached model; the next refresh fills the
+# capability field in.
+SUPPORTED_SCHEMA_VERSIONS: frozenset[int] = frozenset({1, 2, 3})
+
+# Kept as the name earlier code imported.
+PREVIOUS_SCHEMA_VERSION = 2
 
 # Scheduled refresh ticks: the 1st and the 15th of each month.
 REFRESH_DAYS: tuple[int, ...] = (1, 15)
@@ -104,7 +114,7 @@ def load_manifest(path: Path | None = None) -> Manifest:
     if not isinstance(raw, dict):
         return Manifest()
     version = raw.get("schema_version")
-    if version not in (SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION):
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
         # A future or unknown schema is treated as no cache: the seed still
         # works, and the next refresh rewrites the file in the current shape.
         return Manifest()

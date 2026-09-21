@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -55,6 +56,62 @@ def _now() -> datetime:
 def refresh_disabled_by_env() -> bool:
     """Return True when ``MAK_NO_MODEL_REFRESH`` opts out of auto refresh."""
     return os.environ.get(NO_REFRESH_ENV, "").strip().lower() in _TRUE_STRINGS
+
+
+@dataclass(frozen=True, slots=True)
+class ReportedCapabilities:
+    """What each endpoint's catalog reports about its models' parameters.
+
+    The one input Wave 24 needs from the model layer at composition time, and
+    deliberately the *narrowest* one: a read-only lookup from
+    ``(endpoint id, exact model id)`` to the reported parameter set, with the
+    tri-state intact. The composition root builds it and hands it to
+    ``mak.bootstrap.build_registry``; no adapter and no adapter factory ever
+    touches the process-wide model registry or the disk.
+
+    Keys use the **exact** model id. Wave 24 measured
+    ``inclusionai/ling-3.0-flash-vl`` reporting full structured-output support
+    and ``inclusionai/ling-3.0-flash-vl:free`` reporting none, so canonicalizing
+    a variant suffix away would attribute one product's capabilities to another.
+    """
+
+    by_model: Mapping[tuple[str, str], frozenset[str] | None] = field(
+        default_factory=dict
+    )
+
+    def for_model(self, endpoint_id: str, model_id: str) -> frozenset[str] | None:
+        """Return the reported parameters for one pair, or None if unknown.
+
+        ``None`` covers both "this pair is not in the catalog" and "the catalog
+        has it but the service published no capability metadata". Both mean
+        *discover it at runtime*, which is the safe answer for the many
+        endpoints whose ``/models`` route returns bare ids.
+        """
+        return self.by_model.get((endpoint_id, model_id))
+
+    @classmethod
+    def from_entries(cls, entries: Sequence[ModelEntry]) -> ReportedCapabilities:
+        """Build a lookup from catalog entries."""
+        return cls(
+            by_model={
+                (entry.endpoint_id, entry.model_id): entry.supported_parameters
+                for entry in entries
+            }
+        )
+
+    @classmethod
+    def load(cls) -> ReportedCapabilities:
+        """Build a lookup from the on-disk catalog, tolerating any failure.
+
+        Total by design, like every other read of the manifest: capability
+        seeding is an optimisation that saves a wasted request, never a
+        dependency. A missing, corrupt or unreadable cache yields an empty
+        lookup and every pair falls back to runtime discovery.
+        """
+        try:
+            return cls.from_entries(ModelRegistry().all_models())
+        except Exception:  # noqa: BLE001 - seeding is an optimisation, not a need
+            return cls()
 
 
 class ModelRegistry:

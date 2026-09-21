@@ -31,6 +31,7 @@ from mak.endpoints.types import (
     HealthPolicy,
     Location,
     ModelDiscovery,
+    ProviderRouting,
     StructuredOutput,
     TokenParameter,
     Transport,
@@ -97,6 +98,10 @@ class ResolvedEndpoint:
     health_check: HealthPolicy
     structured_output: StructuredOutput
     token_parameter: TokenParameter
+    # Which provider-routing extension, if any, this endpoint's request body
+    # may carry. Decided here from the profile so the adapter never has to ask
+    # "is this OpenRouter?" — a question a hostname cannot answer.
+    provider_routing: ProviderRouting = ProviderRouting.NONE
     api_key_env: str | None = None
     api_key: str | None = None
     headers: tuple[tuple[str, str], ...] = field(default_factory=tuple)
@@ -267,6 +272,14 @@ def resolve_endpoint(
             endpoint.token_parameter,
             profile.token_parameter if profile else None,
             token_d,
+        ),
+        provider_routing=_pick(
+            endpoint.provider_routing,
+            profile.provider_routing if profile else None,
+            # No transport default: a routing extension is a property of one
+            # named service, so an endpoint with no profile claiming it sends
+            # standard fields only.
+            ProviderRouting.NONE,
         ),
         api_key_env=endpoint.api_key_env,
         api_key=api_key or None,

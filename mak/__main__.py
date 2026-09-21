@@ -61,6 +61,7 @@ from mak.execution_result import ExecutionResult
 from mak.git_integration.git import GitHelper
 from mak.lock_manager.lock_table import LockTable
 from mak.lock_manager.project_lease import ProjectLease
+from mak.models.registry import ReportedCapabilities
 from mak.node_store.store import NodeStore
 from mak.planner.llm import build_planner_llm
 from mak.planner.planner import Planner
@@ -395,7 +396,16 @@ def build_session(
     # Resolve once and pass the roster down, so the registry, the pool caps and
     # the preflight cannot disagree about what is configured.
     roster = resolved_agents(config)
-    registry = build_registry(config, sandbox=sandbox, agents=roster)
+    # The endpoint's own published capability data, read once here rather than
+    # inside an adapter factory. It lets an agent skip a reply format its model
+    # has already said it cannot serve, instead of learning that by being
+    # refused once per task.
+    registry = build_registry(
+        config,
+        sandbox=sandbox,
+        agents=roster,
+        reported=ReportedCapabilities.load(),
+    )
     # Health preflight: verify each configured agent is usable *before* dispatch,
     # so a missing CLI binary or absent API key surfaces now instead of as a
     # mid-run failure or a long timeout. The healthy set becomes the distribution

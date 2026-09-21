@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from mak.agent_runner.adapters.base_adapter import AgentAdapter
@@ -60,8 +62,12 @@ from mak.core.types import TaskBundle, TaskResult
 from mak.endpoints.capabilities import (
     STRUCTURED_OUTPUT_LADDER,
     CapabilityCache,
+    Discovery,
+    rung_is_reported,
     rungs_from,
+    start_rung_for,
 )
+from mak.endpoints.error_classification import classify_rejection
 from mak.endpoints.health import NOT_PROBED, classify_failure
 
 _LOG = logging.getLogger(__name__)
@@ -103,26 +109,11 @@ HEALTH_NONE = "none"
 # resolved policy explicitly, so this value never decides anything in production.
 HEALTH_AUTO = "auto"
 
-# Markers that identify a rejection of the *response format* specifically.
-# Deliberately narrow: the previous set included bare "unsupported" and "not
-# supported", which match plenty of unrelated 4xx — an unsupported *model*, an
-# unsupported parameter, an unsupported region — and every one of those was
-# being answered by silently retrying with a weaker output contract instead of
-# surfacing the real error.
-_FORMAT_REJECTION_MARKERS = (
-    "response_format",
-    "json_schema",
-    "json mode",
-    # OpenRouter preserves this wording from some upstream providers (notably
-    # Novita). It names the rejected capability without echoing the request's
-    # response_format field or the specific JSON-schema rung.
-    "structured outputs",
-)
-
-# A format rejection is a client error about the request body. A 5xx is the
-# server failing, a 429 is quota, and neither is answered by asking for a looser
-# reply shape.
-_FORMAT_REJECTION_STATUSES = frozenset({400, 422})
+# Provider-routing policies, mirroring ``mak.endpoints.types.ProviderRouting``
+# as plain strings for the same reason the token names above are; the contract
+# test pins them together.
+ROUTING_NONE = "none"
+ROUTING_OPENROUTER = "openrouter"
 
 _JSON_SCHEMA_NAME = "task_result"
 
@@ -144,23 +135,18 @@ _SYSTEM_PROMPT = (
 def _is_format_rejection(exc: Exception) -> bool:
     """Whether an SDK error is verifiably "I do not support that reply format".
 
-    Requires **both** a client-error status and a marker naming the response
-    format. Substring matching alone was answering unrelated 400s by retrying
-    with a weaker output contract, which turned a clear provider error — a
-    model that does not exist, a parameter that is not allowed — into a
-    confusing second failure one rung down.
+    Kept as a module-level function because Wave 22's suite and third-party
+    code both call it. The judgment itself now lives in
+    ``mak.endpoints.error_classification``, which parses the provider's
+    structured error body instead of grepping ``str(exc)`` for a tuple of
+    literal spellings.
 
-    An exception carrying no status is *not* treated as a format rejection: a
-    transport error has no opinion about the request body.
+    That tuple was the 0.8.1 bug: OpenRouter refused the same model twice with
+    ``structured outputs`` and ``structured-outputs``, and only the first
+    spelling was listed. Extending it was never going to work — the sentence is
+    written by whichever upstream provider OpenRouter picked.
     """
-    status = getattr(exc, "status_code", None)
-    if not isinstance(status, int):
-        response = getattr(exc, "response", None)
-        status = getattr(response, "status_code", None)
-    if status not in _FORMAT_REJECTION_STATUSES:
-        return False
-    text = str(exc).lower()
-    return any(marker in text for marker in _FORMAT_REJECTION_MARKERS)
+    return classify_rejection(exc).is_format_rejection
 
 
 class OpenAiCompatibleAdapter(AgentAdapter):
@@ -182,6 +168,7 @@ class OpenAiCompatibleAdapter(AgentAdapter):
         structured_output: str | None = None,
         repair_attempts: int | None = None,
         token_parameter: str = TOKEN_PARAM_AUTO,
+        provider_routing: str = ROUTING_NONE,
         headers: tuple[tuple[str, str], ...] = (),
         endpoint_id: str = "",
         endpoint_name: str = "",
@@ -207,6 +194,11 @@ class OpenAiCompatibleAdapter(AgentAdapter):
         # Which output-cap field name this endpoint accepts. Resolved upstream
         # from the endpoint's profile; ``auto`` keeps the historical rule.
         self.token_parameter = token_parameter
+        # Whether this endpoint's body may carry a provider-routing extension.
+        # Resolved upstream from the profile, never from the URL: a user can
+        # proxy OpenRouter or point a custom endpoint at the same host, and a
+        # hostname check gives the wrong answer in both cases.
+        self.provider_routing = provider_routing
         # Extra request headers, already resolved to literal values with any
         # unset secret dropped. Names only ever reach status output and logs.
         self.headers = headers
@@ -302,8 +294,43 @@ class OpenAiCompatibleAdapter(AgentAdapter):
             )
         return self.token_parameter
 
-    def _create(self, client: Any, messages: Messages, mode: str) -> Any:
-        """Make one Chat Completions call in ``mode``."""
+    def _routing_guard(self, mode: str, reported: frozenset[str] | None) -> bool:
+        """Whether to ask OpenRouter to route only to a capable provider.
+
+        Three conditions, all required:
+
+        * the endpoint's profile says it understands the extension, so the
+          ``provider`` object never reaches OpenAI, NVIDIA, DeepSeek, Z.ai,
+          vLLM, llama.cpp or a custom endpoint;
+        * the rung actually sends a ``response_format``, since there is nothing
+          to require on the prompt-only rung;
+        * the catalog **positively confirms** the parameter backing this rung.
+
+        The third condition is the one that is easy to get wrong. The guard
+        rejects by *routing*, so when it filters every provider away OpenRouter
+        answers 404 — outside the 400/422 window a format rejection lives in.
+        Sent on a model MAK knows nothing about, it would therefore convert a
+        recoverable provider rejection into a hard failure the ladder cannot
+        descend from, which is strictly worse than not sending it. Sent only
+        where the catalog says it will hold, it keeps routing off an incapable
+        sibling provider and cannot manufacture that 404.
+        """
+        if self.provider_routing != ROUTING_OPENROUTER:
+            return False
+        if self._response_format(mode) is None:
+            return False
+        return rung_is_reported(mode, reported)
+
+    def _create(
+        self, client: Any, messages: Messages, mode: str, *, guard: bool = False
+    ) -> Any:
+        """Make one Chat Completions call in ``mode``.
+
+        ``guard`` adds OpenRouter's ``provider.require_parameters`` through the
+        SDK's ``extra_body``, which is how a documented vendor extension is
+        sent without adopting a second SDK or loosening the typing of the
+        ordinary OpenAI parameters beside it.
+        """
         extra: dict[str, Any] = {}
         field = self._token_field()
         if self.max_tokens is not None and field is not None:
@@ -311,48 +338,75 @@ class OpenAiCompatibleAdapter(AgentAdapter):
         response_format = self._response_format(mode)
         if response_format is not None:
             extra["response_format"] = response_format
+        if guard:
+            extra["extra_body"] = {"provider": {"require_parameters": True}}
         return client.chat.completions.create(
             model=self.model,
             messages=messages,
             **extra,
         )
 
-    def _starting_rungs(self) -> tuple[str, ...]:
-        """Return the structured-output modes to try, best first.
-
-        A cached mode for this endpoint/model pair wins outright: the session
-        has already paid to discover it, and paying again on every task is the
-        cost this cache exists to remove.
+    def _configured_rungs(self) -> tuple[str, ...]:
+        """Return the descent path the user's own configuration allows.
 
         ``auto`` walks the full ladder from ``json_schema`` down. An explicitly
         named mode walks from itself down, and never above — asking for a
         *stronger* contract than the user configured would ignore a deliberate
-        choice.
+        choice, and is the rule that keeps catalog seeding and another agent's
+        discovery from silently re-enabling a mode the user switched off.
         """
-        cached = (
-            self._capabilities.structured_output(self.endpoint_id, self.model)
-            if self._capabilities is not None
-            else None
-        )
-        if cached is not None:
-            return (cached,)
         if self.structured_output == _AUTO_STRUCTURED_OUTPUT:
             return rungs_from(STRUCTURED_OUTPUT_LADDER[0])
         return rungs_from(self.structured_output)
 
+    def _rungs_for(self, discovery: Discovery) -> tuple[str, ...]:
+        """Return the modes to try for this dispatch, best first.
+
+        Three sources of evidence, in decreasing authority:
+
+        1. **A proven mode** — this session made a successful call in it, or
+           waited on the agent that did. It pins exactly: the session already
+           paid to discover it and paying again per task is the cost this cache
+           exists to remove.
+        2. **The endpoint's reported parameters** — a claim from its ``/models``
+           listing. It lowers the *starting* rung and leaves descent below
+           available, because a claim is not a proof. This is what turns the
+           incident model from three failing calls per task into one working
+           one, before any call is made.
+        3. **Configuration alone** — the historical bounded probe ladder, which
+           is correct for the many endpoints that publish no capability data.
+
+        Both (1) and (2) are clamped to what configuration allows, so a mode
+        learned for another agent on the same pair can never raise this agent
+        above the ceiling its own ``structured_output`` set.
+        """
+        allowed = self._configured_rungs()
+        if discovery.mode is not None and discovery.mode in allowed:
+            return (discovery.mode,)
+        seeded = start_rung_for(discovery.reported)
+        if seeded is not None and seeded in allowed:
+            return rungs_from(seeded)
+        return allowed
+
     def send(self, prompt: str) -> str:
         """Call Chat Completions and return the decodable result JSON.
 
-        Two bounded recoveries wrap the call:
+        Three bounded recoveries wrap the call:
 
         - a server that rejects the requested ``response_format`` steps **all
           the way** down the ladder (``json_schema`` → ``json_object`` →
           ``none``) rather than once. A single downgrade made prompt-only JSON
           unreachable from the top rung, so an endpoint supporting neither
           schema nor object mode failed every task;
+        - a request whose OpenRouter routing guard left no eligible provider
+          retries the *same* rung once without the guard, rather than descending.
+          The guard is a routing preference, not a capability fact, and a model
+          may well serve a rung its aggregated metadata failed to promise;
         - a reply that arrives but cannot be decoded gets ``repair_attempts``
           short follow-up turns rather than a whole-bundle re-dispatch.
 
+        The whole ladder runs under a single-flight lease, so four agents
+        starting together pay for one discovery between them instead of four.
         The winning rung is recorded in the session's capability cache, so the
         next task starts where this one finished instead of rediscovering it.
         """
@@ -361,36 +415,76 @@ class OpenAiCompatibleAdapter(AgentAdapter):
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
-        rungs = self._starting_rungs()
 
-        def call(msgs: Messages) -> Any:
-            last: Exception | None = None
-            for index, mode in enumerate(rungs):
-                try:
-                    response = self._create(client, msgs, mode)
-                except Exception as exc:
-                    # Only a verified format rejection descends, and only while
-                    # a lower rung exists. Anything else is the provider's real
-                    # answer and is raised unchanged.
-                    if index + 1 >= len(rungs) or not _is_format_rejection(exc):
-                        raise
-                    last = exc
-                    continue
-                if last is not None:
-                    self._note_downgrade(mode)
-                self._remember(mode)
-                return response
-            raise AgentError(  # pragma: no cover - the loop always returns or raises
-                "structured-output ladder exhausted without an outcome"
+        with self._discovering() as discovery:
+            rungs = self._rungs_for(discovery)
+
+            def call(msgs: Messages) -> Any:
+                return self._walk(client, msgs, rungs, discovery.reported)
+
+            return repair_loop(
+                messages,
+                call=call,
+                read_meta=self._read_meta,
+                extract=self._extract_content,
+                follow_up=_follow_up,
+                repair_attempts=self.repair_attempts,
             )
 
-        return repair_loop(
-            messages,
-            call=call,
-            read_meta=self._read_meta,
-            extract=self._extract_content,
-            follow_up=_follow_up,
-            repair_attempts=self.repair_attempts,
+    @contextmanager
+    def _discovering(self) -> Iterator[Discovery]:
+        """Hold a single-flight discovery lease, or a null one with no cache.
+
+        A bare construction in a test has no capability cache, and must still
+        work: it simply discovers every time, which is what "no memory" means.
+        """
+        if self._capabilities is None:
+            yield Discovery(owned=True)
+            return
+        with self._capabilities.discovering(self.endpoint_id, self.model) as lease:
+            yield lease
+
+    def _walk(
+        self,
+        client: Any,
+        msgs: Messages,
+        rungs: tuple[str, ...],
+        reported: frozenset[str] | None,
+    ) -> Any:
+        """Walk the ladder once, returning the first response that comes back.
+
+        Only a *verified* rejection moves, and only while a lower rung exists.
+        Anything else — an auth failure, a missing model, a quota breach, an
+        invalid schema MAK authored, a 5xx, a transport error — is the
+        provider's real answer and is raised unchanged. Answering those by
+        asking more quietly is how one clear error used to become a confusing
+        second one a rung down.
+        """
+        descended = False
+        for index, mode in enumerate(rungs):
+            guard = self._routing_guard(mode, reported)
+            for attempt_guard in ((True, False) if guard else (False,)):
+                try:
+                    response = self._create(
+                        client, msgs, mode, guard=attempt_guard
+                    )
+                except Exception as exc:
+                    analysis = classify_rejection(exc)
+                    if attempt_guard and analysis.is_routing_rejection:
+                        # MAK's own guard excluded every provider. Drop it and
+                        # ask the same rung plainly before giving up on it.
+                        self._note_routing_retry(mode, analysis.reason)
+                        continue
+                    if index + 1 >= len(rungs) or not analysis.is_format_rejection:
+                        raise
+                    descended = True
+                    break
+                if descended:
+                    self._note_rung(mode, "runtime_rejection")
+                self._remember(mode)
+                return response
+        raise AgentError(  # pragma: no cover - the loop always returns or raises
+            "structured-output ladder exhausted without an outcome"
         )
 
     def _remember(self, mode: str) -> None:
@@ -400,22 +494,58 @@ class OpenAiCompatibleAdapter(AgentAdapter):
                 self.endpoint_id, self.model, mode
             )
 
-    def _note_downgrade(self, mode: str) -> None:
-        """Log a descent once per endpoint/model pair.
+    def _note_rung(self, mode: str, evidence: str) -> None:
+        """Log the selected rung once per endpoint/model pair, with its source.
 
-        Deliberately carries no response body: a provider error body can echo
-        request headers, and this line goes to a log file the user may share.
+        ``evidence`` is ``catalog`` when the endpoint's own model listing ruled
+        the higher rungs out before any call, and ``runtime_rejection`` when the
+        provider refused them. The distinction is the first thing worth knowing
+        when a user asks why their model is not getting schema enforcement:
+        one is a published fact they can look up, the other is a discovery that
+        may be stale by tomorrow.
+
+        Carries the endpoint id and the exact model id and **nothing else**. No
+        response body, no headers, no prompt content, no key: a provider error
+        body can echo any of those, and this line goes to a log file the user
+        may paste into an issue.
         """
         if self._capabilities is None:
             return
         if not self._capabilities.should_announce(self.endpoint_id, self.model):
             return
         _LOG.info(
-            "%s does not support the requested reply format for %s; "
-            "using '%s' for the rest of this session",
+            "%s: '%s' will use reply format '%s' for the rest of this session "
+            "(evidence: %s)",
             self.endpoint_name,
             self.model,
             mode,
+            evidence,
+        )
+
+    def _note_downgrade(self, mode: str) -> None:
+        """Log a descent once per endpoint/model pair.
+
+        Retained as the name Wave 22 introduced; ``_note_rung`` supersedes it
+        and records *why* the rung was chosen as well as which it was.
+        """
+        self._note_rung(mode, "runtime_rejection")
+
+    def _note_routing_retry(self, mode: str, reason: str) -> None:
+        """Log that the routing guard was dropped for one request.
+
+        Debug rather than info: it is a normal, self-healing consequence of
+        OpenRouter's aggregated model metadata disagreeing with the endpoint it
+        actually picked, and it costs one extra request, not a capability.
+
+        ``reason`` has already been redacted and bounded by the classifier.
+        """
+        _LOG.debug(
+            "%s: '%s' had no provider accepting the parameters for reply "
+            "format '%s'; retrying without the routing guard (%s)",
+            self.endpoint_name,
+            self.model,
+            mode,
+            reason,
         )
 
     def _read_meta(self, response: Any) -> ResponseMeta:

@@ -85,6 +85,11 @@ class ModelEntry:
     retired: bool = False
     endpoint_id: str = ""
     evaluated: bool = True
+    # Request parameters this endpoint reports for this exact model id.
+    # Tri-state (Wave 24): None = the service published no capability metadata,
+    # frozenset() = it published an empty list, non-empty = the reported set.
+    # See ``mak.models.providers.FetchedModel`` for why a boolean is wrong.
+    supported_parameters: frozenset[str] | None = None
 
     def __post_init__(self) -> None:
         """Default the endpoint id to the provider name for built-in entries."""
@@ -135,8 +140,14 @@ class ModelEntry:
         provider on load (see :meth:`from_dict`), so a provider later added to
         the curated set upgrades every cached entry it already has instead of
         keeping a stale ``false`` until the next refetch.
+
+        ``supported_parameters`` is written as a **sorted list** so the
+        manifest is byte-stable across runs, and is **omitted entirely** when
+        unknown. Writing ``null`` would work, but omission is what makes an
+        older manifest and a newly-written one agree on the same meaning for
+        the same absence.
         """
-        return {
+        payload: dict[str, Any] = {
             "provider": self.provider,
             "endpoint_id": self.endpoint_id,
             "model_id": self.model_id,
@@ -144,6 +155,9 @@ class ModelEntry:
             "context_window": self.context_window,
             "max_output": self.max_output,
         }
+        if self.supported_parameters is not None:
+            payload["supported_parameters"] = sorted(self.supported_parameters)
+        return payload
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> ModelEntry:
@@ -163,7 +177,23 @@ class ModelEntry:
             source=str(raw.get("source", "seed")),
             endpoint_id=str(raw.get("endpoint_id") or provider),
             evaluated=provider in PROVIDER_KEY_ENV,
+            supported_parameters=_opt_params(raw.get("supported_parameters")),
         )
+
+
+def _opt_params(value: object) -> frozenset[str] | None:
+    """Read a reported-parameter list, preserving unknown vs. empty.
+
+    A missing key and an explicit ``null`` both mean *unknown* — which is what
+    every schema-v1 and v2 record has, so they migrate without a refetch and
+    without pretending the service said anything. A list (even an empty one) is
+    a report and is kept as such.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return frozenset(str(item) for item in value)
+    return None
 
 
 def _opt_int(value: object) -> int | None:

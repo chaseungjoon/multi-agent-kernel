@@ -19,7 +19,7 @@ Field names below are taken from the installed SDKs, not guessed:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -37,12 +37,27 @@ class ModelFetchError(MakError):
 
 @dataclass(frozen=True, slots=True)
 class FetchedModel:
-    """Raw facts about one model, as reported by its provider."""
+    """Raw facts about one model, as reported by its provider.
+
+    ``supported_parameters`` is **tri-state**, and the distinction is
+    load-bearing (Wave 24):
+
+    * ``None`` — this provider published no capability metadata. Anthropic,
+      OpenAI and Gemini never do, and most OpenAI-compatible ``/models``
+      implementations return bare ids. Runtime negotiation is the only source
+      of truth there, so nothing is assumed.
+    * ``frozenset()`` — the field was published and was empty.
+    * a non-empty set — the parameters reported for this **exact** model id.
+
+    A boolean would conflate "known unsupported" with "unknown" and would
+    silently disable structured output for every endpoint that lists ids only.
+    """
 
     model_id: str
     display_name: str = ""
     context_window: int | None = None
     max_output: int | None = None
+    supported_parameters: frozenset[str] | None = None
 
 
 class ModelSource(Protocol):
@@ -55,6 +70,34 @@ class ModelSource(Protocol):
     ) -> list[FetchedModel]:
         """Return the provider's current models, or raise ``ModelFetchError``."""
         ...
+
+
+def reported_parameters(model: Any) -> frozenset[str] | None:
+    """Return a model's reported request parameters, or None if it reported none.
+
+    The one place any SDK-specific knowledge of this field lives. OpenRouter
+    publishes ``supported_parameters`` on every ``/models`` row, and the openai
+    SDK — which types ``Model`` with four fields and none of them this one —
+    keeps unknown keys as pydantic extras. Verified against openai 3.16.2:
+    the value is reachable both through ``model_extra`` and as an attribute.
+
+    ``model_extra`` is preferred because it is unambiguous: were a future SDK
+    to add a real field of this name with a different type, reading extras
+    keeps MAK looking at the server's own value.
+
+    Anything that is not a list of strings returns ``None`` — "the service did
+    not report this" — rather than an empty set, because an empty set is itself
+    a meaningful report (see :class:`FetchedModel`).
+    """
+    extra = getattr(model, "model_extra", None)
+    raw: Any = None
+    if isinstance(extra, dict) and "supported_parameters" in extra:
+        raw = extra["supported_parameters"]
+    else:
+        raw = getattr(model, "supported_parameters", None)
+    if raw is None or isinstance(raw, (str, bytes)) or not isinstance(raw, Iterable):
+        return None
+    return frozenset(str(item) for item in raw if isinstance(item, str))
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -227,6 +270,10 @@ class OpenAiCompatibleSource:
                     # A few compatible services do return a friendly name; most
                     # do not, and the id is then the honest label.
                     display_name=str(getattr(m, "name", "") or ""),
+                    # Capability metadata was previously discarded here, which
+                    # is why MAK could only learn "this model refuses schemas"
+                    # by being refused. OpenRouter has published it all along.
+                    supported_parameters=reported_parameters(m),
                 )
                 for m in client.models.list()
                 if getattr(m, "id", None)

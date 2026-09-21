@@ -29,6 +29,7 @@ from mak.endpoints.types import (
     HealthPolicy,
     Location,
     ModelDiscovery,
+    ProviderRouting,
     StructuredOutput,
     TokenParameter,
     Transport,
@@ -75,6 +76,7 @@ class EndpointProfile:
     health_check: HealthPolicy | None = None
     structured_output: StructuredOutput | None = None
     token_parameter: TokenParameter | None = None
+    provider_routing: ProviderRouting | None = None
     headers: tuple[EndpointHeaderConfig, ...] = field(default_factory=tuple)
     # Shown in the wizard before the URL is chosen. Z.ai's two plans bill
     # different balances, so picking the wrong one is a money question, not a
@@ -100,6 +102,7 @@ class EndpointProfile:
             health_check=self.health_check,
             structured_output=self.structured_output,
             token_parameter=self.token_parameter,
+            provider_routing=self.provider_routing,
             headers=self.headers,
         )
 
@@ -132,6 +135,11 @@ BUILTIN_PROFILES: tuple[EndpointProfile, ...] = (
         # account, so the ladder has to discover it rather than assume it.
         structured_output=StructuredOutput.AUTO,
         token_parameter=TokenParameter.MAX_TOKENS,
+        # The one profile that gets it. OpenRouter documents
+        # ``provider.require_parameters``, and Wave 24 measured what happens
+        # without it: a model id whose free route cannot honor the requested
+        # format is served anyway and refuses at the provider.
+        provider_routing=ProviderRouting.OPENROUTER,
         note=(
             "OpenRouter routes to many upstream models; structured-output and "
             "usage accuracy vary by model. Attribution headers are optional."

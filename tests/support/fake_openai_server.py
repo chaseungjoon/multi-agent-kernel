@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
@@ -33,6 +34,18 @@ DEFAULT_RESULT: dict[str, Any] = {
 }
 
 
+# The exact upstream sentences OpenRouter relayed from Novita during the Wave 24
+# incident, one per rung. Two spellings of one refusal — a space and a hyphen —
+# which is precisely what defeated the literal-substring matching in 0.8.1.
+NOVITA_REFUSALS: dict[str, str] = {
+    "json_schema": "model features structured outputs not support",
+    "json_object": (
+        "model: inclusionai/ling-3.0-flash-vl does not support feature: "
+        "structured-outputs"
+    ),
+}
+
+
 @dataclass
 class Dialect:
     """How this fake server behaves, so one class covers every real shape.
@@ -41,6 +54,28 @@ class Dialect:
     with a 400 — the ladder's whole reason for existing. ``models`` of ``None``
     means the ``/models`` route does not exist, which is a real configuration
     and must not disqualify an endpoint from being used.
+
+    The OpenRouter fields (Wave 24) reproduce facts measured against the live
+    service, so a test can exercise them over real HTTP and the real SDK rather
+    than against a hand-written double of the SDK:
+
+    ``supported_parameters``
+        Published per model id on the ``/models`` route, exactly as OpenRouter
+        does. ``None`` omits the field, which is what every other compatible
+        service does and must keep meaning *unknown*.
+    ``openrouter_errors``
+        Wrap refusals in OpenRouter's real envelope — an outer "Provider
+        returned error" with the upstream sentence nested inside
+        ``error.metadata.raw`` as a JSON **string**. That nesting is the reason
+        reading the outer message was never enough.
+    ``require_parameters_404``
+        Answer a request carrying ``provider.require_parameters`` with the real
+        404 routing body when the model does not publish the parameter the
+        requested rung needs. Measured live: the guard fails by *routing*, with
+        a status outside the format window.
+    ``delay_seconds``
+        Hold the completion open, so a concurrency test can prove that three
+        waiting agents really did wait on one discovery rather than racing.
     """
 
     models: list[str] | None = field(default_factory=lambda: ["model-a", "model-b"])
@@ -48,6 +83,27 @@ class Dialect:
     require_auth: str | None = None
     chat_status: int = 200
     result: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_RESULT))
+    supported_parameters: dict[str, list[str]] | None = None
+    openrouter_errors: bool = False
+    require_parameters_404: bool = False
+    delay_seconds: float = 0.0
+    # Literal message contents to return, one per successful completion, in
+    # order; the last is reused once exhausted. This is how a test produces a
+    # reply that is *not* valid JSON — the failure mode prompt-only mode has to
+    # survive, since no server-side grammar is constraining the output there.
+    raw_contents: list[str] | None = None
+
+    def rung_parameter(self, response_format: str) -> str | None:
+        """Return the reported parameter a ``response_format`` type needs.
+
+        Mirrors ``mak.endpoints.capabilities.RUNG_PARAMETER``. Kept as a literal
+        here rather than imported, so the fake describes the *service's*
+        behaviour and a bug in MAK's table cannot make the fake agree with it.
+        """
+        return {
+            "json_schema": "structured_outputs",
+            "json_object": "response_format",
+        }.get(response_format)
 
 
 @dataclass
@@ -75,6 +131,23 @@ class Request:
         fmt = self.body.get("response_format")
         return str(fmt.get("type", "")) if isinstance(fmt, dict) else ""
 
+    @property
+    def provider_object(self) -> dict[str, Any]:
+        """Return the OpenRouter ``provider`` object sent, or an empty mapping.
+
+        The SDK folds ``extra_body`` into the top level of the JSON body, so
+        this is where a routing extension actually lands on the wire — which is
+        the only place worth asserting it, since "never sent to another
+        endpoint" is a claim about the request, not about MAK's intent.
+        """
+        provider = self.body.get("provider")
+        return provider if isinstance(provider, dict) else {}
+
+    @property
+    def require_parameters(self) -> bool:
+        """Whether this request asked for parameter-compatible routing."""
+        return self.provider_object.get("require_parameters") is True
+
 
 class FakeOpenAiServer:
     """A loopback HTTP server speaking enough of the OpenAI protocol to test.
@@ -85,6 +158,7 @@ class FakeOpenAiServer:
     def __init__(self, dialect: Dialect | None = None) -> None:
         self.dialect = dialect or Dialect()
         self.requests: list[Request] = []
+        self._content_index = 0
         self._lock = threading.Lock()
         self._server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -114,10 +188,7 @@ class FakeOpenAiServer:
                     200,
                     {
                         "object": "list",
-                        "data": [
-                            {"id": m, "object": "model"}
-                            for m in owner.dialect.models
-                        ],
+                        "data": [owner._model_row(m) for m in owner.dialect.models],
                     },
                 )
 
@@ -133,20 +204,27 @@ class FakeOpenAiServer:
                     return
                 fmt = body.get("response_format") or {}
                 requested = fmt.get("type") if isinstance(fmt, dict) else None
-                if requested in owner.dialect.reject_formats:
-                    owner._send(
-                        self,
-                        400,
-                        {
-                            "error": {
-                                "message": (
-                                    f"response_format '{requested}' is not "
-                                    "supported by this model"
-                                )
-                            }
-                        },
-                    )
+                model = str(body.get("model") or "")
+                provider = body.get("provider")
+                guarded = (
+                    isinstance(provider, dict)
+                    and provider.get("require_parameters") is True
+                )
+                # Routing runs *before* the provider sees anything, so a guard
+                # that excludes every route answers 404 and the upstream model
+                # is never consulted. Measured live against OpenRouter.
+                if (
+                    guarded
+                    and owner.dialect.require_parameters_404
+                    and not owner._publishes_rung(model, requested)
+                ):
+                    owner._send(self, 404, owner._routing_error())
                     return
+                if requested in owner.dialect.reject_formats:
+                    owner._send(self, 400, owner._format_error(requested))
+                    return
+                if owner.dialect.delay_seconds:
+                    time.sleep(owner.dialect.delay_seconds)
                 if owner.dialect.chat_status != 200:
                     owner._send(
                         self,
@@ -166,7 +244,7 @@ class FakeOpenAiServer:
                                 "finish_reason": "stop",
                                 "message": {
                                     "role": "assistant",
-                                    "content": json.dumps(owner.dialect.result),
+                                    "content": owner._next_content(),
                                 },
                             }
                         ],
@@ -210,6 +288,111 @@ class FakeOpenAiServer:
         """Return only the completion requests, in order."""
         with self._lock:
             return [r for r in self.requests if r.path.endswith("/chat/completions")]
+
+    def _next_content(self) -> str:
+        """Return the content for this completion, advancing any script.
+
+        Without a script this is the dialect's happy ``TaskResult``. With one,
+        each entry is returned in turn and the final entry repeats — so a test
+        can say "malformed, then valid" or "always malformed" without counting
+        the adapter's internal repair turns.
+        """
+        with self._lock:
+            script = self.dialect.raw_contents
+            if not script:
+                return json.dumps(self.dialect.result)
+            index = min(self._content_index, len(script) - 1)
+            self._content_index += 1
+            return script[index]
+
+    def _model_row(self, model_id: str) -> dict[str, Any]:
+        """Return one ``/models`` row, publishing capabilities when configured.
+
+        The field is **omitted** rather than sent empty when this dialect has
+        nothing to say about a model, because an absent field and an empty list
+        are different claims and MAK is required to treat them differently.
+        """
+        row: dict[str, Any] = {"id": model_id, "object": "model"}
+        published = self.dialect.supported_parameters
+        if published is not None and model_id in published:
+            row["supported_parameters"] = list(published[model_id])
+        return row
+
+    def _publishes_rung(self, model_id: str, response_format: str | None) -> bool:
+        """Whether this model publishes the parameter the rung needs.
+
+        A model with nothing published satisfies no routing filter, which is
+        what makes the guard's 404 reachable in a test.
+        """
+        if response_format is None:
+            return True
+        needed = self.dialect.rung_parameter(response_format)
+        if needed is None:
+            return True
+        published = (self.dialect.supported_parameters or {}).get(model_id)
+        return bool(published) and needed in published
+
+    def _routing_error(self) -> dict[str, Any]:
+        """Return OpenRouter's real "no eligible provider" body, verbatim.
+
+        Including ``failed_routing_step``, which is the machine-readable field
+        MAK classifies on — the prose is OpenRouter's to reword.
+        """
+        return {
+            "error": {
+                "message": (
+                    "No endpoints found that can handle the requested "
+                    "parameters. To learn more about provider routing, visit: "
+                    "https://openrouter.ai/docs/guides/routing/provider-selection"
+                ),
+                "code": 404,
+                "metadata": {
+                    "routing_funnel": [
+                        {"step": "Initial Endpoints", "endpoint_count": 1}
+                    ],
+                    "failed_routing_step": "Filter by Parameters",
+                },
+            }
+        }
+
+    def _format_error(self, requested: str | None) -> dict[str, Any]:
+        """Return a refusal of ``requested``, in this dialect's envelope.
+
+        An ordinary compatible server says so plainly. OpenRouter wraps the
+        upstream provider's sentence two levels down, inside a JSON *string* —
+        and that sentence differs per rung, which is the shape that broke the
+        literal matching this fake now guards against.
+        """
+        if not self.dialect.openrouter_errors:
+            return {
+                "error": {
+                    "message": (
+                        f"response_format '{requested}' is not supported by "
+                        "this model"
+                    )
+                }
+            }
+        upstream = NOVITA_REFUSALS.get(
+            str(requested), "model does not support that reply format"
+        )
+        return {
+            "error": {
+                "message": "Provider returned error",
+                "code": 400,
+                "metadata": {
+                    "raw": json.dumps(
+                        {
+                            "code": 400,
+                            "reason": "INVALID_REQUEST_BODY",
+                            "message": upstream,
+                            "metadata": {},
+                        }
+                    ),
+                    "provider_name": "Novita",
+                    "is_byok": False,
+                },
+            }
+        }
 
     def _record(self, handler: BaseHTTPRequestHandler, body: dict[str, Any]) -> None:
         with self._lock:

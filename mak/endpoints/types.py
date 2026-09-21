@@ -108,6 +108,29 @@ class StructuredOutput(StrEnum):
     NONE = "none"
 
 
+class ProviderRouting(StrEnum):
+    """Whether this endpoint understands a provider-routing request extension.
+
+    OpenRouter is a *router*: one model id can be served by a dozen upstream
+    providers whose capabilities differ, and it documents
+    ``provider.require_parameters`` so a client can say "only route to a
+    provider that honors the parameters I sent". No other compatible service
+    has that concept, and sending the ``provider`` object to one is at best
+    ignored and at worst a 400.
+
+    This is stated by a **profile**, never inferred from a hostname. A user can
+    proxy OpenRouter, rename the endpoint, or point a custom endpoint at the
+    same domain, and in every one of those cases a URL check gives the wrong
+    answer about what the request body may contain.
+
+    ``NONE`` is the default for every endpoint, so a new or custom endpoint
+    receives only standard OpenAI Chat Completions fields.
+    """
+
+    NONE = "none"
+    OPENROUTER = "openrouter"
+
+
 class TokenParameter(StrEnum):
     """Which output-cap field name this endpoint accepts.
 
@@ -244,6 +267,7 @@ class EndpointConfig:
     health_check: HealthPolicy | None = None
     structured_output: StructuredOutput | None = None
     token_parameter: TokenParameter | None = None
+    provider_routing: ProviderRouting | None = None
     headers: tuple[EndpointHeaderConfig, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:

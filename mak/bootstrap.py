@@ -37,6 +37,7 @@ from mak.endpoints.resolution import ResolvedAgentConfig, resolve_endpoints
 from mak.endpoints.store import load_user_endpoints, merge_endpoints
 from mak.local.discovery import LOCAL_BASE_URL_ENV
 from mak.local.ollama_client import DEFAULT_BASE_URL as OLLAMA_DEFAULT_BASE_URL
+from mak.models.registry import ReportedCapabilities
 
 # Agent types with a built, first-party API adapter — each takes ``model`` +
 # ``api_key`` kwargs. ``Callable[..., AgentAdapter]`` keeps the generic factory
@@ -372,6 +373,7 @@ def _api_factory(
             # base_url was set, which is wrong for every hosted compatible
             # service.
             options["token_parameter"] = endpoint.token_parameter.value
+            options["provider_routing"] = endpoint.provider_routing.value
             options["headers"] = endpoint.headers
             options["endpoint_id"] = endpoint.id
             options["endpoint_name"] = endpoint.display_name
@@ -433,11 +435,45 @@ def resolved_agents(
     )
 
 
+def seed_capabilities(
+    cache: CapabilityCache,
+    roster: tuple[ResolvedAgentConfig, ...],
+    reported: ReportedCapabilities,
+) -> None:
+    """Seed the session's capability cache from the model catalog.
+
+    Called once, before the first dispatch, so a capability the endpoint has
+    *already published* is honored without paying a rejected request to
+    rediscover it. The incident that motivated Wave 24 cost one failed provider
+    call per task for a fact that was sitting in OpenRouter's
+    ``/models`` response the whole time.
+
+    Only the reported parameter set is seeded — never a mode. Choosing the rung
+    from it is the adapter's job, because the adapter also knows the user's
+    configured ceiling and must never be pushed above it.
+
+    Pairs the catalog knows nothing about are skipped rather than recorded as
+    empty: "unknown" and "reported nothing" are different facts, and recording
+    the wrong one would disable structured output for every endpoint whose
+    ``/models`` route returns bare ids.
+    """
+    for agent in roster:
+        if agent.endpoint is None or agent.model is None:
+            continue
+        parameters = reported.for_model(agent.endpoint.id, agent.model)
+        if parameters is None:
+            continue
+        cache.record_reported_parameters(
+            agent.endpoint.id, agent.model, parameters
+        )
+
+
 def build_registry(
     config: MakConfig,
     *,
     sandbox: SandboxConfig | None = None,
     agents: tuple[ResolvedAgentConfig, ...] | None = None,
+    reported: ReportedCapabilities | None = None,
 ) -> AdapterRegistry:
     """Register a config-bound adapter factory for every configured agent.
 
@@ -450,6 +486,12 @@ def build_registry(
 
     ``agents`` accepts an already-resolved roster so a caller that has one (the
     composition root does) does not resolve twice.
+
+    ``reported`` is the model catalog's published capability data, injected
+    rather than read from disk here: this function stays pure, and a test can
+    state exactly what the catalog says without writing a manifest. Omitting it
+    means no seeding, which is the historical behavior — every pair is
+    discovered at runtime.
     """
     if not config.agents:
         raise ConfigError("no agents configured; cannot build an adapter registry")
@@ -458,6 +500,8 @@ def build_registry(
     # One cache per registry, so everything this run dispatches shares what it
     # learns and two sessions in one process never do.
     capabilities = CapabilityCache()
+    if reported is not None:
+        seed_capabilities(capabilities, roster, reported)
     for agent in roster:
         if agent.adapter_type in _API_ADAPTER_CLASSES:
             registry.register_factory(agent.id, _api_factory(agent, capabilities))
