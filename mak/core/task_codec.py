@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from mak.core.types import NodeId, SubTask
+from mak.core.types import NodeId, RepairObligation, SubTask
 
 
 def subtask_to_dict(task: SubTask) -> dict[str, object]:
@@ -44,6 +44,21 @@ def subtask_to_dict(task: SubTask) -> dict[str, object]:
         data["registry_keys"] = {
             str(k): list(v) for k, v in task.registry_keys.items()
         }
+    if task.repair_obligations:
+        data["repair_obligations"] = [
+            {
+                "kind": obligation.kind,
+                "file": obligation.file,
+                "defining_file": obligation.defining_file,
+                "detail": obligation.detail,
+                "exact_key": obligation.exact_key,
+                "family_key": obligation.family_key,
+                "subject": obligation.subject,
+                "site": obligation.site,
+                "required_provider_symbol": obligation.required_provider_symbol,
+            }
+            for obligation in task.repair_obligations
+        ]
     return data
 
 
@@ -66,6 +81,25 @@ def subtask_from_dict(raw: Mapping[str, object]) -> SubTask:
             NodeId(str(k)): [str(key) for key in _seq(v)]
             for k, v in _map(raw.get("registry_keys")).items()
         },
+        repair_obligations=tuple(
+            RepairObligation(
+                kind=str(item["kind"]),
+                file=str(item["file"]),
+                defining_file=str(item["defining_file"]),
+                detail=str(item["detail"]),
+                exact_key=str(item["exact_key"]),
+                family_key=str(item["family_key"]),
+                subject=str(item.get("subject", "")),
+                site=str(item.get("site", "")),
+                required_provider_symbol=(
+                    str(required)
+                    if (required := item.get("required_provider_symbol")) is not None
+                    else None
+                ),
+            )
+            for value in _seq(raw.get("repair_obligations"))
+            for item in [_map(value)]
+        ),
     )
 
 

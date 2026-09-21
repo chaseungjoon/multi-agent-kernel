@@ -299,6 +299,21 @@ def _show_cascade_state(console: Console, execution: ExecutionResult) -> None:
             "  [yellow]⚠ Cascade stopped at its wave limit with defects "
             "remaining.[/yellow]"
         )
+    if cascade.stalled:
+        console.print(
+            f"  [yellow]⚠ Cascade stopped without progress — "
+            f"{cascade.stop_reason}.[/yellow]"
+        )
+    if cascade.oscillating:
+        console.print(
+            f"  [yellow]⚠ Cascade stopped on an oscillation — "
+            f"{cascade.stop_reason}.[/yellow]"
+        )
+    if cascade.unrepairable:
+        console.print(
+            f"  [yellow]⚠ Cascade plan cannot satisfy its repair contract — "
+            f"{cascade.stop_reason}.[/yellow]"
+        )
     if cascade.unresolved:
         console.print(
             f"  [dim]Unresolved cascade defects: "

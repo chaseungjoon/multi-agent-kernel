@@ -82,6 +82,8 @@ def _check_class(
                 f"'{path}': {cls.name}.{method.name} overrides "
                 f"{base_cls.name}.{method.name} from '{base_file}' but {reason}"
             ),
+            subject=f"{cls.name}.{method.name}",
+            site=f"override:{cls.name}.{method.name}",
         ))
     return defects
 

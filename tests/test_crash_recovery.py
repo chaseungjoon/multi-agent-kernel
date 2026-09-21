@@ -127,6 +127,22 @@ class TestTaskGraphSurvivesCorruption:
         restored = Scheduler.from_persisted(path, LockTable(), _Runner(), _Registry())
         assert list(restored.dag.tasks) == ["t1"]
 
+    def test_objective_and_cascade_history_round_trip(self, tmp_path: Path) -> None:
+        path = tmp_path / "task_graph.json"
+        scheduler = _scheduler(path)
+        scheduler.annotations.update(
+            {
+                "objective": "embed every separated track",
+                "cascade_history": ["state-a", "state-b"],
+            }
+        )
+        scheduler.save()
+
+        restored = Scheduler.from_persisted(path, LockTable(), _Runner(), _Registry())
+
+        assert restored.annotations["objective"] == "embed every separated track"
+        assert restored.annotations["cascade_history"] == ["state-a", "state-b"]
+
 
 class TestNodeStoreSurvivesCorruption:
     """Fragments are the valuable part; a bad index is quarantined, not fatal."""
@@ -205,6 +221,31 @@ class TestRecoverDegradesGracefully:
         )
         session.recover()
         assert session.state is SessionState.PLANNED
+
+    def test_recover_restores_objective_and_cascade_history(
+        self, tmp_path: Path
+    ) -> None:
+        from mak.node_store.store import NodeStore as _Store
+        from tests.test_session import _session
+
+        mak_dir = tmp_path / ".mak"
+        mak_dir.mkdir()
+        scheduler = _scheduler(mak_dir / "task_graph.json")
+        scheduler.annotations.update(
+            {
+                "objective": "embed every separated track",
+                "cascade_history": ["state-a"],
+            }
+        )
+        scheduler.save()
+        session = _session(
+            tmp_path, runner=_Runner(), node_store=_Store(mak_dir / "node_store")
+        )
+
+        session.recover()
+
+        assert session._objective == "embed every separated track"
+        assert session.cascade_history() == ("state-a",)
 
 
 class TestWritesAreAtomic:

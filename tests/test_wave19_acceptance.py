@@ -694,6 +694,40 @@ class TestAggregateOutcome:
         )
         assert "declined" in console.export_text()
 
+    @pytest.mark.parametrize(
+        ("outcome", "expected"),
+        [
+            (
+                CascadeOutcome(stalled=True, stop_reason="same state"),
+                "without progress",
+            ),
+            (
+                CascadeOutcome(oscillating=True, stop_reason="A to B to A"),
+                "oscillation",
+            ),
+            (
+                CascadeOutcome(unrepairable=True, stop_reason="target removed"),
+                "repair contract",
+            ),
+        ],
+    )
+    def test_the_tui_front_end_names_kernel_stopped_cascades(
+        self, outcome: CascadeOutcome, expected: str
+    ) -> None:
+        from cli.ui import show_results
+        from rich.console import Console
+
+        from mak.teardown import TeardownResult
+
+        console = Console(record=True, width=100, force_terminal=False)
+        show_results(
+            console,
+            ExecutionResult(initial=_result(completed=("a",)), cascade=outcome),
+            TeardownResult(outcome=SuiteOutcome.PASSED),
+        )
+
+        assert expected in console.export_text()
+
 
 # ── 7. honest test status and a real push gate ───────────────────────────────
 

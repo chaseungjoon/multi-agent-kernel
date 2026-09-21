@@ -59,6 +59,23 @@ class CrossModuleDefect:
     file: str
     defining_file: str
     detail: str
+    # Structured identity for repair validation. ``subject`` is the concrete
+    # symbol named by this finding; ``site`` survives a name substitution at
+    # the same syntactic location.
+    subject: str = ""
+    site: str = ""
+
+    @property
+    def exact_key(self) -> str:
+        """Identity of this exact finding, including its concrete subject."""
+        return "\x1f".join(
+            (self.kind, self.file, self.defining_file, self.site, self.subject)
+        )
+
+    @property
+    def family_key(self) -> str:
+        """Identity of the defect site, ignoring a substituted subject."""
+        return "\x1f".join((self.kind, self.file, self.defining_file, self.site))
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +84,7 @@ class _Imported:
 
     defining_file: str
     original_name: str
+    site: str
 
 
 def check_cross_module_api(
@@ -116,7 +134,7 @@ def _resolve_from_imports(
         )
         if defining is None or defining == path:
             continue
-        for alias in node.names:
+        for index, alias in enumerate(node.names):
             if alias.name == "*":
                 continue
             submodule = resolve_module_file(
@@ -128,7 +146,11 @@ def _resolve_from_imports(
             )
             if submodule is not None:
                 continue  # the alias is a module, not a symbol in ``defining``
-            bindings[alias.asname or alias.name] = _Imported(defining, alias.name)
+            site = (
+                f"import:{module}:{getattr(node, 'lineno', 0)}:"
+                f"{getattr(node, 'col_offset', 0)}:{index}"
+            )
+            bindings[alias.asname or alias.name] = _Imported(defining, alias.name, site)
     return bindings
 
 
@@ -178,6 +200,8 @@ def _check_imports(
                 + (f" (bound locally as '{local_name}')"
                    if local_name != origin.original_name else "")
             ),
+            subject=origin.original_name,
+            site=origin.site,
         ))
     return defects
 
@@ -213,6 +237,8 @@ def _check_calls(
             detail=(
                 f"'{path}' calls '{name}' from '{defining_file}': {reason}"
             ),
+            subject=name,
+            site=f"call:{name}",
         ))
     return defects
 

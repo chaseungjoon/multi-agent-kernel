@@ -167,5 +167,7 @@ def check_new_cycles(
                 "still initialising. Move one import into the function that "
                 "uses it, or move the shared code into a third module."
             ),
+            subject=ring,
+            site=f"cycle:{ring}",
         ))
     return defects

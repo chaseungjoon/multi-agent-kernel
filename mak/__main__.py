@@ -629,7 +629,7 @@ def _report(execution: ExecutionResult, teardown: TeardownResult) -> int:
                 f"{_names(execution.blocked)}",
                 file=sys.stderr,
             )
-        # The three ways a cascade stops without finishing. Each used to be
+        # The ways a cascade stops without finishing. Each used to be
         # invisible: the loop returned its last successful result either way.
         if execution.cascade.declined:
             print(
@@ -640,6 +640,24 @@ def _report(execution: ExecutionResult, teardown: TeardownResult) -> int:
             print(
                 "mak: the cascade stopped at its wave limit with defects "
                 "remaining.",
+                file=sys.stderr,
+            )
+        if execution.cascade.stalled:
+            print(
+                f"mak: the cascade stopped without progress — "
+                f"{execution.cascade.stop_reason}.",
+                file=sys.stderr,
+            )
+        if execution.cascade.oscillating:
+            print(
+                f"mak: the cascade stopped on an oscillation — "
+                f"{execution.cascade.stop_reason}.",
+                file=sys.stderr,
+            )
+        if execution.cascade.unrepairable:
+            print(
+                f"mak: the cascade plan cannot satisfy its repair contract — "
+                f"{execution.cascade.stop_reason}.",
                 file=sys.stderr,
             )
         if execution.unresolved:

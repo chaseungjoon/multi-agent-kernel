@@ -70,7 +70,9 @@ write locks on and the kernel reassembles the file.
 Before dispatching the agents, the planner's proposed
 plan is cross-checked against the dependency graph. After a
 wave, MAK re-checks what it left behind and offers any fix-ups as another
-reviewable plan.
+reviewable plan. Generated repairs carry kernel-owned postconditions: MAK checks
+the prospective repository before committing them, and stops instead of asking
+again when a repair makes no progress or revisits an earlier broken state.
 
 ![](graphics/03-inside-the-kernel.png)
 

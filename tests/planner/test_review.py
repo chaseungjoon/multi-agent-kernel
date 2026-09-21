@@ -7,7 +7,7 @@ import json
 import pytest
 
 from mak.core.exceptions import PlanReviewAborted
-from mak.core.types import NodeId, SubTask
+from mak.core.types import NodeId, RepairObligation, SubTask
 from mak.planner.review import display_plan_for_review, render_plan
 from mak.planner.validation import PlanFinding
 
@@ -83,6 +83,26 @@ class TestRenderPlan:
         assert "✎ [b] added:" in text  # added edge
         assert "⚠ [a] target 'z'" in text  # advisory suggestion
         assert "candidates: z1, z2" in text
+
+    def test_repair_postcondition_is_visible(self) -> None:
+        obligation = RepairObligation(
+            kind="unresolved_import",
+            file="caller.py",
+            defining_file="provider.py",
+            detail="provider.py must define run_embedding",
+            exact_key="exact",
+            family_key="family",
+        )
+        plan = [
+            SubTask(
+                task_id="repair",
+                description="repair API agreement",
+                target_nodes=[NodeId("caller.py")],
+                repair_obligations=(obligation,),
+            )
+        ]
+
+        assert "must resolve=provider.py must define run_embedding" in render_plan(plan)
 
 
 class TestApprove:

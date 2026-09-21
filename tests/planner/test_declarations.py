@@ -9,7 +9,7 @@ import pytest
 
 from mak.core.exceptions import ContractError
 from mak.core.task_codec import subtask_from_dict, subtask_to_dict
-from mak.core.types import NodeId, SubTask
+from mak.core.types import NodeId, RepairObligation, SubTask
 from mak.planner.contracts import (
     contract_stub,
     implementation_mismatch,
@@ -195,7 +195,22 @@ class TestTaskGraphPersistence:
         assert restored.annotations == {"read_sets": {"t": {"x": 1}}}
 
     def test_codec_round_trip_and_defaults(self) -> None:
-        task = SubTask("t", "d", api_targets=[NodeId("a.py")], changes_api=True)
+        obligation = RepairObligation(
+            kind="unresolved_import",
+            file="a.py",
+            defining_file="b.py",
+            detail="missing name",
+            exact_key="exact",
+            family_key="family",
+            required_provider_symbol="missing",
+        )
+        task = SubTask(
+            "t",
+            "d",
+            api_targets=[NodeId("a.py")],
+            changes_api=True,
+            repair_obligations=(obligation,),
+        )
         assert subtask_from_dict(subtask_to_dict(task)) == task
         legacy = subtask_from_dict({"task_id": "x", "description": "y"})
         assert legacy == SubTask("x", "y")

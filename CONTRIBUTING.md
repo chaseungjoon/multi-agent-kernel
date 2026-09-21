@@ -2759,6 +2759,26 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   breakage shares one review flow. Both this and cascade cache their result
   per store `generation`, since the cascade loop asks twice for the same
   state.
+- **repair validity contracts** — a cross-module fix-up carries a tuple of
+  kernel-generated `RepairObligation`s. Each obligation records the finding's
+  exact identity and a stable *family* identity for its syntactic site; changing
+  `run_embedding` to another nonexistent name at the same import site therefore
+  does not count as progress. The fields are serialized with the task graph for
+  crash recovery, rendered during review, preserved when `_merge_fixups` folds
+  tasks together, and reattached after an edited review plan. An edited plan
+  that retains neither the caller nor the provider is rejected as unrepairable.
+  Before a repair commit, `_prospective_semantic_reasons` substitutes every
+  staged source into a whole-repository view and reruns the deterministic
+  cross-module checks; an unresolved obligation rolls the edit back before the
+  node-store transaction or git audit commit. The same predicate prevents
+  `no_changes_required` from closing a live repair. Ordinary caller edits also
+  cannot introduce a new cross-module defect against an untouched provider.
+  When an unresolved import points at a provider with no statically visible
+  surface, the provider becomes a writable target instead of inviting a
+  caller-only rename. The original user objective, whether supplied through
+  `plan()` or direct `install_plan(..., objective=...)`, is carried in scheduler
+  annotations and repeated in the repair description so the fix does not
+  optimize only for the latest diagnostic.
 - **optional heavy gates** (`mak/semantic/gates.py`, Wave 20, §5.2) — a fourth
   source of fix-up work, all off by default: a type-check diagnostic diff
   against a baseline taken at `initialize()` (`_take_gate_baseline`), impacted
@@ -2772,7 +2792,12 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
 - **the cascade loop itself** lives in `mak/cascade.py` (Wave 16), not in a front
   end. `run_cascade_waves(session, approve, announce=...)` drives detect → announce
   → approve → install → run until nothing remains, the approver declines, or
-  `max_waves` bounds a self-feeding loop. Both `mak/__main__.py` and `cli/app.py`
+  `max_waves` bounds a self-feeding loop. Before presenting another wave it
+  fingerprints the implicated source, repair scope and obligation families. An
+  immediate repeat stops as `stalled`; a non-adjacent repeat (A → B → A) stops as
+  `oscillating`. Attempted fingerprints are persisted with the task graph, so a
+  recovered session cannot resume the same approval loop. Both
+  `mak/__main__.py` and `cli/app.py`
   call it with their own presentation and approval; neither owns *when* a fix-up
   wave runs. It was in one front end before: the CLI ran the guard and the
   interactive app did not, so whether a defect the kernel could name got reported
@@ -2787,8 +2812,9 @@ machine: `CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILE
   without finishing had no representation at all — reaching `max_waves` returned the
   last successful result with nothing marking the limit, and a declined wave returned
   whatever happened to be there. `CascadeOutcome` carries every wave plus `declined`,
-  `limit_reached`, and `unresolved` (filled by one final detection pass after the
-  loop — the difference between "we are done" and "we stopped").
+  `limit_reached`, `stalled`, `oscillating`, `unrepairable`, a deterministic
+  `stop_reason`, and `unresolved` (filled by a confirmation pass or by the batch
+  that forced the stop — the difference between "we are done" and "we stopped").
 - **the aggregate** is `ExecutionResult` (`mak/execution_result.py`): the initial
   wave plus the cascade outcome, reported as one thing. It answers two questions
   *separately*, which is the whole point — `tasks_completed` is a **statistic**, and
@@ -3413,7 +3439,9 @@ shell over the composition root, split into testable functions:
   `=== CASCADE WAVE ===` header. If the user approves, `session.install_plan` and
   `session.run()` execute the next wave. Under `--no-review`, cascades are skipped
   with a stderr warning that callers may be broken. The loop repeats until no cascades
-  remain, the user declines, or `--no-review` skips it.
+  remain, the user declines, `--no-review` skips it, the repair contract becomes
+  unachievable, or repository-state fingerprints prove the loop has stalled or
+  oscillated. Every non-clean stop is reported and returns a non-zero verdict.
 
 ### 12.1 Choosing agents and concurrency from the command line
 

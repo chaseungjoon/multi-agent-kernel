@@ -54,6 +54,8 @@ def check_module_attributes(
                     f"'{path}' uses '{local}.{attr}', but '{defining}' does not "
                     f"define '{attr}'"
                 ),
+                subject=attr,
+                site=f"attribute:{local}.{attr}",
             ))
     return defects
 

@@ -9,12 +9,14 @@ from pathlib import Path
 import pytest
 
 from mak.config import GitConfig, MakConfig, NodeStoreConfig, SessionConfig
+from mak.conflict_detector.cross_module_check import CrossModuleDefect
 from mak.core.exceptions import SessionError
 from mak.core.logging import EventType, SessionLogger
 from mak.core.types import (
     LockMode,
     NodeFragment,
     NodeId,
+    RepairObligation,
     SubTask,
     TaskBundle,
     TaskResult,
@@ -679,6 +681,24 @@ class TestCascadeDetection:
         # First wave's completed list was reset; only cascade task is reported.
         assert "cascade" in result2.completed
         assert "first" not in result2.completed
+
+    def test_direct_install_persists_the_user_objective(self, tmp_path: Path) -> None:
+        (tmp_path / "m.py").write_text("def a():\n    return 0\n")
+        store = _store(tmp_path)
+        session = _session(
+            tmp_path, runner=StagingRunner(store), node_store=store
+        )
+        session.initialize()
+
+        session.install_plan(
+            [_task("a", ["m.py::function::a"])],
+            objective="embed every separated track",
+        )
+
+        assert session._objective == "embed every separated track"
+        assert session._require_scheduler().annotations["objective"] == (
+            "embed every separated track"
+        )
 
 
 class TestTransactionalCommit:
@@ -2187,6 +2207,288 @@ class TestCrossModuleDefects:
         assert tasks[0].task_id.startswith("api_fix_beta_py_")
         assert tasks[0].target_nodes == [NodeId("beta.py")]
         assert NodeId("alpha.py") in tasks[0].context_nodes
+        assert [item.kind for item in tasks[0].repair_obligations] == [
+            "signature_mismatch"
+        ]
+
+
+class TestProspectiveSemanticValidity:
+    """A model's syntactically valid answer is not proof that its task worked."""
+
+    @staticmethod
+    def _obligation(*, required_provider: bool = False) -> RepairObligation:
+        return RepairObligation(
+            kind="unresolved_import",
+            file="caller.py",
+            defining_file="provider.py",
+            detail=(
+                "'caller.py' imports 'run_embedding' from 'provider.py', "
+                "which does not define it"
+            ),
+            exact_key=(
+                "unresolved_import\x1fcaller.py\x1fprovider.py\x1f"
+                "import:provider:1:0:0\x1frun_embedding"
+            ),
+            family_key=(
+                "unresolved_import\x1fcaller.py\x1fprovider.py\x1fimport:provider:1:0:0"
+            ),
+            subject="run_embedding",
+            site="import:provider:1:0:0",
+            required_provider_symbol=("run_embedding" if required_provider else None),
+        )
+
+    def test_new_import_from_untouched_empty_provider_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "provider.py").write_text("# provider stub\n")
+        source = (
+            "from provider import run_embedding\n\n\n"
+            "def call(path):\n"
+            "    return run_embedding(path)\n"
+        )
+        store = _store(tmp_path)
+        runner = GreenfieldRunner({"consumer": {"caller.py": source}})
+        session = _session(tmp_path, runner=runner, node_store=store, max_attempts=1)
+        session.initialize()
+        session.install_plan(
+            [
+                _task(
+                    "consumer",
+                    ["caller.py"],
+                    context=["provider.py::module_header::__header__"],
+                )
+            ]
+        )
+
+        result = session.run()
+
+        assert result.failed == ("consumer",)
+        assert not (tmp_path / "caller.py").exists()
+        assert "does not define it" in result.failure_reasons["consumer"]
+
+    def test_repair_cannot_swap_one_missing_import_for_another(
+        self, tmp_path: Path
+    ) -> None:
+        original = (
+            "from provider import run_embedding\n\n\n"
+            "def call(path):\n"
+            "    return run_embedding(path)\n"
+        )
+        replacement = original.replace("run_embedding", "get_embedding")
+        (tmp_path / "provider.py").write_text("# provider stub\n")
+        (tmp_path / "caller.py").write_text(original)
+        store = _store(tmp_path)
+        runner = GreenfieldRunner({"repair": {"caller.py": replacement}})
+        session = _session(tmp_path, runner=runner, node_store=store, max_attempts=1)
+        session.initialize()
+        session.install_plan(
+            [
+                SubTask(
+                    task_id="repair",
+                    description="repair the import",
+                    target_nodes=[NodeId("caller.py")],
+                    context_nodes=[NodeId("provider.py::module_header::__header__")],
+                    agent_type="fake",
+                    repair_obligations=(self._obligation(required_provider=True),),
+                )
+            ]
+        )
+
+        result = session.run()
+
+        assert result.failed == ("repair",)
+        assert (tmp_path / "caller.py").read_text() == original
+        assert (
+            "prospective repository validation rejected"
+            in (result.failure_reasons["repair"])
+        )
+
+    def test_valid_provider_repair_discharge_commits(self, tmp_path: Path) -> None:
+        caller = (
+            "from provider import run_embedding\n\n\n"
+            "def call(path):\n"
+            "    return run_embedding(path)\n"
+        )
+        provider = "def run_embedding(path):\n    return [path]\n"
+        (tmp_path / "provider.py").write_text("# provider stub\n")
+        (tmp_path / "caller.py").write_text(caller)
+        store = _store(tmp_path)
+        runner = GreenfieldRunner(
+            {"repair": {"caller.py": caller, "provider.py": provider}}
+        )
+        session = _session(tmp_path, runner=runner, node_store=store, max_attempts=1)
+        session.initialize()
+        session.install_plan(
+            [
+                SubTask(
+                    task_id="repair",
+                    description="implement the missing provider API",
+                    target_nodes=[NodeId("caller.py"), NodeId("provider.py")],
+                    agent_type="fake",
+                    repair_obligations=(self._obligation(required_provider=True),),
+                )
+            ]
+        )
+
+        result = session.run()
+
+        assert result.ok, result.failure_reasons
+        assert "def run_embedding(path):" in (tmp_path / "provider.py").read_text()
+
+    def test_empty_provider_repair_cannot_delete_the_requested_use(
+        self, tmp_path: Path
+    ) -> None:
+        original = (
+            "from provider import run_embedding\n\n\n"
+            "def call(path):\n"
+            "    return run_embedding(path)\n"
+        )
+        deletion = "def call(path):\n    return []\n"
+        (tmp_path / "provider.py").write_text("# provider stub\n")
+        (tmp_path / "caller.py").write_text(original)
+        store = _store(tmp_path)
+        runner = GreenfieldRunner({"repair": {"caller.py": deletion}})
+        session = _session(tmp_path, runner=runner, node_store=store, max_attempts=1)
+        session.initialize()
+        session.install_plan(
+            [
+                SubTask(
+                    task_id="repair",
+                    description="implement the missing provider API",
+                    target_nodes=[NodeId("caller.py")],
+                    agent_type="fake",
+                    repair_obligations=(self._obligation(required_provider=True),),
+                )
+            ]
+        )
+
+        result = session.run()
+
+        assert result.failed == ("repair",)
+        assert (tmp_path / "caller.py").read_text() == original
+        assert (
+            "repair obligation remains unresolved" in (result.failure_reasons["repair"])
+        )
+
+    def test_cycle_repair_cannot_move_the_failing_name_edge(
+        self, tmp_path: Path
+    ) -> None:
+        original_a = (
+            "from b import beta\n\n\n"
+            "def alpha():\n"
+            "    return beta()\n"
+        )
+        replacement_a = (
+            "import b\n\n\n"
+            "def alpha():\n"
+            "    return b.beta()\n"
+        )
+        source_b = (
+            "from a import alpha\n\n\n"
+            "def beta():\n"
+            "    return alpha()\n"
+        )
+        (tmp_path / "a.py").write_text(original_a)
+        (tmp_path / "b.py").write_text(source_b)
+        obligation = RepairObligation(
+            kind="import_cycle",
+            file="a.py",
+            defining_file="b.py",
+            detail="new import cycle among a.py -> b.py",
+            exact_key="exact",
+            family_key="import_cycle\x1fa.py\x1fb.py\x1fcycle:a.py -> b.py",
+            subject="a.py -> b.py",
+            site="cycle:a.py -> b.py",
+        )
+        store = _store(tmp_path)
+        runner = GreenfieldRunner({"repair": {"a.py": replacement_a}})
+        session = _session(tmp_path, runner=runner, node_store=store, max_attempts=1)
+        session.initialize()
+        session.install_plan(
+            [
+                SubTask(
+                    task_id="repair",
+                    description="break the import cycle",
+                    target_nodes=[NodeId("a.py")],
+                    agent_type="fake",
+                    repair_obligations=(obligation,),
+                )
+            ]
+        )
+
+        result = session.run()
+
+        assert result.failed == ("repair",)
+        assert (tmp_path / "a.py").read_text() == original_a
+        assert (
+            "repair obligation remains unresolved" in result.failure_reasons["repair"]
+        )
+
+    def test_noop_cannot_discharge_a_live_repair_obligation(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "provider.py").write_text("# provider stub\n")
+        (tmp_path / "caller.py").write_text("from provider import run_embedding\n")
+
+        class NoOpRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=True,
+                    no_changes_required=True,
+                )
+
+        store = _store(tmp_path)
+        session = _session(
+            tmp_path, runner=NoOpRunner(), node_store=store, max_attempts=1
+        )
+        session.initialize()
+        session.install_plan(
+            [
+                SubTask(
+                    task_id="repair",
+                    description="repair the import",
+                    target_nodes=[NodeId("caller.py")],
+                    agent_type="fake",
+                    repair_obligations=(self._obligation(),),
+                )
+            ]
+        )
+
+        result = session.run()
+
+        assert result.failed == ("repair",)
+        assert "cannot discharge" in result.failure_reasons["repair"]
+
+    def test_empty_provider_expands_scope_and_preserves_objective(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "provider.py").write_text("# provider stub\n")
+        (tmp_path / "caller.py").write_text("from provider import run_embedding\n")
+        session = _session(
+            tmp_path, runner=GreenfieldRunner({}), node_store=_store(tmp_path)
+        )
+        session.initialize()
+        session._objective = "embed every separated track"
+        defect = CrossModuleDefect(
+            kind="unresolved_import",
+            file="caller.py",
+            defining_file="provider.py",
+            detail="provider has no run_embedding",
+            subject="run_embedding",
+            site="import:provider:1:0:0",
+        )
+
+        (task,) = session._cross_module_fix_tasks([defect])
+
+        assert NodeId("provider.py") in task.target_nodes
+        assert task.repair_obligations[0].family_key == defect.family_key
+        assert task.repair_obligations[0].required_provider_symbol == "run_embedding"
+        assert "caller-only rename cannot solve this" in task.description
+        assert "embed every separated track" in task.description
+        assert all(
+            not str(node).startswith("provider.py::") for node in task.context_nodes
+        )
 
 
 class TestPhantomContextIsLockable:

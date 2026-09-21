@@ -61,6 +61,8 @@ def check_duplicates(created: list[CreatedFunction]) -> list[CrossModuleDefect]:
                         f"'{second.file}' (task {second.task_id}). Keep one "
                         f"definition and import it where the other was."
                     ),
+                    subject=name,
+                    site=f"duplicate:{name}",
                 ))
     return defects
 
