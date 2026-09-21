@@ -14,6 +14,66 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.9.0b] — 2026-09-21
+
+### Fixed
+- **OpenRouter models that do not support structured outputs now work as
+  coding agents (Wave 24).** Agent tasks against such a model failed every
+  time: MAK asks for a JSON-schema reply to obtain a `TaskResult`, the
+  upstream provider refuses the parameter, and the refusal was not recognized
+  — so MAK never fell back and the scheduler re-dispatched the task until it
+  failed. The 0.8.1b fix matched the literal text `structured outputs`, but
+  the same provider relays the same refusal as `structured-outputs` for a
+  different request, and only one of the two spellings was caught.
+
+  Refusals are now identified by parsing the provider's structured error body
+  — including OpenRouter's nested `error.metadata.raw` — with punctuation and
+  casing normalized, so all spellings of one refusal are recognized as one
+  fact. Verified against the live API for
+  `inclusionai/ling-3.0-flash-vl:free`.
+- Unrelated provider failures are no longer answered by asking for a weaker
+  reply format. An expired key, an unknown model, a quota breach, a context
+  overflow, a safety rejection, a 5xx, a transport error, and an invalid
+  schema authored by MAK now each surface as themselves instead of becoming a
+  second, more confusing failure one rung down.
+
+### Added
+- **Model capabilities are read from the endpoint instead of discovered by
+  failing.** MAK now keeps the `supported_parameters` list that OpenRouter (and
+  any compatible service) publishes for each model, and asks for the strongest
+  reply format that model actually supports. For a model known not to accept
+  structured output this removes the wasted request entirely: one call per
+  task instead of three. A model that publishes nothing is negotiated at
+  runtime exactly as before.
+
+  The distinction is per **exact** model id: `inclusionai/ling-3.0-flash-vl`
+  supports structured outputs and `inclusionai/ling-3.0-flash-vl:free` does
+  not, so a variant suffix is never canonicalized away.
+- `response_format` and `structured_outputs` are treated as the separate
+  parameters they are — the former authorizes JSON-object mode, the latter
+  strict JSON-schema mode. 30 models in OpenRouter's current catalog support
+  one and not the other, and they now start at the rung they can actually
+  serve.
+- **`provider_routing` endpoint setting** (`none` | `openrouter`). On the
+  OpenRouter preset, MAK asks that requests be routed only to upstream
+  providers that honor the parameters it sent, but only for a model whose
+  support is published — sending that hint speculatively causes a routing
+  failure rather than a recoverable one. It is never sent to any other
+  endpoint, and never inferred from a hostname, so a proxied or renamed
+  endpoint is not guessed at.
+- Concurrent agents sharing one endpoint and model now perform **one** shared
+  capability discovery between them rather than each paying for the same
+  rejected requests.
+- One log line per endpoint and model naming the reply format chosen and
+  whether the evidence came from the endpoint's catalog or from a refusal at
+  runtime. It carries no API key, request header, provider response body, or
+  prompt content.
+
+### Changed
+- **Model manifest schema 2 → 3**, adding per-model capability data. Existing
+  caches migrate in place with no model loss and no refetch; the new field is
+  simply unknown until the next refresh fills it in.
+
 ## [0.8.1b] — 2026-09-20
 
 ### Fixed
