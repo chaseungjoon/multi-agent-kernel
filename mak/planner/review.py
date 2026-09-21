@@ -52,6 +52,11 @@ def render_plan(
         agent = task.agent_type or "(default)"
         lines.append(f"  [{task.task_id}] {task.description}")
         lines.append(f"        agent={agent}  writes={targets}")
+        if task.repair_obligations:
+            repairs = "; ".join(
+                obligation.detail for obligation in task.repair_obligations
+            )
+            lines.append(f"        must resolve={repairs}")
     lines.append("")
     lines.append("Dependency edges:")
     edges = [

@@ -76,7 +76,12 @@ def check_constructors(
                 kind="constructor_mismatch",
                 file=path,
                 defining_file=defining,
-                detail=f"'{path}' constructs '{cls.name}' from '{defining}': {reason}",
+                detail=(
+                    f"'{path}' constructs '{cls.name}' from "
+                    f"'{defining}': {reason}"
+                ),
+                subject=cls.name,
+                site=f"constructor:{cls.name}",
             ))
     return defects
 

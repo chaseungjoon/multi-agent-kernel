@@ -194,7 +194,7 @@ class MakCli:
             console.print()
 
         # ── 6. Run ─────────────────────────────────────────────────────────────
-        mak_session.install_plan(subtasks)
+        mak_session.install_plan(subtasks, objective=task)
 
         run_result: Any               = None
         run_error:  Exception | None  = None

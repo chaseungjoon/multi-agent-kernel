@@ -127,6 +127,31 @@ class TaskResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RepairObligation:
+    """One deterministic finding a generated repair task must discharge.
+
+    Agent success is only a transport claim: it says the model returned usable
+    source. A repair task needs a stronger, kernel-owned postcondition saying
+    which defect must be absent from the prospective repository before the edit
+    may commit. ``exact_key`` identifies the original finding; ``family_key``
+    deliberately ignores replaceable details such as the guessed import name so
+    swapping one missing symbol for another is not mistaken for progress.
+    """
+
+    kind: str
+    file: str
+    defining_file: str
+    detail: str
+    exact_key: str
+    family_key: str
+    subject: str = ""
+    site: str = ""
+    # Set when an empty provider must gain the originally requested binding;
+    # removing the caller-side use is not a valid repair in that case.
+    required_provider_symbol: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SubTask:
     """A decomposed sub-task with dependency tracking.
 
@@ -167,3 +192,6 @@ class SubTask:
     api_targets: list[NodeId] = field(default_factory=list)
     contract: dict[NodeId, str] = field(default_factory=dict)
     registry_keys: dict[NodeId, list[str]] = field(default_factory=dict)
+    # Kernel-generated semantic postconditions. The planner and coding agent do
+    # not get to declare these: post-wave analysis owns and verifies them.
+    repair_obligations: tuple[RepairObligation, ...] = ()

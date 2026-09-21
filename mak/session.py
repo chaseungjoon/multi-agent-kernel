@@ -98,6 +98,7 @@ from mak.core.types import (
     LockMode,
     NodeFragment,
     NodeId,
+    RepairObligation,
     SubTask,
     TaskBundle,
     TaskResult,
@@ -486,6 +487,12 @@ class Session:
         # The most recent wave's result, kept so teardown can gate a push on
         # something even when the caller has no aggregate to hand it.
         self._last_result: SessionResult | None = None
+        # The user objective is durable repair context. Without it, deleting the
+        # feature that caused a defect can look structurally clean while undoing
+        # the request. Cascade state history prevents a recovered run from
+        # forgetting that it has already visited a broken repository state.
+        self._objective: str | None = None
+        self._cascade_history: list[str] = []
 
         self._max_concurrent = max(1, config.session.max_concurrent_agents)
         self._collect_timeout = collect_timeout_s
@@ -1012,6 +1019,7 @@ class Session:
             raise SessionError(f"cannot plan from state {self.state}")
         if self._planner is None:
             raise SessionError("no planner configured; use install_plan() instead")
+        self._objective = user_task
         decomposed = self._planner.decompose(
             user_task, self._node_store.list_nodes()
         )
@@ -1059,7 +1067,9 @@ class Session:
             counts[finding.kind] = counts.get(finding.kind, 0) + 1
         self._log(EventType.PLAN_VALIDATED, counts=counts, total=len(findings))
 
-    def install_plan(self, subtasks: list[SubTask]) -> None:
+    def install_plan(
+        self, subtasks: list[SubTask], *, objective: str | None = None
+    ) -> None:
         """Build the DAG + scheduler from a ready plan (bypasses the planner).
 
         Also accepted from ``COMPLETED`` and ``FAILED`` so a cascade wave can
@@ -1073,6 +1083,8 @@ class Session:
             SessionState.FAILED,
         ):
             raise SessionError(f"cannot install a plan from state {self.state}")
+        if objective is not None:
+            self._objective = objective
         # Reset per-wave tracking so the new wave starts with a clean slate.
         self._completed = []
         self._failed = []
@@ -1139,6 +1151,13 @@ class Session:
             max_concurrent=self._max_concurrent,
             lock_policy=self._lock_policy,
         )
+        if self._objective is not None:
+            self._scheduler.annotations["objective"] = self._objective
+        if self._cascade_history:
+            self._scheduler.annotations["cascade_history"] = list(
+                self._cascade_history
+            )
+        self._scheduler.save()
         self._progress = {
             t.task_id: SubTaskProgress(t.task_id, list(t.target_nodes))
             for t in subtasks
@@ -1772,6 +1791,9 @@ class Session:
         acceptance path it has always had: this is a narrowing, not a redesign.
         """
         refusals: list[str] = []
+        obligation_refusal = self._noop_repair_refusal(progress.task_id)
+        if obligation_refusal is not None:
+            return [obligation_refusal]
         for node_id in progress.target_nodes:
             if node_id in progress.completed_nodes:
                 continue
@@ -1803,6 +1825,33 @@ class Session:
                 reason=result.error or "agent asserted no changes were required",
             )
         return refusals
+
+    def _noop_repair_refusal(self, task_id: str) -> str | None:
+        """Refuse a no-op while a kernel-owned repair postcondition is false."""
+        task = self._dag_task(task_id)
+        if not task.repair_obligations:
+            return None
+        scope = frozenset(
+            {
+                path
+                for obligation in task.repair_obligations
+                for path in (obligation.file, obligation.defining_file)
+            }
+        )
+        sources = StoreSources(self._node_store)
+        families = self._repair_families(sources, task, scope)
+        unresolved = [
+            obligation.detail
+            for obligation in task.repair_obligations
+            if obligation.family_key in families
+            or not self._required_provider_symbol_exists(sources, obligation)
+        ]
+        if not unresolved:
+            return None
+        return (
+            "no_changes_required cannot discharge an unresolved repair "
+            f"obligation: {'; '.join(unresolved)}"
+        )
 
     def _noop_refusal(
         self, progress: SubTaskProgress, node_id: NodeId
@@ -2036,6 +2085,10 @@ class Session:
             self._reject(
                 task_id, staged, ["reconstruction would produce invalid Python"]
             )
+            return []
+        semantic_reasons = self._prospective_semantic_reasons(task_id, staged)
+        if semantic_reasons:
+            self._reject(task_id, staged, semantic_reasons)
             return []
         # RA-3: a lease may have expired during a long agent call (and the node
         # reclaimed by another holder). Confirm we still own every write lock
@@ -2665,6 +2718,159 @@ class Session:
             except SyntaxError:
                 return False
         return True
+
+    def _prospective_semantic_reasons(
+        self, task_id: str, staged: list[NodeId]
+    ) -> list[str]:
+        """Reject a candidate that leaves its obligation or creates a defect.
+
+        The normal conflict detector judges the fragments in one edit round.
+        Cross-module truth needs the complete repository, including untouched
+        providers and callers. Build that view with staged files substituted,
+        compare it with the committed baseline, and do this before the node
+        store transaction or audit commit can make a hallucination durable.
+        """
+        touched = sorted({_file_of(str(node)) for node in staged})
+        overrides = {
+            file_path: self._assemble_preview(file_path, set(staged))
+            for file_path in touched
+        }
+        before = StoreSources(self._node_store)
+        after = before.with_overrides(overrides)
+        scope = self._prospective_scope(task_id, staged)
+
+        baseline = _post_wave_checks(before, scope)
+        candidate = _post_wave_checks(after, scope)
+        baseline_keys = {defect.exact_key for defect in baseline}
+        introduced = [
+            defect for defect in candidate if defect.exact_key not in baseline_keys
+        ]
+        introduced.extend(check_new_cycles(before, after, scope))
+
+        task = self._dag_task(task_id)
+        if not task.repair_obligations:
+            other_targets = {
+                _file_of(str(node))
+                for other_id, other in self._require_scheduler().dag.tasks.items()
+                if other_id != task_id
+                for node in other.target_nodes
+            }
+            introduced = [
+                defect
+                for defect in introduced
+                if defect.file in touched
+                if not {defect.file, defect.defining_file} & other_targets
+            ]
+        after_families = self._repair_families(after, task, scope, candidate)
+        unresolved = [
+            obligation
+            for obligation in task.repair_obligations
+            if obligation.family_key in after_families
+            or not self._required_provider_symbol_exists(after, obligation)
+        ]
+
+        reasons = [
+            (f"prospective repository validation rejected the edit: {defect.detail}")
+            for defect in introduced
+        ]
+        reasons.extend(
+            (
+                "repair obligation remains unresolved after the proposed edit: "
+                f"{obligation.detail}"
+            )
+            for obligation in unresolved
+        )
+        return list(dict.fromkeys(reasons))
+
+    def _repair_families(
+        self,
+        sources: Mapping[str, str],
+        task: SubTask,
+        scope: frozenset[str],
+        defects: list[CrossModuleDefect] | None = None,
+    ) -> set[str]:
+        """Return repair finding families still true in ``sources``.
+
+        Most post-wave checks describe the current repository directly. Cycles
+        and duplicate implementations are normally *delta* checks, so repair
+        validation supplies a neutral baseline and synthetic provenance to ask
+        the stronger question a postcondition needs: does this defect exist now?
+        """
+        current = (
+            list(defects) if defects is not None else _post_wave_checks(sources, scope)
+        )
+        obligations = task.repair_obligations
+        if any(item.kind == "import_cycle" for item in obligations):
+            current.extend(check_new_cycles({}, sources, scope))
+        duplicate_names = {
+            item.subject
+            for item in obligations
+            if item.kind == "duplicate_implementation" and item.subject
+        }
+        if duplicate_names:
+            created: list[CreatedFunction] = []
+            files = {
+                path
+                for item in obligations
+                if item.kind == "duplicate_implementation"
+                for path in (item.file, item.defining_file)
+            }
+            for file_path in sorted(files):
+                if file_path not in sources:
+                    continue
+                for name, definition in symbol_table(sources[file_path]).items():
+                    if name in duplicate_names and definition.kind == "function":
+                        created.append(
+                            CreatedFunction(
+                                file_path, name, definition.source, file_path
+                            )
+                        )
+            current.extend(check_duplicates(created))
+        families = {defect.family_key for defect in current}
+        cycle_components = {
+            defect.subject
+            for defect in current
+            if defect.kind == "import_cycle"
+        }
+        families.update(
+            obligation.family_key
+            for obligation in obligations
+            if obligation.kind == "import_cycle"
+            and obligation.subject in cycle_components
+        )
+        return families
+
+    @staticmethod
+    def _required_provider_symbol_exists(
+        sources: Mapping[str, str], obligation: RepairObligation
+    ) -> bool:
+        """Whether an empty-provider repair retained its requested API."""
+        required = obligation.required_provider_symbol
+        if required is None:
+            return True
+        names = ModuleIndex(sources).top_level_names(obligation.defining_file)
+        return names is not None and required in names
+
+    def _prospective_scope(self, task_id: str, staged: list[NodeId]) -> frozenset[str]:
+        """Files whose cross-module agreement a staged edit can change."""
+        task = self._dag_task(task_id)
+        touched = {_file_of(str(node)) for node in staged}
+        scope = set(touched)
+        for obligation in task.repair_obligations:
+            scope.add(obligation.file)
+            scope.add(obligation.defining_file)
+
+        # A provider edit can break untouched callers. Expand whole-file targets
+        # to their committed symbol nodes before walking reverse references.
+        providers = set(staged)
+        for file_path in touched:
+            providers.update(self._node_store.list_nodes(file_path))
+        graph = self._wave_graph
+        if graph is not None:
+            for caller, references in graph.references.items():
+                if references & providers:
+                    scope.add(_file_of(str(caller)))
+        return frozenset(scope)
 
     def _assemble_preview(self, file_path: str, staged_set: set[NodeId]) -> str:
         """Build a file's prospective source: committed fragments + staged swaps.
@@ -3669,6 +3875,12 @@ class Session:
                 )
                 return len(expired)
             self._scheduler = scheduler
+            objective = scheduler.annotations.get("objective")
+            self._objective = objective if isinstance(objective, str) else None
+            history = scheduler.annotations.get("cascade_history", [])
+            self._cascade_history = (
+                [str(item) for item in history] if isinstance(history, list) else []
+            )
             self._wave_graph = dep_graph_from_store(self._node_store)
             self._lock_policy = build_lock_policy(
                 self._config.semantic,
@@ -3705,6 +3917,58 @@ class Session:
         if scheduler.dag.is_complete(task.task_id):
             progress.completed_nodes = set(task.target_nodes)
         return progress
+
+    def cascade_state_fingerprint(self, tasks: list[SubTask]) -> str:
+        """Digest the broken state and repair scope shown for cascade review.
+
+        Store generation is deliberately absent: A -> B -> A changes generation
+        twice but returns to the same source. The digest covers implicated file
+        contents, target scope and kernel-owned defect families, so an identical
+        state and a two-state oscillation are both recognizable.
+        """
+        files = sorted(
+            {
+                _file_of(str(node))
+                for task in tasks
+                for node in (*task.target_nodes, *task.context_nodes)
+            }
+        )
+        families = sorted(
+            {
+                obligation.family_key
+                for task in tasks
+                for obligation in task.repair_obligations
+            }
+        )
+        scope = sorted(
+            (task.task_id, *(str(node) for node in task.target_nodes)) for task in tasks
+        )
+        digest = hashlib.blake2s(digest_size=16)
+        for file_path in files:
+            digest.update(file_path.encode())
+            digest.update(b"\0")
+            digest.update(self._file_source_or_empty(file_path).encode())
+            digest.update(b"\0")
+        for family in families:
+            digest.update(family.encode())
+            digest.update(b"\0")
+        for item in scope:
+            digest.update("\x1f".join(item).encode())
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    def cascade_history(self) -> tuple[str, ...]:
+        """Return repository states already presented during this session."""
+        return tuple(self._cascade_history)
+
+    def remember_cascade_state(self, fingerprint: str) -> None:
+        """Persist one presented cascade state alongside the active task graph."""
+        if fingerprint not in self._cascade_history:
+            self._cascade_history.append(fingerprint)
+        scheduler = self._scheduler
+        if scheduler is not None:
+            scheduler.annotations["cascade_history"] = list(self._cascade_history)
+            scheduler.save()
 
     # -- cascade detection -------------------------------------------------
 
@@ -4020,26 +4284,85 @@ class Session:
         for file_path, found in sorted(by_file.items()):
             listed = "; ".join(d.detail for d in found)
             defining = sorted({d.defining_file for d in found} - {file_path})
-            tasks.append(SubTask(
-                task_id=_fixup_task_id("api_fix", file_path),
-                description=(
-                    f"Fix `{file_path}` so its use of "
-                    f"{', '.join(f'`{d}`' for d in defining) or 'its own code'} "
-                    f"matches what those modules actually define: {listed}. Use "
-                    "the real names and signatures — do not add fallbacks or "
-                    "try/except around the imports."
-                    + self._pair_context(file_path, defining)
-                ),
-                target_nodes=self._node_store.list_nodes(file_path),
-                context_nodes=[
-                    node
-                    for path in defining
-                    for node in self._node_store.list_nodes(path)
-                ],
-                depends_on=[],
-                agent_type=self._default_agent_type or "",
-            ))
+            provider_targets = sorted(
+                {
+                    defect.defining_file
+                    for defect in found
+                    if self._repair_needs_provider(defect)
+                }
+            )
+            target_files = {file_path, *provider_targets}
+            targets = list(self._node_store.list_nodes(file_path))
+            targets.extend(NodeId(path) for path in provider_targets)
+            scope_note = ""
+            if provider_targets:
+                providers = ", ".join(f"`{path}`" for path in provider_targets)
+                scope_note = (
+                    f" {providers} exports no statically visible symbol that can "
+                    "satisfy "
+                    "the new use, so a caller-only rename cannot solve this. "
+                    "The provider is writable: implement the required API or "
+                    "reconcile both sides; do not substitute another guessed "
+                    "name or remove requested behavior."
+                )
+            objective = (
+                f" Preserve the original user objective: {self._objective}"
+                if self._objective
+                else ""
+            )
+            tasks.append(
+                SubTask(
+                    task_id=_fixup_task_id("api_fix", file_path),
+                    description=(
+                        f"Fix `{file_path}` so its use of "
+                        f"{', '.join(f'`{d}`' for d in defining) or 'its own code'} "
+                        f"matches what those modules actually define: {listed}. Use "
+                        "the real names and signatures — do not add fallbacks or "
+                        "try/except around the imports."
+                        + scope_note
+                        + objective
+                        + self._pair_context(file_path, defining)
+                    ),
+                    target_nodes=list(dict.fromkeys(targets)),
+                    context_nodes=[
+                        node
+                        for path in defining
+                        if path not in target_files
+                        for node in self._node_store.list_nodes(path)
+                    ],
+                    depends_on=[],
+                    agent_type=self._default_agent_type or "",
+                    repair_obligations=tuple(
+                        RepairObligation(
+                            kind=defect.kind,
+                            file=defect.file,
+                            defining_file=defect.defining_file,
+                            detail=defect.detail,
+                            exact_key=defect.exact_key,
+                            family_key=defect.family_key,
+                            subject=defect.subject,
+                            site=defect.site,
+                            required_provider_symbol=(
+                                defect.subject
+                                if defect.defining_file in provider_targets
+                                else None
+                            ),
+                        )
+                        for defect in found
+                    ),
+                )
+            )
         return tasks
+
+    def _repair_needs_provider(self, defect: CrossModuleDefect) -> bool:
+        """Whether an unresolved import points at an empty static provider."""
+        if defect.kind != "unresolved_import":
+            return False
+        source = self._file_source_or_empty(defect.defining_file)
+        names = ModuleIndex({defect.defining_file: source}).top_level_names(
+            defect.defining_file
+        )
+        return names == frozenset()
 
     def _pair_context(self, file_path: str, defining: list[str]) -> str:
         """Name the tasks behind a defect and show what each side changed."""
@@ -4168,6 +4491,14 @@ def _merge_fixups(fixes: list[SubTask], extra: list[SubTask]) -> list[SubTask]:
             description=f"{fix.description}\n\nAlso: {task.description}",
             context_nodes=list(
                 dict.fromkeys([*fix.context_nodes, *task.context_nodes])
+            ),
+            repair_obligations=tuple(
+                dict.fromkeys(
+                    [
+                        *fix.repair_obligations,
+                        *task.repair_obligations,
+                    ]
+                )
             ),
         )
     return merged

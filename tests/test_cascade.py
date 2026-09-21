@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from mak.cascade import run_cascade_waves
-from mak.core.types import NodeId, SubTask
+from mak.core.types import NodeId, RepairObligation, SubTask
 
 
 def _task(task_id: str) -> SubTask:
@@ -33,6 +33,24 @@ class FakeSession:
     def run(self, max_iterations: int = 1000) -> str:
         self.runs += 1
         return f"result-{self.runs}"
+
+
+class StatefulFakeSession(FakeSession):
+    """A fake exposing the durable fingerprint API used by real sessions."""
+
+    def __init__(self, batches: list[list[SubTask]], fingerprints: list[str]) -> None:
+        super().__init__(batches)
+        self._fingerprints = list(fingerprints)
+        self.history: list[str] = []
+
+    def cascade_state_fingerprint(self, tasks: list[SubTask]) -> str:
+        return self._fingerprints.pop(0)
+
+    def cascade_history(self) -> tuple[str, ...]:
+        return tuple(self.history)
+
+    def remember_cascade_state(self, fingerprint: str) -> None:
+        self.history.append(fingerprint)
 
 
 def _accept(tasks: list[SubTask]) -> list[SubTask] | None:
@@ -106,7 +124,7 @@ class TestRunCascadeWaves:
 
     def test_max_waves_bounds_a_self_feeding_loop(self) -> None:
         # A fix-up wave that keeps producing fix-up work must not spin forever.
-        session = FakeSession([[_task("a")] for _ in range(50)])
+        session = FakeSession([[_task(f"a{i}")] for i in range(50)])
         outcome = run_cascade_waves(  # type: ignore[arg-type]
             session, _accept, max_waves=3
         )
@@ -114,5 +132,143 @@ class TestRunCascadeWaves:
         # Reaching the ceiling with defects left is reported, not hidden
         # behind the last wave's successful result.
         assert outcome.limit_reached
-        assert outcome.unresolved == ("a",)
+        assert outcome.unresolved == ("a3",)
         assert not outcome.clean
+
+    def test_identical_broken_state_stops_before_a_second_prompt(self) -> None:
+        session = FakeSession([[_task("a")], [_task("a")]])
+        approvals = 0
+
+        def approve(tasks: list[SubTask]) -> list[SubTask]:
+            nonlocal approvals
+            approvals += 1
+            return tasks
+
+        outcome = run_cascade_waves(session, approve)  # type: ignore[arg-type]
+
+        assert session.runs == 1
+        assert approvals == 1
+        assert outcome.stalled
+        assert not outcome.oscillating
+        assert outcome.unresolved == ("a",)
+
+    def test_revisited_state_stops_an_a_b_a_oscillation(self) -> None:
+        session = FakeSession([[_task("a")], [_task("b")], [_task("a")]])
+        outcome = run_cascade_waves(session, _accept)  # type: ignore[arg-type]
+
+        assert session.runs == 2
+        assert outcome.oscillating
+        assert not outcome.stalled
+        assert outcome.unresolved == ("a",)
+
+    def test_review_edit_cannot_erase_repair_obligation(self) -> None:
+        obligation = RepairObligation(
+            kind="unresolved_import",
+            file="caller.py",
+            defining_file="provider.py",
+            detail="missing",
+            exact_key="exact",
+            family_key="family",
+        )
+        detected = SubTask(
+            task_id="generated",
+            description="generated",
+            target_nodes=[NodeId("caller.py")],
+            repair_obligations=(obligation,),
+        )
+        edited = SubTask(
+            task_id="edited",
+            description="edited",
+            target_nodes=[NodeId("caller.py")],
+        )
+        session = FakeSession([[detected], []])
+
+        run_cascade_waves(  # type: ignore[arg-type]
+            session, lambda _tasks: [edited]
+        )
+
+        installed = session.installed[0][0]
+        assert installed.task_id == "edited"
+        assert installed.repair_obligations == (obligation,)
+
+    def test_review_edit_cannot_drop_every_repair_target(self) -> None:
+        obligation = RepairObligation(
+            kind="unresolved_import",
+            file="caller.py",
+            defining_file="provider.py",
+            detail="missing",
+            exact_key="exact",
+            family_key="family",
+        )
+        detected = SubTask(
+            task_id="generated",
+            description="generated",
+            target_nodes=[NodeId("caller.py")],
+            repair_obligations=(obligation,),
+        )
+        unrelated = SubTask(
+            task_id="edited",
+            description="edited",
+            target_nodes=[NodeId("other.py")],
+        )
+        session = FakeSession([[detected]])
+
+        outcome = run_cascade_waves(  # type: ignore[arg-type]
+            session, lambda _tasks: [unrelated]
+        )
+
+        assert session.runs == 0
+        assert session.installed == []
+        assert outcome.unrepairable
+        assert outcome.unresolved == ("generated",)
+
+    def test_split_review_validates_after_both_repair_writers(self) -> None:
+        obligation = RepairObligation(
+            kind="unresolved_import",
+            file="caller.py",
+            defining_file="provider.py",
+            detail="missing",
+            exact_key="exact",
+            family_key="family",
+        )
+        detected = SubTask(
+            task_id="generated",
+            description="generated",
+            target_nodes=[NodeId("caller.py"), NodeId("provider.py")],
+            repair_obligations=(obligation,),
+        )
+        caller = SubTask(
+            task_id="caller",
+            description="repair caller",
+            target_nodes=[NodeId("caller.py")],
+        )
+        provider = SubTask(
+            task_id="provider",
+            description="repair provider",
+            target_nodes=[NodeId("provider.py")],
+        )
+        session = FakeSession([[detected], []])
+
+        run_cascade_waves(  # type: ignore[arg-type]
+            session, lambda _tasks: [caller, provider]
+        )
+
+        installed_caller, installed_provider = session.installed[0]
+        assert installed_caller.repair_obligations == ()
+        assert installed_provider.repair_obligations == (obligation,)
+        assert installed_provider.depends_on == ["caller"]
+
+    def test_declined_state_is_not_persisted(self) -> None:
+        session = StatefulFakeSession([[_task("a")]], ["state-a"])
+
+        outcome = run_cascade_waves(session, _decline)  # type: ignore[arg-type]
+
+        assert outcome.declined
+        assert session.history == []
+
+    def test_state_is_persisted_only_when_a_repair_runs(self) -> None:
+        session = StatefulFakeSession([[_task("a")], [], []], ["state-a"])
+
+        run_cascade_waves(session, _accept)  # type: ignore[arg-type]
+
+        assert session.history == ["state-a"]
