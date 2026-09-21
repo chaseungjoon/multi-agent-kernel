@@ -5296,7 +5296,7 @@ recovers within one dispatch, walking `json_schema → json_object → none`
 against both real Novita spellings. A capable model keeps strict schema
 enforcement and receives the guard.
 
-The gates closed at 2683 passing tests — 109 new, including real-loopback-HTTP
+The gates closed at 2683 passing tests — 150 new, including real-loopback-HTTP
 acceptance over the actual openai SDK and sleep-free deterministic concurrency
 tests — with `ruff check` and `mypy` clean. Four failures
 (`tests/node_store/test_ingestion.py`, three parametrizations, plus
