@@ -29,6 +29,7 @@ roadmap, and design rationale.
   - [End-to-end data flow](#end-to-end-data-flow)
   - [Current status](#current-status)
   - [Benchmark: MAK vs. git worktrees](#benchmark-mak-vs-git-worktrees)
+    - [Research: real-world contention (Wave 23)](#research-real-world-contention-wave-23)
 - [Part II — The subsystems in depth](#part-ii--the-subsystems-in-depth)
   - [Core types, exceptions, logging](#1-core-types-exceptions-logging)
   - [Node Store](#2-node-store)
@@ -557,6 +558,236 @@ scripting details, and the false-positive/extra-call guarantees are in
 python benchmark/semantic/run_semantic.py            # markdown table
 python benchmark/semantic/run_semantic.py --json      # one JSON object per shape
 ```
+
+### Research: real-world contention (Wave 23)
+
+The synthetic and real-model benchmarks above answer whether MAK executes a known
+workload correctly and how coordination affects time, tokens, and merges. Wave 23
+asks the prior empirical question: **does real software history contain enough
+file-level-but-not-node-level contention for MAK's AST decomposition to be worth
+the complexity?** The complete research artifact lives in
+[`contention_study/`](contention_study/); it is deliberately separate from the
+runtime and benchmark packages. Nothing in `mak/`, `cli/`, `tests/`, or
+`benchmark/` is changed or monkey-patched by the study. It imports
+`mak.node_store.ingestion.parse_file_into_fragments` read-only so a “node” in the
+measurement is exactly a node MAK would lock, not a second approximation created
+for favorable results.
+
+#### Corpus and questions
+
+The study mines a contiguous 2025-01-01 through 2026-09-01 slice from six
+Python-dominant repositories: `home-assistant/core`, `apache/airflow`,
+`huggingface/transformers`, `pandas-dev/pandas`,
+`scikit-learn/scikit-learn`, and `django/django`. They cover plugin and provider
+monorepos, a model registry, numerical libraries, and a mature web framework.
+The pipeline caps the merged slice at 2,000 PRs per repository and also maps a
+closed-unmerged control population for survivorship analysis.
+
+The six research questions are:
+
+1. Among genuinely concurrent PR pairs, how often do both changes touch the same
+   file, and how often do they touch the same MAK node?
+2. Among textual conflicts, what share touches no common node—a conflict that
+   node-level scheduling would avoid?
+3. When both changes touch a common node, how often does Git nevertheless merge
+   them cleanly, and how often are both edits append-only?
+4. How concentrated are node writes, and which categories own the hot tail?
+5. How do collision probability and the longest serialized lock chain change as
+   a wave grows from 2 to 64 changes?
+6. Among clean textual merges, does the combined tree introduce a shallow static
+   defect absent from the base and both sides independently?
+
+#### Headline results
+
+The Python-only pair view is the cleanest measurement of the granularity gain:
+
+| repository | same Python file | same Python AST node | reduction |
+|---|---:|---:|---:|
+| home-assistant | 0.13% | 0.06% | 2.2× |
+| airflow | 0.29% | 0.11% | 2.8× |
+| transformers | 1.46% | 0.46% | 3.2× |
+| pandas | 2.54% | 0.25% | 10.3× |
+| scikit-learn | 1.14% | 0.36% | 3.2× |
+| django | 0.84% | 0.15% | 5.7× |
+
+Node-level locking therefore removes a material amount of false contention, but
+it does not remove the ceiling. At *k*=16, 78.9–99.4% of windows have at least
+one path collision, while 32.9–66.5% have a Python-node collision. Build and CI
+configuration, dependency lists, documentation/changelogs, registries, and other
+non-Python resources remain whole-file locks and saturate first. This is the most
+important design implication: finer Python splitting has diminishing returns;
+structured operations for append-oriented text and deterministic regeneration of
+machine-maintained files are the next likely source of concurrency.
+
+The corrected pair merge sample contains 124,473 resolvable pairs and **zero
+change-versus-change textual conflicts**. Nine additional pairs fail while
+forward-porting one change across mainline and are recorded as
+`rebase_conflict`, never as a conflict with the other change. Because the textual
+conflict denominator is zero, RQ2 is reported as unidentifiable rather than
+silently converted to 0%. RQ3 is directly answered: all 5,316 shared-node pairs
+merge cleanly, and 3,324 are append-only on every shared node. A few textual
+conflicts emerge only in the sampled large-*k* sequential replays.
+
+The RQ6 probe evaluates 400 clean pairs per repository. None of the 2,400 merged
+trees introduces a MAK detector finding absent from the base, A-only, and B-only
+variants. This is a narrow negative result: the checks cover signatures, import
+consistency, name collisions, and registry keys; they do not run project tests,
+type-check the third-party repository, or establish behavioral correctness.
+
+Survivorship is deliberately not reduced to one multiplier. Abandoned PRs have
+higher node overlap in Home Assistant, Transformers, and Django, but lower overlap
+in Airflow, pandas, and scikit-learn. Pooling produces 5.31% for abandoned versus
+3.49% for merged changes, but the pooled value is sensitive to repository mix.
+The supported claim is only that merged-only history changes the distribution.
+
+See [`contention_study/CONTENTION_STUDY.md`](contention_study/CONTENTION_STUDY.md)
+for the interpretation, [`contention_study/data/RESULTS.md`](contention_study/data/RESULTS.md)
+for generated tables, and [`contention_study/plots/`](contention_study/plots/) for
+the light and dark figures. Do not copy numbers into another document without
+checking `RESULTS.md`; it is generated from the SQLite caches and is the
+authoritative human-readable aggregate.
+
+#### Why “concurrent” and “conflict” need careful definitions
+
+The initial candidate relation is **lifetime overlap**: both PRs were open at the
+same time. GitHub exposes a PR's final head after every rebase and force-push,
+however, so two lifetimes may overlap even though one final head already contains
+the other change. Merge analysis therefore uses **base overlap**: neither PR's
+fork point may postdate the other's merge. Lifetime counts remain a diagnostic;
+all reported pair overlap and merge verdicts use the stricter population.
+
+Never replace the corrected merge protocol with `git merge-tree A B`. Its
+implicit merge base is the earlier fork, so intervening mainline commits are
+charged to one PR. The naive call reports 10.7–29.6% conflicts in this corpus;
+51.7–98.4% of those alleged conflicts occur between PR diffs that share no file.
+`mining/rebase.py` instead selects the later fork, forward-ports the earlier
+change onto it, and merges the two resulting trees against that shared base.
+The result agreed with a real sparse-worktree `git merge` on all 156 audited
+pairs.
+
+The *k*-window replay answers a different counterfactual: what if *k* historical
+changes were dispatched from one base at once? `mining/window_analysis.py` uses
+the earliest fork in the window, ports each change to that root, and folds the
+surviving trees sequentially. A port conflict is change-versus-mainline. A
+failed Git operation—missing objects, permissions, disk failure—is an invalid
+replay window. Neither may be counted as change-versus-change contention. A
+regression test pins this distinction because a restricted filesystem once made
+every Git command fail and produced a superficially plausible but impossible
+100% conflict curve.
+
+#### From Git hunks to node write sets
+
+The pipeline fetches PR metadata through GitHub's REST API, but obtains code from
+bare clones and batched `refs/pull/<n>/head` fetches. It computes
+`git diff -U0 -M` so unchanged context lines cannot inflate the write set. Every
+hunk is mapped on both sides: removals use the base decomposition and additions
+use the head decomposition. Mapping both sides is what lets two PRs add different
+functions to one file without both being charged to the surrounding node.
+
+`mining/node_map.py` aligns MAK fragments back to source spans, including the
+whitespace-only gaps ingestion intentionally omits. A parse failure becomes one
+whole-file node rather than disappearing. Non-Python and binary files follow the
+same conservative whole-file rule. Generated and machine-maintained paths are
+labelled and excluded from contention sets in one shared loader, so pair, window,
+profile, and semantic stages cannot drift into different filter policies.
+
+Mapper validation uses a separate `ast` walk. Across repositories, 97.79–98.72%
+of audited files are completely covered and symbol recall is 98.85–99.38%.
+Fallbacks are conservative, so the dominant residual risk is overstating
+contention on a file the mapper could not decompose, not erasing the write.
+
+#### Package layout and stage ownership
+
+| path | responsibility |
+|---|---|
+| `mining/config.py` | corpus, time window, sampling caps, cache locations |
+| `mining/github_api.py`, `fetch_prs.py` | rate-aware and resumable PR metadata |
+| `mining/fetch_refs.py` | bare clone and batched pull-ref acquisition |
+| `mining/diff_parse.py`, `node_map.py`, `hunks_to_nodes.py` | zero-context hunks to MAK node ids |
+| `mining/filters.py`, `footprints.py` | explicit filter buckets and one shared footprint definition |
+| `mining/rebase.py`, `pair_analysis.py` | base-overlap pairs and corrected merge verdicts |
+| `mining/window_analysis.py` | *k*=2…64 set statistics and sequential replay |
+| `mining/semantic_probe.py` | four-variant RQ6 detector comparison |
+| `mining/survivorship.py` | merged versus closed-unmerged sensitivity |
+| `mining/audit.py` | mapper oracle, real-merge oracle, naive-bias audit samples |
+| `mining/profile_export.py`, `release.py` | synthetic-workload profiles and CSV release |
+| `mining/analysis.py`, `plots.py` | generated aggregate tables and 14 light/dark figures |
+
+The working SQLite databases live under `contention_study/data/<repo>/` and are
+ignored. Bare clones live outside the repository under
+`$MAK_STUDY_CACHE` (default `~/.cache/mak-contention-study`) and total roughly
+2.5 GB. Research dependencies are isolated in `contention_study/.venv`; do not
+add NumPy or Matplotlib to the kernel's `pyproject.toml`.
+
+#### Reproducing and validating the study
+
+```bash
+cd contention_study
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+export GITHUB_TOKEN=...  # public metadata only
+
+./run.sh mining.run_study                    # all repositories and stages
+./run.sh mining.run_study django/django      # one repository; global reports stay global
+./run.sh mining.run_study --from pairs       # resume from an expensive stage
+./run.sh mining.run_study --force            # deliberately recompute cached stages
+./run.sh pytest tests -q                     # 54 study tests
+```
+
+Stages run in this order:
+
+```text
+prs → refs → map → filter → pairs → windows → semantic → survivorship
+    → audit → profile → release → global analysis and plots
+```
+
+The first run requires network access and substantial local Git work. A matching
+metadata window is cached and does not call GitHub again; existing pull heads and
+mapped changes are skipped; expensive pair, window, semantic, survivorship, and
+audit stages use explicit completion records. A cached Django end-to-end run,
+including regeneration of all global tables and plots, completes in 53.85 seconds
+on the development machine. Single-repository runs must aggregate all available
+corpus profiles when rebuilding global output—otherwise they silently replace the
+six-repository report with one panel. `run_study.py` has an explicit invariant for
+this behavior.
+
+Before changing or publishing the measurement, run all three study-local gates:
+
+```bash
+./run.sh pytest tests -q
+../.venv/bin/ruff check .
+PYTHONPATH=.:.. ../.venv/bin/mypy --config-file mypy.ini mining
+```
+
+The completed wave passes 54 tests, Ruff, and strict mypy across 31 source files.
+When a definition changes, recompute every dependent stage with `--force`; never
+mix pre-fix window rows or semantic rows with a newly generated profile. Render
+and inspect both themes. Labels are direct where possible, and every light plot
+has a `-dark.png` counterpart.
+
+#### Rules for extending the research
+
+- Keep the kernel read-only. If a new research question requires changing
+  `mak/`, make that a separate wave and validate the runtime independently.
+- Preserve base overlap and the shared-base merge procedure. A simpler Git call
+  answers a different question and recreates the measured 10–30% bias.
+- Preserve failure taxonomy: source conflict, rebase conflict, invalid Git
+  operation, missing head, and unparseable file are different observations.
+- Add columns through the cache migration layer. Old caches must upgrade in
+  place; deleting a cache to make a schema change pass is not reproducibility.
+- Keep raw dictionaries inside serialization boundaries. Stage interfaces use
+  dataclasses such as `RepoSpec`, `StudyConfig`, `Footprint`, and the row models.
+- Record excluded populations instead of deleting them. Every filter needs a
+  named bucket and count in the generated report.
+- Treat the RQ6 null result narrowly. Adding a stronger semantic oracle is useful;
+  relabeling the present detector as behavioral verification is not.
+- Regenerate `data/RESULTS.md`, `data/results.json`, profiles, CSVs, and plots
+  from code. Hand-edited aggregate numbers will drift and are not accepted.
+
+The study supports AST-node locking as a concurrency-control mechanism. It does
+not show that node locks eliminate contention, that Git conflicts are common for
+human PR pairs, or that clean merges are semantically correct. Preserve those
+boundaries when citing it in code, documentation, or future benchmark design.
 
 ### Running it
 
@@ -5111,6 +5342,62 @@ The gates closed at 2528 passing tests, `ruff check mak cli tests` and `mypy
 --strict mak cli` both clean. Three failures in
 `tests/node_store/test_ingestion.py` were verified to fail identically on
 `main` at the branch point and are unrelated to this wave's changes.
+
+---
+
+## Wave 23: Real-world contention study
+
+Wave 23 is a research wave, not a runtime feature. It adds the isolated
+[`contention_study/`](contention_study/) package and leaves `mak/`, `cli/`, the
+root `tests/`, and `benchmark/` unchanged. The study imports MAK's production
+ingestion function read-only so historical Git hunks are measured against the
+same AST-node boundaries the kernel locks. NumPy and Matplotlib remain in a
+study-local environment, working clones live outside the repository, and the
+derived reports, profiles, release tables, and plots are reproducible pipeline
+outputs rather than hand-maintained evidence.
+
+The corpus covers merged and closed-unmerged changes from Home Assistant,
+Airflow, Transformers, pandas, scikit-learn, and Django between 2025-01-01 and
+2026-09-01. The implementation proceeds from rate-aware GitHub metadata and
+batched pull-ref acquisition through zero-context diff parsing, two-sided
+hunk-to-node mapping, generated-file filtering, concurrent-pair construction,
+shared-base merge analysis, *k*=2…64 window replay, survivorship analysis,
+semantic probes, audits, profile export, release tables, and 14 light/dark
+figures. SQLite completion records make every expensive stage resumable, while
+`--force` deliberately invalidates cached work. A single-repository rerun still
+regenerates global reports from every available corpus profile; this invariant
+prevents an incremental run from silently replacing six-repository evidence
+with one panel.
+
+Two methodological corrections are part of the delivered result. First,
+lifetime overlap alone is insufficient because GitHub exposes each PR's final
+head; reported pairs therefore also require base overlap. Second, a naive
+`git merge-tree A B` attributes intervening mainline changes to one PR and
+reports 10.7–29.6% conflicts in this corpus. The corrected protocol selects a
+shared base, forward-ports the earlier change, and only then compares the two
+changes. It agreed with real sparse-worktree merges on all 156 audited pairs.
+Infrastructure failures and failures to port a change across mainline have
+separate outcomes and are never counted as conflicts between the changes.
+
+The resulting Python-node collision rate is 2.2–10.3 times lower than the
+Python-file collision rate. Among 124,473 resolvable sampled pairs there are no
+change-versus-change textual conflicts; all 5,316 pairs sharing a MAK node merge
+cleanly, including 3,324 whose shared-node edits are all append-only. No new
+shallow static defect appears in the 2,400 clean merges evaluated by the RQ6
+probe. Those are deliberately bounded claims: non-Python whole-file resources
+still dominate large waves, a clean merge is not proof of behavioral
+correctness, the RQ2 fraction is unidentifiable when its textual-conflict
+denominator is zero, and the mixed per-repository survivorship result does not
+support a causal claim.
+
+The hunk mapper was checked against an independent `ast` oracle: file coverage
+is 97.79–98.72% and symbol recall is 98.85–99.38%, with conservative whole-file
+fallbacks for parse failures and non-Python paths. The wave closes with 54 study
+tests passing, Ruff clean, and strict mypy clean across 31 mining source files.
+The complete definitions, commands, extension rules, and interpretation limits
+are in [Research: real-world contention](#research-real-world-contention-wave-23);
+the publication-style account is
+[`contention_study/CONTENTION_STUDY.md`](contention_study/CONTENTION_STUDY.md).
 
 ---
 

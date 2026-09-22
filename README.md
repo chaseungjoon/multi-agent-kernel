@@ -38,6 +38,7 @@ arbitrates shared memory between threads.
 - [Custom & OpenAI-Compatible Endpoints](#custom--openai-compatible-endpoints)
 - [Configuration & API Keys](#configuration--api-keys)
 - [Benchmark](#benchmark)
+  - [Research](#research)
 - [Contribute](#contribute)
 - [License](#license)
 
@@ -438,6 +439,21 @@ modeled.
 With four agents, node-level MAK finished in about **21 seconds under**
 both contention shapes. File-level locking rose to 29 seconds for uniform and
 53 seconds for [Zipf contention](https://en.wikipedia.org/wiki/Zipf%27s_law), while merge-at-end lost one Zipf registration.
+
+### Research
+
+Wave 23 mined six Python repositories to compare concurrent file and AST-node
+contention. Python-node collisions were **2.2–10.3× less frequent** than
+Python-file collisions. All **5,316 shared-node pairs** merged cleanly, and no
+shallow static defect appeared in **2,400 clean merges**.
+
+![Collision probability by concurrency and lock granularity.](contention_study/plots/01-collision-vs-k.png)
+
+![Naive merge measurement versus corrected shared-base measurement.](contention_study/plots/05-naive-merge-bias.png)
+
+[Full study](contention_study/CONTENTION_STUDY.md) ·
+[Results tables](contention_study/data/RESULTS.md) ·
+[Dataset documentation](contention_study/DATASHEET.md)
 
 ### Reproduce results
 
