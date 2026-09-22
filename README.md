@@ -20,8 +20,6 @@ No worktrees, no merge step, no late-stage reconciliation.
 The Multi Agent Kernel arbitrates concurrent access the way an OS
 arbitrates shared memory between threads.
 
-![](graphics/02-shared-memory.png)
-
 </div>
 
 </br>
