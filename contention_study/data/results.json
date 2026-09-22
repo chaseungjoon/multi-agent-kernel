@@ -1,0 +1,6982 @@
+{
+  "repos": [
+    {
+      "non_python": {
+        "non_python_conflict_files": 0,
+        "non_python_conflict_share": 0.0,
+        "non_python_touch_share": 0.1041267992345453,
+        "non_python_touches": 2503,
+        "total_conflict_files": 0,
+        "total_touches": 24038
+      },
+      "profile": {
+        "changes": {
+          "append_only_touch_share": 0.14431317081287962,
+          "count": 1941,
+          "files_histogram": [
+            [
+              1,
+              424
+            ],
+            [
+              2,
+              632
+            ],
+            [
+              3,
+              259
+            ],
+            [
+              4,
+              166
+            ],
+            [
+              5,
+              110
+            ],
+            [
+              6,
+              82
+            ],
+            [
+              7,
+              55
+            ],
+            [
+              8,
+              46
+            ],
+            [
+              9,
+              33
+            ],
+            [
+              10,
+              22
+            ],
+            [
+              11,
+              14
+            ],
+            [
+              12,
+              14
+            ],
+            [
+              13,
+              13
+            ],
+            [
+              14,
+              12
+            ],
+            [
+              15,
+              5
+            ],
+            [
+              16,
+              4
+            ],
+            [
+              17,
+              4
+            ],
+            [
+              18,
+              7
+            ],
+            [
+              19,
+              4
+            ],
+            [
+              20,
+              4
+            ],
+            [
+              21,
+              2
+            ],
+            [
+              22,
+              2
+            ],
+            [
+              23,
+              2
+            ],
+            [
+              24,
+              2
+            ],
+            [
+              25,
+              1
+            ],
+            [
+              26,
+              1
+            ],
+            [
+              28,
+              1
+            ],
+            [
+              29,
+              2
+            ],
+            [
+              31,
+              1
+            ],
+            [
+              32,
+              1
+            ],
+            [
+              33,
+              1
+            ],
+            [
+              34,
+              1
+            ],
+            [
+              39,
+              1
+            ],
+            [
+              40,
+              2
+            ],
+            [
+              46,
+              2
+            ],
+            [
+              52,
+              1
+            ],
+            [
+              57,
+              1
+            ],
+            [
+              67,
+              1
+            ],
+            [
+              74,
+              1
+            ],
+            [
+              75,
+              3
+            ],
+            [
+              82,
+              2
+            ]
+          ],
+          "files_per_change": {
+            "count": 1941,
+            "maximum": 82,
+            "mean": 4.062854198866564,
+            "p50": 2.0,
+            "p90": 8.0,
+            "p99": 28.59999999999991
+          },
+          "nodes_histogram": [
+            [
+              1,
+              226
+            ],
+            [
+              2,
+              426
+            ],
+            [
+              3,
+              233
+            ],
+            [
+              4,
+              150
+            ],
+            [
+              5,
+              104
+            ],
+            [
+              6,
+              98
+            ],
+            [
+              7,
+              86
+            ],
+            [
+              8,
+              66
+            ],
+            [
+              9,
+              53
+            ],
+            [
+              10,
+              38
+            ],
+            [
+              11,
+              36
+            ],
+            [
+              12,
+              27
+            ],
+            [
+              13,
+              32
+            ],
+            [
+              14,
+              26
+            ],
+            [
+              15,
+              26
+            ],
+            [
+              16,
+              27
+            ],
+            [
+              17,
+              20
+            ],
+            [
+              18,
+              26
+            ],
+            [
+              19,
+              8
+            ],
+            [
+              20,
+              12
+            ],
+            [
+              21,
+              12
+            ],
+            [
+              22,
+              15
+            ],
+            [
+              23,
+              14
+            ],
+            [
+              24,
+              9
+            ],
+            [
+              25,
+              7
+            ],
+            [
+              26,
+              9
+            ],
+            [
+              27,
+              10
+            ],
+            [
+              28,
+              5
+            ],
+            [
+              29,
+              9
+            ],
+            [
+              30,
+              2
+            ],
+            [
+              31,
+              9
+            ],
+            [
+              32,
+              2
+            ],
+            [
+              33,
+              7
+            ],
+            [
+              34,
+              4
+            ],
+            [
+              35,
+              4
+            ],
+            [
+              36,
+              4
+            ],
+            [
+              37,
+              6
+            ],
+            [
+              38,
+              1
+            ],
+            [
+              39,
+              3
+            ],
+            [
+              40,
+              4
+            ],
+            [
+              41,
+              2
+            ],
+            [
+              42,
+              1
+            ],
+            [
+              43,
+              4
+            ],
+            [
+              44,
+              3
+            ],
+            [
+              45,
+              1
+            ],
+            [
+              46,
+              2
+            ],
+            [
+              47,
+              2
+            ],
+            [
+              48,
+              1
+            ],
+            [
+              49,
+              4
+            ],
+            [
+              51,
+              5
+            ],
+            [
+              52,
+              4
+            ],
+            [
+              53,
+              3
+            ],
+            [
+              54,
+              1
+            ],
+            [
+              55,
+              2
+            ],
+            [
+              57,
+              2
+            ],
+            [
+              58,
+              1
+            ],
+            [
+              59,
+              3
+            ],
+            [
+              61,
+              3
+            ],
+            [
+              62,
+              2
+            ],
+            [
+              63,
+              2
+            ],
+            [
+              64,
+              3
+            ],
+            [
+              66,
+              2
+            ],
+            [
+              67,
+              2
+            ],
+            [
+              68,
+              3
+            ]
+          ],
+          "nodes_per_change": {
+            "count": 1941,
+            "maximum": 293,
+            "mean": 9.782071097372489,
+            "p50": 4.0,
+            "p90": 22.0,
+            "p99": 86.0
+          },
+          "python_nodes_per_change": {
+            "count": 1941,
+            "maximum": 293,
+            "mean": 8.600721277691912,
+            "p50": 3.0,
+            "p90": 20.0,
+            "p99": 76.59999999999991
+          }
+        },
+        "filters": {
+          "bot": 64,
+          "kept": 2187,
+          "no_footprint": 1,
+          "oversize": 15,
+          "unusable": 3,
+          "whitespace_sweep": 0
+        },
+        "generated_at": "2026-09-22T11:04:39.128934+00:00",
+        "hot_node_categories": [
+          {
+            "category": "other",
+            "nodes": 99,
+            "writes": 566
+          },
+          {
+            "category": "build_ci",
+            "nodes": 16,
+            "writes": 561
+          },
+          {
+            "category": "import_header",
+            "nodes": 53,
+            "writes": 276
+          },
+          {
+            "category": "tests",
+            "nodes": 19,
+            "writes": 120
+          },
+          {
+            "category": "registry",
+            "nodes": 13,
+            "writes": 87
+          }
+        ],
+        "node_popularity": {
+          "distinct_nodes": 19179,
+          "distinct_python_nodes": 17860,
+          "top_nodes": [
+            {
+              "category": "build_ci",
+              "node_id": "requirements_all.txt::__file__::__whole__",
+              "writes": 355
+            },
+            {
+              "category": "build_ci",
+              "node_id": "homeassistant/package_constraints.txt::__file__::__whole__",
+              "writes": 41
+            },
+            {
+              "category": "build_ci",
+              "node_id": "CODEOWNERS::__file__::__whole__",
+              "writes": 39
+            },
+            {
+              "category": "registry",
+              "node_id": "homeassistant/helpers/device_registry.py::__file__::__whole__",
+              "writes": 29
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".strict-typing::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "build_ci",
+              "node_id": "mypy.ini::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/zwave_js/config_flow.py::__file__::__whole__",
+              "writes": 20
+            },
+            {
+              "category": "build_ci",
+              "node_id": "pyproject.toml::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "build_ci",
+              "node_id": "requirements.txt::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "tests",
+              "node_id": "tests/components/lyngdorf/conftest.py::function::mock_receiver",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/frontend/manifest.json::__file__::__whole__",
+              "writes": 13
+            },
+            {
+              "category": "import_header",
+              "node_id": "homeassistant/components/midea/__init__.py::module_header::__header__",
+              "writes": 13
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/lyngdorf/manifest.json::__file__::__whole__",
+              "writes": 12
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/midea/strings.json::__file__::__whole__",
+              "writes": 12
+            },
+            {
+              "category": "other",
+              "node_id": "script/hassfest/quality_scale.py::module_body::__body__",
+              "writes": 11
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/sofar/strings.json::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/solaredge_modbus/strings.json::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/teslemetry/manifest.json::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/teslemetry/strings.json::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/vizio/strings.json::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/home_connect/strings.json::__file__::__whole__",
+              "writes": 9
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/midea/manifest.json::__file__::__whole__",
+              "writes": 9
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/sofar/manifest.json::__file__::__whole__",
+              "writes": 9
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/sofar/sensor.py::__file__::__whole__",
+              "writes": 9
+            },
+            {
+              "category": "registry",
+              "node_id": "homeassistant/components/switchbot_cloud/const.py::module_body::__body__",
+              "writes": 9
+            },
+            {
+              "category": "import_header",
+              "node_id": "tests/components/lyngdorf/conftest.py::module_header::__header__",
+              "writes": 9
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/knx/manifest.json::__file__::__whole__",
+              "writes": 8
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/knx/strings.json::__file__::__whole__",
+              "writes": 8
+            },
+            {
+              "category": "import_header",
+              "node_id": "homeassistant/components/midea/device_catalog.py::module_header::__header__",
+              "writes": 8
+            },
+            {
+              "category": "import_header",
+              "node_id": "homeassistant/components/solaredge_modbus/__init__.py::module_header::__header__",
+              "writes": 8
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/tesla_fleet/manifest.json::__file__::__whole__",
+              "writes": 8
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/tessie/manifest.json::__file__::__whole__",
+              "writes": 8
+            },
+            {
+              "category": "build_ci",
+              "node_id": "requirements_test.txt::__file__::__whole__",
+              "writes": 8
+            },
+            {
+              "category": "tests",
+              "node_id": "tests/components/sofar/snapshots/test_sensor.ambr::__file__::__whole__",
+              "writes": 8
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/conversation/manifest.json::__file__::__whole__",
+              "writes": 7
+            },
+            {
+              "category": "import_header",
+              "node_id": "homeassistant/components/google_health/sensor.py::module_header::__header__",
+              "writes": 7
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/reolink/manifest.json::__file__::__whole__",
+              "writes": 7
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/solaredge_modbus/icons.json::__file__::__whole__",
+              "writes": 7
+            },
+            {
+              "category": "tests",
+              "node_id": "tests/components/bosch_shc/conftest.py::function::mock_config_entry",
+              "writes": 7
+            },
+            {
+              "category": "tests",
+              "node_id": "tests/components/bosch_shc/conftest.py::function::mock_session",
+              "writes": 7
+            },
+            {
+              "category": "import_header",
+              "node_id": "tests/components/bosch_shc/conftest.py::module_header::__header__",
+              "writes": 7
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/ci.yaml::__file__::__whole__",
+              "writes": 6
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/cloud/manifest.json::__file__::__whole__",
+              "writes": 6
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/gatus/strings.json::__file__::__whole__",
+              "writes": 6
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/homeassistant/strings.json::__file__::__whole__",
+              "writes": 6
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/hotspring/strings.json::__file__::__whole__",
+              "writes": 6
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/izone/strings.json::__file__::__whole__",
+              "writes": 6
+            },
+            {
+              "category": "import_header",
+              "node_id": "homeassistant/components/knx/storage/entity_store_schema.py::module_header::__header__",
+              "writes": 6
+            },
+            {
+              "category": "import_header",
+              "node_id": "homeassistant/components/lyngdorf/const.py::module_header::__header__",
+              "writes": 6
+            },
+            {
+              "category": "other",
+              "node_id": "homeassistant/components/lyngdorf/strings.json::__file__::__whole__",
+              "writes": 6
+            }
+          ],
+          "writes_histogram": [
+            [
+              1,
+              16210
+            ],
+            [
+              2,
+              2257
+            ],
+            [
+              3,
+              461
+            ],
+            [
+              4,
+              126
+            ],
+            [
+              5,
+              53
+            ],
+            [
+              6,
+              31
+            ],
+            [
+              7,
+              7
+            ],
+            [
+              8,
+              8
+            ],
+            [
+              9,
+              6
+            ],
+            [
+              10,
+              5
+            ],
+            [
+              11,
+              1
+            ],
+            [
+              12,
+              2
+            ],
+            [
+              13,
+              2
+            ],
+            [
+              17,
+              1
+            ],
+            [
+              19,
+              2
+            ],
+            [
+              20,
+              1
+            ],
+            [
+              21,
+              2
+            ],
+            [
+              29,
+              1
+            ],
+            [
+              39,
+              1
+            ],
+            [
+              41,
+              1
+            ],
+            [
+              355,
+              1
+            ]
+          ],
+          "zipf": {
+            "alpha": 2.2152332601401197,
+            "gini": 0.177721969869715,
+            "r_squared": 0.7658246875875782,
+            "tail_size": 19179,
+            "x_min": 1
+          }
+        },
+        "pair_probabilities": {
+          "co_flight_hours": {
+            "count": 25000,
+            "maximum": 766,
+            "mean": 29.6106,
+            "p50": 7.0,
+            "p90": 82.0,
+            "p99": 313.0
+          },
+          "definition": "base_overlap",
+          "merge_sample": 25000,
+          "population_pairs": 153094,
+          "same_file": 0.013174912145479249,
+          "same_file_different_node": 0.0005094909010150626,
+          "same_node": 0.012665421244464185,
+          "same_python_file": 0.001286791121794453,
+          "same_python_node": 0.0005813421819274433,
+          "shared_node_all_append": 0.0006793212013534169,
+          "textual_conflict": 0.0,
+          "textual_conflict_without_shared_node": 0.0,
+          "verdict_counts": {
+            "clean": 25000
+          }
+        },
+        "repo": "home-assistant/core",
+        "schema_version": 1,
+        "window": {
+          "clone_main_branch": "dev",
+          "clone_main_sha": "8a9a566ff281d201aefbf870a026cb3dea294509",
+          "since": "2025-01-01",
+          "until": "2026-09-01"
+        },
+        "window_curves": [
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 2,
+            "mean_contended_files": 0.0654639175257732,
+            "mean_contended_nodes": 0.061855670103092786,
+            "mean_contended_py_files": 0.017010309278350514,
+            "mean_contended_py_nodes": 0.011855670103092783,
+            "mean_distinct_nodes": 19.49123711340206,
+            "mean_distinct_py_nodes": 17.181958762886598,
+            "mean_effective_k": 2.0,
+            "mean_max_file_chain": 1.0541237113402062,
+            "mean_max_node_chain": 1.0505154639175258,
+            "mean_max_py_file_chain": 0.9711340206185567,
+            "mean_max_py_node_chain": 0.9608247422680413,
+            "p_file_collision": 0.05412371134020619,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.050515463917525774,
+            "p_py_file_collision": 0.012371134020618556,
+            "p_py_node_collision": 0.007731958762886598,
+            "windows": 1940
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 4,
+            "mean_contended_files": 0.27966976264189886,
+            "mean_contended_nodes": 0.27347781217750256,
+            "mean_contended_py_files": 0.07636738906088751,
+            "mean_contended_py_nodes": 0.06037151702786378,
+            "mean_distinct_nodes": 38.73942208462332,
+            "mean_distinct_py_nodes": 34.26934984520124,
+            "mean_effective_k": 3.56551724137931,
+            "mean_max_file_chain": 1.2461300309597523,
+            "mean_max_node_chain": 1.236842105263158,
+            "mean_max_py_file_chain": 1.0515995872033024,
+            "mean_max_py_node_chain": 1.0340557275541795,
+            "p_file_collision": 0.21207430340557276,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.20691434468524253,
+            "p_py_file_collision": 0.04540763673890609,
+            "p_py_node_collision": 0.033539731682146544,
+            "windows": 1938
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 8,
+            "mean_contended_files": 0.8210961737331954,
+            "mean_contended_nodes": 0.8107549120992761,
+            "mean_contended_py_files": 0.266287487073423,
+            "mean_contended_py_nodes": 0.2156153050672182,
+            "mean_distinct_nodes": 76.7833505687694,
+            "mean_distinct_py_nodes": 68.21199586349535,
+            "mean_effective_k": 6.413333333333333,
+            "mean_max_file_chain": 1.7673216132368148,
+            "mean_max_node_chain": 1.7476732161323683,
+            "mean_max_py_file_chain": 1.1763185108583247,
+            "mean_max_py_node_chain": 1.122543950361944,
+            "p_file_collision": 0.5134436401240952,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.5062047569803516,
+            "p_py_file_collision": 0.1514994829369183,
+            "p_py_node_collision": 0.11427094105480869,
+            "windows": 1934
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 16,
+            "mean_contended_files": 2.009865005192108,
+            "mean_contended_nodes": 1.985981308411215,
+            "mean_contended_py_files": 0.8535825545171339,
+            "mean_contended_py_nodes": 0.7045690550363447,
+            "mean_distinct_nodes": 151.48494288681204,
+            "mean_distinct_py_nodes": 135.09916926272066,
+            "mean_effective_k": 11.42,
+            "mean_max_file_chain": 2.94392523364486,
+            "mean_max_node_chain": 2.9205607476635516,
+            "mean_max_py_file_chain": 1.5129802699896158,
+            "mean_max_py_node_chain": 1.3608515057113189,
+            "p_file_collision": 0.8016614745586709,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.7980269989615784,
+            "p_py_file_collision": 0.42938733125649015,
+            "p_py_node_collision": 0.3291796469366563,
+            "windows": 1926
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 32,
+            "mean_contended_files": 5.087434554973822,
+            "mean_contended_nodes": 5.16020942408377,
+            "mean_contended_py_files": 2.738219895287958,
+            "mean_contended_py_nodes": 2.5,
+            "mean_distinct_nodes": 297.7890052356021,
+            "mean_distinct_py_nodes": 266.6371727748691,
+            "mean_effective_k": 21.86,
+            "mean_max_file_chain": 5.4089005235602095,
+            "mean_max_node_chain": 5.402094240837696,
+            "mean_max_py_file_chain": 2.137696335078534,
+            "mean_max_py_node_chain": 1.8052356020942408,
+            "p_file_collision": 0.9445026178010472,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.9445026178010472,
+            "p_py_file_collision": 0.8282722513089005,
+            "p_py_node_collision": 0.7026178010471205,
+            "windows": 1910
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 64,
+            "mean_contended_files": 13.128860489882854,
+            "mean_contended_nodes": 13.819488817891374,
+            "mean_contended_py_files": 8.069222577209798,
+            "mean_contended_py_nodes": 8.056975505857295,
+            "mean_distinct_nodes": 587.0047923322684,
+            "mean_distinct_py_nodes": 527.9574014909479,
+            "mean_effective_k": 39.12,
+            "mean_max_file_chain": 10.612886048988285,
+            "mean_max_node_chain": 10.612886048988285,
+            "mean_max_py_file_chain": 3.033013844515442,
+            "mean_max_py_node_chain": 2.389243876464324,
+            "p_file_collision": 0.9978700745473909,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.9978700745473909,
+            "p_py_file_collision": 0.9914802981895634,
+            "p_py_node_collision": 0.9659211927582535,
+            "windows": 1878
+          }
+        ]
+      },
+      "semantic": {
+        "ci95": [
+          0.0,
+          0.009512640599680667
+        ],
+        "kinds": [],
+        "probed": 400,
+        "share": 0.0,
+        "total_new_defects": 0,
+        "with_new_defects": 0
+      },
+      "slug": "home-assistant/core",
+      "two_by_two": {
+        "clean_not_shared": 24688,
+        "clean_shared": 312,
+        "clean_shared_all_append": 22,
+        "conflict_not_shared": 0,
+        "conflict_py_not_shared": 0,
+        "conflict_py_shared": 0,
+        "conflict_shared": 0,
+        "error": 0,
+        "rebase_conflict": 0
+      },
+      "validation": {
+        "mapper": {
+          "extra_ratio": 0.333716915995397,
+          "file_accuracy": 0.9778869778869779,
+          "files_agreeing": 398,
+          "files_checked": 407,
+          "symbol_recall": 0.9884925201380897,
+          "symbols_expected": 869,
+          "symbols_extra": 290,
+          "symbols_matched": 859
+        },
+        "merge": {
+          "accuracy": 1.0,
+          "agreeing": 26,
+          "checked": 26,
+          "disagreements": []
+        },
+        "naive_bias": {
+          "corrected_checked": 679,
+          "corrected_conflicts": 0,
+          "corrected_rate": 0.0,
+          "naive_checked": 1200,
+          "naive_conflicts": 128,
+          "naive_conflicts_sharing_no_file": 126,
+          "naive_rate": 0.10666666666666667,
+          "provably_spurious": 0.984375
+        },
+        "pair_sampling_rate": "0.163298",
+        "survivorship": {
+          "abandoned": {
+            "changes": 246,
+            "file_collisions": 1420,
+            "file_rate": 0.017080241047908874,
+            "node_collisions": 1379,
+            "node_rate": 0.01658707915849742,
+            "pairs": 83137,
+            "population": "abandoned",
+            "py_file_collisions": 153,
+            "py_node_collisions": 90,
+            "py_node_rate": 0.0010825504889519708
+          },
+          "merged": {
+            "changes": 1941,
+            "file_collisions": 4034,
+            "file_rate": 0.013174912145479249,
+            "node_collisions": 3878,
+            "node_rate": 0.012665421244464185,
+            "pairs": 306188,
+            "population": "merged",
+            "py_file_collisions": 394,
+            "py_node_collisions": 178,
+            "py_node_rate": 0.0005813421819274433
+          }
+        }
+      }
+    },
+    {
+      "non_python": {
+        "non_python_conflict_files": 0,
+        "non_python_conflict_share": 0.0,
+        "non_python_touch_share": 0.21200372969524464,
+        "non_python_touches": 4320,
+        "total_conflict_files": 0,
+        "total_touches": 20377
+      },
+      "profile": {
+        "changes": {
+          "append_only_touch_share": 0.17544290131030083,
+          "count": 1352,
+          "files_histogram": [
+            [
+              0,
+              11
+            ],
+            [
+              1,
+              289
+            ],
+            [
+              2,
+              339
+            ],
+            [
+              3,
+              193
+            ],
+            [
+              4,
+              141
+            ],
+            [
+              5,
+              71
+            ],
+            [
+              6,
+              56
+            ],
+            [
+              7,
+              45
+            ],
+            [
+              8,
+              34
+            ],
+            [
+              9,
+              25
+            ],
+            [
+              10,
+              18
+            ],
+            [
+              11,
+              18
+            ],
+            [
+              12,
+              5
+            ],
+            [
+              13,
+              10
+            ],
+            [
+              14,
+              7
+            ],
+            [
+              15,
+              9
+            ],
+            [
+              16,
+              12
+            ],
+            [
+              17,
+              4
+            ],
+            [
+              18,
+              10
+            ],
+            [
+              19,
+              3
+            ],
+            [
+              20,
+              4
+            ],
+            [
+              21,
+              1
+            ],
+            [
+              22,
+              4
+            ],
+            [
+              23,
+              5
+            ],
+            [
+              24,
+              1
+            ],
+            [
+              25,
+              2
+            ],
+            [
+              26,
+              4
+            ],
+            [
+              27,
+              2
+            ],
+            [
+              28,
+              1
+            ],
+            [
+              29,
+              2
+            ],
+            [
+              30,
+              3
+            ],
+            [
+              31,
+              1
+            ],
+            [
+              33,
+              1
+            ],
+            [
+              35,
+              1
+            ],
+            [
+              36,
+              1
+            ],
+            [
+              37,
+              1
+            ],
+            [
+              38,
+              2
+            ],
+            [
+              40,
+              1
+            ],
+            [
+              42,
+              1
+            ],
+            [
+              43,
+              3
+            ],
+            [
+              53,
+              2
+            ],
+            [
+              56,
+              1
+            ],
+            [
+              61,
+              1
+            ],
+            [
+              69,
+              1
+            ],
+            [
+              71,
+              1
+            ],
+            [
+              73,
+              1
+            ],
+            [
+              75,
+              1
+            ],
+            [
+              79,
+              1
+            ],
+            [
+              82,
+              1
+            ],
+            [
+              100,
+              1
+            ]
+          ],
+          "files_per_change": {
+            "count": 1352,
+            "maximum": 100,
+            "mean": 5.069526627218935,
+            "p50": 3.0,
+            "p90": 10.0,
+            "p99": 42.49000000000001
+          },
+          "nodes_histogram": [
+            [
+              0,
+              11
+            ],
+            [
+              1,
+              243
+            ],
+            [
+              2,
+              152
+            ],
+            [
+              3,
+              112
+            ],
+            [
+              4,
+              101
+            ],
+            [
+              5,
+              82
+            ],
+            [
+              6,
+              78
+            ],
+            [
+              7,
+              43
+            ],
+            [
+              8,
+              54
+            ],
+            [
+              9,
+              36
+            ],
+            [
+              10,
+              35
+            ],
+            [
+              11,
+              36
+            ],
+            [
+              12,
+              19
+            ],
+            [
+              13,
+              31
+            ],
+            [
+              14,
+              25
+            ],
+            [
+              15,
+              17
+            ],
+            [
+              16,
+              19
+            ],
+            [
+              17,
+              14
+            ],
+            [
+              18,
+              25
+            ],
+            [
+              19,
+              11
+            ],
+            [
+              20,
+              15
+            ],
+            [
+              21,
+              7
+            ],
+            [
+              22,
+              9
+            ],
+            [
+              23,
+              7
+            ],
+            [
+              24,
+              13
+            ],
+            [
+              25,
+              4
+            ],
+            [
+              26,
+              4
+            ],
+            [
+              27,
+              12
+            ],
+            [
+              28,
+              6
+            ],
+            [
+              29,
+              2
+            ],
+            [
+              30,
+              8
+            ],
+            [
+              31,
+              7
+            ],
+            [
+              32,
+              5
+            ],
+            [
+              33,
+              9
+            ],
+            [
+              34,
+              5
+            ],
+            [
+              35,
+              4
+            ],
+            [
+              36,
+              4
+            ],
+            [
+              37,
+              5
+            ],
+            [
+              38,
+              4
+            ],
+            [
+              39,
+              2
+            ],
+            [
+              40,
+              2
+            ],
+            [
+              41,
+              2
+            ],
+            [
+              43,
+              2
+            ],
+            [
+              44,
+              4
+            ],
+            [
+              45,
+              1
+            ],
+            [
+              46,
+              2
+            ],
+            [
+              47,
+              3
+            ],
+            [
+              48,
+              4
+            ],
+            [
+              49,
+              6
+            ],
+            [
+              50,
+              1
+            ],
+            [
+              51,
+              2
+            ],
+            [
+              52,
+              2
+            ],
+            [
+              53,
+              1
+            ],
+            [
+              54,
+              2
+            ],
+            [
+              55,
+              2
+            ],
+            [
+              56,
+              2
+            ],
+            [
+              61,
+              1
+            ],
+            [
+              62,
+              2
+            ],
+            [
+              63,
+              2
+            ],
+            [
+              64,
+              1
+            ],
+            [
+              65,
+              1
+            ],
+            [
+              66,
+              1
+            ],
+            [
+              68,
+              1
+            ],
+            [
+              69,
+              1
+            ]
+          ],
+          "nodes_per_change": {
+            "count": 1352,
+            "maximum": 297,
+            "mean": 11.622041420118343,
+            "p50": 5.0,
+            "p90": 28.0,
+            "p99": 86.49000000000001
+          },
+          "python_nodes_per_change": {
+            "count": 1352,
+            "maximum": 281,
+            "mean": 8.969674556213018,
+            "p50": 3.0,
+            "p90": 22.0,
+            "p99": 82.49000000000001
+          }
+        },
+        "filters": {
+          "bot": 195,
+          "kept": 1752,
+          "no_footprint": 4,
+          "oversize": 20,
+          "unusable": 5,
+          "whitespace_sweep": 0
+        },
+        "generated_at": "2026-09-22T11:04:40.001822+00:00",
+        "hot_node_categories": [
+          {
+            "category": "other",
+            "nodes": 77,
+            "writes": 805
+          },
+          {
+            "category": "docs_changelog",
+            "nodes": 45,
+            "writes": 395
+          },
+          {
+            "category": "build_ci",
+            "nodes": 36,
+            "writes": 393
+          },
+          {
+            "category": "import_header",
+            "nodes": 34,
+            "writes": 250
+          },
+          {
+            "category": "registry",
+            "nodes": 4,
+            "writes": 29
+          },
+          {
+            "category": "tests",
+            "nodes": 2,
+            "writes": 19
+          },
+          {
+            "category": "settings",
+            "nodes": 2,
+            "writes": 14
+          }
+        ],
+        "node_popularity": {
+          "distinct_nodes": 15152,
+          "distinct_python_nodes": 13207,
+          "top_nodes": [
+            {
+              "category": "other",
+              "node_id": "scripts/ci/prek/validate_operators_init_exemptions.txt::__file__::__whole__",
+              "writes": 70
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/openapi-gen/requests/types.gen.ts::__file__::__whole__",
+              "writes": 54
+            },
+            {
+              "category": "build_ci",
+              "node_id": "airflow-core/src/airflow/api_fastapi/core_api/openapi/v2-rest-api-generated.yaml::__file__::__whole__",
+              "writes": 39
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/openapi-gen/requests/services.gen.ts::__file__::__whole__",
+              "writes": 36
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/openapi-gen/requests/schemas.gen.ts::__file__::__whole__",
+              "writes": 35
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/openapi-gen/queries/queries.ts::__file__::__whole__",
+              "writes": 32
+            },
+            {
+              "category": "build_ci",
+              "node_id": "airflow-core/src/airflow/api_fastapi/core_api/openapi/_private_ui.yaml::__file__::__whole__",
+              "writes": 29
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/openapi-gen/queries/ensureQueryData.ts::__file__::__whole__",
+              "writes": 29
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/openapi-gen/queries/prefetch.ts::__file__::__whole__",
+              "writes": 29
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/spelling_wordlist.txt::__file__::__whole__",
+              "writes": 29
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/openapi-gen/queries/suspense.ts::__file__::__whole__",
+              "writes": 28
+            },
+            {
+              "category": "build_ci",
+              "node_id": "airflow-core/src/airflow/config_templates/config.yml::__file__::__whole__",
+              "writes": 24
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".pre-commit-config.yaml::__file__::__whole__",
+              "writes": 23
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/openapi-gen/queries/common.ts::__file__::__whole__",
+              "writes": 22
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "dev/breeze/doc/ci/04_selective_checks.md::__file__::__whole__",
+              "writes": 22
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "providers/common/ai/docs/index.rst::__file__::__whole__",
+              "writes": 20
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/publish-docs-to-s3.yml::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/public/i18n/locales/en/common.json::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "other",
+              "node_id": "dev/breeze/src/airflow_breeze/utils/selective_checks.py::module_body::__body__#2",
+              "writes": 18
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/ci-amd.yml::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/ci-arm.yml::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "build_ci",
+              "node_id": "providers/common/ai/provider.yaml::__file__::__whole__",
+              "writes": 16
+            },
+            {
+              "category": "import_header",
+              "node_id": "airflow-core/tests/unit/cli/commands/test_command_deprecations.py::module_header::__header__",
+              "writes": 15
+            },
+            {
+              "category": "import_header",
+              "node_id": "airflow-core/tests/unit/jobs/test_scheduler_job.py::module_header::__header__",
+              "writes": 15
+            },
+            {
+              "category": "tests",
+              "node_id": "dev/breeze/tests/test_selective_checks.py::function::test_expected_output_pull_request_main",
+              "writes": 14
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "java-sdk/README.md::__file__::__whole__",
+              "writes": 14
+            },
+            {
+              "category": "build_ci",
+              "node_id": "pyproject.toml::__file__::__whole__",
+              "writes": 14
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "ts-sdk/README.md::__file__::__whole__",
+              "writes": 14
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/api_fastapi/execution_api/routes/task_instances.py::function::ti_run",
+              "writes": 13
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "dev/README_RELEASE_PROVIDERS.md::__file__::__whole__",
+              "writes": 13
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "airflow-core/docs/migrations-ref.rst::__file__::__whole__",
+              "writes": 12
+            },
+            {
+              "category": "import_header",
+              "node_id": "airflow-core/src/airflow/jobs/scheduler_job_runner.py::module_header::__header__",
+              "writes": 12
+            },
+            {
+              "category": "import_header",
+              "node_id": "airflow-core/src/airflow/utils/db.py::module_header::__header__",
+              "writes": 12
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "providers/common/ai/docs/toolsets.rst::__file__::__whole__",
+              "writes": 12
+            },
+            {
+              "category": "build_ci",
+              "node_id": "shared/observability/src/airflow_shared/observability/metrics/metrics_template.yaml::__file__::__whole__",
+              "writes": 12
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": ".agents/skills/prepare-providers-documentation/SKILL.md::__file__::__whole__",
+              "writes": 11
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/public/i18n/locales/zh-TW/common.json::__file__::__whole__",
+              "writes": 11
+            },
+            {
+              "category": "other",
+              "node_id": "chart/values.schema.json::__file__::__whole__",
+              "writes": 11
+            },
+            {
+              "category": "build_ci",
+              "node_id": "providers/common/ai/pyproject.toml::__file__::__whole__",
+              "writes": 11
+            },
+            {
+              "category": "build_ci",
+              "node_id": "providers/google/pyproject.toml::__file__::__whole__",
+              "writes": 11
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/CODEOWNERS::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "import_header",
+              "node_id": "airflow-core/src/airflow/api_fastapi/execution_api/routes/task_instances.py::module_header::__header__",
+              "writes": 10
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/src/pages/DagRuns/DagRuns.tsx::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/ui/src/pages/DagsList/DagsList.tsx::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "build_ci",
+              "node_id": "chart/values.yaml::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "providers/google/docs/index.rst::__file__::__whole__",
+              "writes": 10
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/dependabot.yml::__file__::__whole__",
+              "writes": 9
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "AGENTS.md::__file__::__whole__",
+              "writes": 9
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/api_fastapi/core_api/datamodels/connections.py::class::ConnectionBody",
+              "writes": 9
+            },
+            {
+              "category": "other",
+              "node_id": "airflow-core/src/airflow/api_fastapi/core_api/routes/public/dag_run.py::function::get_dag_runs",
+              "writes": 9
+            }
+          ],
+          "writes_histogram": [
+            [
+              1,
+              12532
+            ],
+            [
+              2,
+              1742
+            ],
+            [
+              3,
+              439
+            ],
+            [
+              4,
+              172
+            ],
+            [
+              5,
+              101
+            ],
+            [
+              6,
+              57
+            ],
+            [
+              7,
+              37
+            ],
+            [
+              8,
+              14
+            ],
+            [
+              9,
+              12
+            ],
+            [
+              10,
+              6
+            ],
+            [
+              11,
+              5
+            ],
+            [
+              12,
+              5
+            ],
+            [
+              13,
+              2
+            ],
+            [
+              14,
+              4
+            ],
+            [
+              15,
+              2
+            ],
+            [
+              16,
+              1
+            ],
+            [
+              17,
+              2
+            ],
+            [
+              18,
+              1
+            ],
+            [
+              19,
+              2
+            ],
+            [
+              20,
+              1
+            ],
+            [
+              22,
+              2
+            ],
+            [
+              23,
+              1
+            ],
+            [
+              24,
+              1
+            ],
+            [
+              28,
+              1
+            ],
+            [
+              29,
+              4
+            ],
+            [
+              32,
+              1
+            ],
+            [
+              35,
+              1
+            ],
+            [
+              36,
+              1
+            ],
+            [
+              39,
+              1
+            ],
+            [
+              54,
+              1
+            ],
+            [
+              70,
+              1
+            ]
+          ],
+          "zipf": {
+            "alpha": 2.169652816561067,
+            "gini": 0.22623706316310277,
+            "r_squared": 0.8030707529959977,
+            "tail_size": 15152,
+            "x_min": 1
+          }
+        },
+        "pair_probabilities": {
+          "co_flight_hours": {
+            "count": 24992,
+            "maximum": 856,
+            "mean": 32.923455505761844,
+            "p50": 13.0,
+            "p90": 90.0,
+            "p99": 285.0
+          },
+          "definition": "base_overlap",
+          "merge_sample": 24992,
+          "population_pairs": 58918,
+          "same_file": 0.008401507179469771,
+          "same_file_different_node": 0.0016803014358939543,
+          "same_node": 0.006721205743575817,
+          "same_python_file": 0.0029193115855935367,
+          "same_python_node": 0.0010523099901558097,
+          "shared_node_all_append": 0.0009335007977188635,
+          "textual_conflict": 0.0,
+          "textual_conflict_without_shared_node": 0.0,
+          "verdict_counts": {
+            "clean": 24992,
+            "rebase_conflict": 8
+          }
+        },
+        "repo": "apache/airflow",
+        "schema_version": 1,
+        "window": {
+          "clone_main_branch": "main",
+          "clone_main_sha": "4aeb647a51a9ea2a0cb9fee04939078d175cf34f",
+          "since": "2025-01-01",
+          "until": "2026-09-01"
+        },
+        "window_curves": [
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 2,
+            "mean_contended_files": 0.05921539600296077,
+            "mean_contended_nodes": 0.052553663952627686,
+            "mean_contended_py_files": 0.02146558105107328,
+            "mean_contended_py_nodes": 0.014803849000740192,
+            "mean_distinct_nodes": 23.19837157660992,
+            "mean_distinct_py_nodes": 17.92820133234641,
+            "mean_effective_k": 2.0,
+            "mean_max_file_chain": 1.0377498149518876,
+            "mean_max_node_chain": 1.0333086602516655,
+            "mean_max_py_file_chain": 0.9052553663952627,
+            "mean_max_py_node_chain": 0.9000740192450037,
+            "p_file_collision": 0.03774981495188749,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.033308660251665435,
+            "p_py_file_collision": 0.011102886750555145,
+            "p_py_node_collision": 0.005921539600296077,
+            "windows": 1351
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 4,
+            "mean_contended_files": 0.279466271312083,
+            "mean_contended_nodes": 0.26908821349147516,
+            "mean_contended_py_files": 0.09414381022979985,
+            "mean_contended_py_nodes": 0.083765752409192,
+            "mean_distinct_nodes": 46.254262416604895,
+            "mean_distinct_py_nodes": 35.83617494440326,
+            "mean_effective_k": 3.402684563758389,
+            "mean_max_file_chain": 1.1704966641957004,
+            "mean_max_node_chain": 1.1519644180874722,
+            "mean_max_py_file_chain": 1.0363232023721276,
+            "mean_max_py_node_chain": 1.0148257968865826,
+            "p_file_collision": 0.14381022979985175,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.1267605633802817,
+            "p_py_file_collision": 0.048183839881393624,
+            "p_py_node_collision": 0.028169014084507043,
+            "windows": 1349
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 8,
+            "mean_contended_files": 0.9434944237918216,
+            "mean_contended_nodes": 0.8810408921933085,
+            "mean_contended_py_files": 0.37100371747211897,
+            "mean_contended_py_nodes": 0.30855018587360594,
+            "mean_distinct_nodes": 92.14200743494423,
+            "mean_distinct_py_nodes": 71.59256505576208,
+            "mean_effective_k": 5.906666666666666,
+            "mean_max_file_chain": 1.520446096654275,
+            "mean_max_node_chain": 1.4565055762081784,
+            "mean_max_py_file_chain": 1.2014869888475836,
+            "mean_max_py_node_chain": 1.1182156133828995,
+            "p_file_collision": 0.387360594795539,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.33308550185873603,
+            "p_py_file_collision": 0.18513011152416356,
+            "p_py_node_collision": 0.11152416356877323,
+            "windows": 1345
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 16,
+            "mean_contended_files": 3.020942408376963,
+            "mean_contended_nodes": 2.7494390426327597,
+            "mean_contended_py_files": 1.3238593866866117,
+            "mean_contended_py_nodes": 1.0523560209424083,
+            "mean_distinct_nodes": 183.6088257292446,
+            "mean_distinct_py_nodes": 143.31712789827972,
+            "mean_effective_k": 10.806666666666667,
+            "mean_max_file_chain": 2.254300673148841,
+            "mean_max_node_chain": 2.1219147344801796,
+            "mean_max_py_file_chain": 1.6267763649962603,
+            "mean_max_py_node_chain": 1.3956619296933432,
+            "p_file_collision": 0.7890800299177263,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.6978309648466716,
+            "p_py_file_collision": 0.5527299925205684,
+            "p_py_node_collision": 0.37023186237845923,
+            "windows": 1337
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 32,
+            "mean_contended_files": 9.073429220287661,
+            "mean_contended_nodes": 8.220287660862983,
+            "mean_contended_py_files": 4.181680545041635,
+            "mean_contended_py_nodes": 3.328538985616957,
+            "mean_distinct_nodes": 365.15140045420134,
+            "mean_distinct_py_nodes": 286.4761544284633,
+            "mean_effective_k": 20.253333333333334,
+            "mean_max_file_chain": 3.4261922785768357,
+            "mean_max_node_chain": 3.209689629068887,
+            "mean_max_py_file_chain": 2.3209689629068886,
+            "mean_max_py_node_chain": 1.8591975775927327,
+            "p_file_collision": 0.9992429977289932,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.9765329295987888,
+            "p_py_file_collision": 0.9432248296744891,
+            "p_py_node_collision": 0.7577592732778198,
+            "windows": 1321
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 64,
+            "mean_contended_files": 26.982932505818464,
+            "mean_contended_nodes": 25.247478665632272,
+            "mean_contended_py_files": 12.421256788207913,
+            "mean_contended_py_nodes": 10.685802948021722,
+            "mean_distinct_nodes": 722.6105508145849,
+            "mean_distinct_py_nodes": 570.7137315748643,
+            "mean_effective_k": 38.233333333333334,
+            "mean_max_file_chain": 5.406516679596587,
+            "mean_max_node_chain": 5.0442203258339795,
+            "mean_max_py_file_chain": 3.2761830876648563,
+            "mean_max_py_node_chain": 2.495733126454616,
+            "p_file_collision": 1.0,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 1.0,
+            "p_py_file_collision": 1.0,
+            "p_py_node_collision": 0.9922420480993018,
+            "windows": 1289
+          }
+        ]
+      },
+      "semantic": {
+        "ci95": [
+          0.0,
+          0.009512640599680667
+        ],
+        "kinds": [],
+        "probed": 400,
+        "share": 0.0,
+        "total_new_defects": 0,
+        "with_new_defects": 0
+      },
+      "slug": "apache/airflow",
+      "two_by_two": {
+        "clean_not_shared": 24814,
+        "clean_shared": 178,
+        "clean_shared_all_append": 28,
+        "conflict_not_shared": 0,
+        "conflict_py_not_shared": 0,
+        "conflict_py_shared": 0,
+        "conflict_shared": 0,
+        "error": 0,
+        "rebase_conflict": 8
+      },
+      "validation": {
+        "mapper": {
+          "extra_ratio": 0.9248704663212435,
+          "file_accuracy": 0.9813084112149533,
+          "files_agreeing": 210,
+          "files_checked": 214,
+          "symbol_recall": 0.9896373056994818,
+          "symbols_expected": 386,
+          "symbols_extra": 357,
+          "symbols_matched": 382
+        },
+        "merge": {
+          "accuracy": 1.0,
+          "agreeing": 26,
+          "checked": 26,
+          "disagreements": []
+        },
+        "naive_bias": {
+          "corrected_checked": 493,
+          "corrected_conflicts": 0,
+          "corrected_rate": 0.0,
+          "naive_checked": 1200,
+          "naive_conflicts": 186,
+          "naive_conflicts_sharing_no_file": 183,
+          "naive_rate": 0.155,
+          "provably_spurious": 0.9838709677419355
+        },
+        "pair_sampling_rate": "0.424319",
+        "survivorship": {
+          "abandoned": {
+            "changes": 400,
+            "file_collisions": 852,
+            "file_rate": 0.009102272363065286,
+            "node_collisions": 617,
+            "node_rate": 0.006591669070435777,
+            "pairs": 93603,
+            "population": "abandoned",
+            "py_file_collisions": 463,
+            "py_node_collisions": 204,
+            "py_node_rate": 0.002179417326367745
+          },
+          "merged": {
+            "changes": 1352,
+            "file_collisions": 990,
+            "file_rate": 0.008401507179469771,
+            "node_collisions": 792,
+            "node_rate": 0.006721205743575817,
+            "pairs": 117836,
+            "population": "merged",
+            "py_file_collisions": 344,
+            "py_node_collisions": 124,
+            "py_node_rate": 0.0010523099901558097
+          }
+        }
+      }
+    },
+    {
+      "non_python": {
+        "non_python_conflict_files": 0,
+        "non_python_conflict_share": 0.0,
+        "non_python_touch_share": 0.04360644921858892,
+        "non_python_touches": 2115,
+        "total_conflict_files": 0,
+        "total_touches": 48502
+      },
+      "profile": {
+        "changes": {
+          "append_only_touch_share": 0.12432477011257267,
+          "count": 1913,
+          "files_histogram": [
+            [
+              1,
+              706
+            ],
+            [
+              2,
+              384
+            ],
+            [
+              3,
+              213
+            ],
+            [
+              4,
+              104
+            ],
+            [
+              5,
+              88
+            ],
+            [
+              6,
+              60
+            ],
+            [
+              7,
+              45
+            ],
+            [
+              8,
+              24
+            ],
+            [
+              9,
+              27
+            ],
+            [
+              10,
+              18
+            ],
+            [
+              11,
+              21
+            ],
+            [
+              12,
+              21
+            ],
+            [
+              13,
+              12
+            ],
+            [
+              14,
+              13
+            ],
+            [
+              15,
+              15
+            ],
+            [
+              16,
+              16
+            ],
+            [
+              17,
+              8
+            ],
+            [
+              18,
+              12
+            ],
+            [
+              19,
+              7
+            ],
+            [
+              20,
+              11
+            ],
+            [
+              21,
+              14
+            ],
+            [
+              22,
+              2
+            ],
+            [
+              23,
+              4
+            ],
+            [
+              24,
+              7
+            ],
+            [
+              25,
+              4
+            ],
+            [
+              26,
+              7
+            ],
+            [
+              27,
+              5
+            ],
+            [
+              28,
+              4
+            ],
+            [
+              29,
+              5
+            ],
+            [
+              30,
+              1
+            ],
+            [
+              31,
+              3
+            ],
+            [
+              33,
+              4
+            ],
+            [
+              35,
+              3
+            ],
+            [
+              36,
+              5
+            ],
+            [
+              37,
+              1
+            ],
+            [
+              38,
+              2
+            ],
+            [
+              40,
+              1
+            ],
+            [
+              41,
+              2
+            ],
+            [
+              42,
+              1
+            ],
+            [
+              43,
+              1
+            ],
+            [
+              45,
+              3
+            ],
+            [
+              46,
+              1
+            ],
+            [
+              48,
+              1
+            ],
+            [
+              50,
+              1
+            ],
+            [
+              51,
+              4
+            ],
+            [
+              52,
+              2
+            ],
+            [
+              53,
+              1
+            ],
+            [
+              54,
+              1
+            ],
+            [
+              57,
+              1
+            ],
+            [
+              58,
+              2
+            ],
+            [
+              61,
+              1
+            ],
+            [
+              63,
+              1
+            ],
+            [
+              66,
+              1
+            ],
+            [
+              69,
+              1
+            ],
+            [
+              74,
+              2
+            ],
+            [
+              77,
+              3
+            ],
+            [
+              78,
+              1
+            ],
+            [
+              81,
+              1
+            ],
+            [
+              83,
+              1
+            ],
+            [
+              88,
+              1
+            ],
+            [
+              92,
+              1
+            ],
+            [
+              99,
+              1
+            ]
+          ],
+          "files_per_change": {
+            "count": 1913,
+            "maximum": 99,
+            "mean": 5.44903293256665,
+            "p50": 2.0,
+            "p90": 13.0,
+            "p99": 52.87999999999988
+          },
+          "nodes_histogram": [
+            [
+              1,
+              502
+            ],
+            [
+              2,
+              267
+            ],
+            [
+              3,
+              156
+            ],
+            [
+              4,
+              128
+            ],
+            [
+              5,
+              82
+            ],
+            [
+              6,
+              81
+            ],
+            [
+              7,
+              67
+            ],
+            [
+              8,
+              44
+            ],
+            [
+              9,
+              40
+            ],
+            [
+              10,
+              30
+            ],
+            [
+              11,
+              31
+            ],
+            [
+              12,
+              26
+            ],
+            [
+              13,
+              26
+            ],
+            [
+              14,
+              20
+            ],
+            [
+              15,
+              21
+            ],
+            [
+              16,
+              21
+            ],
+            [
+              17,
+              12
+            ],
+            [
+              18,
+              12
+            ],
+            [
+              19,
+              4
+            ],
+            [
+              20,
+              10
+            ],
+            [
+              21,
+              8
+            ],
+            [
+              22,
+              11
+            ],
+            [
+              23,
+              8
+            ],
+            [
+              24,
+              6
+            ],
+            [
+              25,
+              9
+            ],
+            [
+              26,
+              6
+            ],
+            [
+              27,
+              7
+            ],
+            [
+              28,
+              10
+            ],
+            [
+              29,
+              3
+            ],
+            [
+              30,
+              7
+            ],
+            [
+              31,
+              4
+            ],
+            [
+              32,
+              7
+            ],
+            [
+              33,
+              4
+            ],
+            [
+              34,
+              4
+            ],
+            [
+              35,
+              11
+            ],
+            [
+              36,
+              7
+            ],
+            [
+              37,
+              6
+            ],
+            [
+              38,
+              5
+            ],
+            [
+              39,
+              2
+            ],
+            [
+              40,
+              5
+            ],
+            [
+              41,
+              6
+            ],
+            [
+              42,
+              2
+            ],
+            [
+              43,
+              5
+            ],
+            [
+              44,
+              6
+            ],
+            [
+              45,
+              2
+            ],
+            [
+              46,
+              4
+            ],
+            [
+              47,
+              2
+            ],
+            [
+              48,
+              2
+            ],
+            [
+              49,
+              1
+            ],
+            [
+              50,
+              6
+            ],
+            [
+              51,
+              2
+            ],
+            [
+              52,
+              2
+            ],
+            [
+              53,
+              3
+            ],
+            [
+              54,
+              3
+            ],
+            [
+              55,
+              3
+            ],
+            [
+              56,
+              1
+            ],
+            [
+              57,
+              3
+            ],
+            [
+              58,
+              1
+            ],
+            [
+              59,
+              1
+            ],
+            [
+              60,
+              1
+            ],
+            [
+              61,
+              1
+            ],
+            [
+              62,
+              1
+            ],
+            [
+              63,
+              1
+            ],
+            [
+              64,
+              3
+            ]
+          ],
+          "nodes_per_change": {
+            "count": 1913,
+            "maximum": 305,
+            "mean": 17.295347621536852,
+            "p50": 4.0,
+            "p90": 43.0,
+            "p99": 218.51999999999953
+          },
+          "python_nodes_per_change": {
+            "count": 1913,
+            "maximum": 301,
+            "mean": 16.438055410350234,
+            "p50": 3.0,
+            "p90": 42.799999999999955,
+            "p99": 213.87999999999988
+          }
+        },
+        "filters": {
+          "bot": 88,
+          "kept": 3097,
+          "no_footprint": 11,
+          "oversize": 98,
+          "unusable": 9,
+          "whitespace_sweep": 1
+        },
+        "generated_at": "2026-09-22T11:04:41.989453+00:00",
+        "hot_node_categories": [
+          {
+            "category": "import_header",
+            "nodes": 66,
+            "writes": 1305
+          },
+          {
+            "category": "other",
+            "nodes": 100,
+            "writes": 1263
+          },
+          {
+            "category": "build_ci",
+            "nodes": 22,
+            "writes": 352
+          },
+          {
+            "category": "docs_changelog",
+            "nodes": 8,
+            "writes": 92
+          },
+          {
+            "category": "settings",
+            "nodes": 2,
+            "writes": 32
+          },
+          {
+            "category": "registry",
+            "nodes": 2,
+            "writes": 21
+          }
+        ],
+        "node_popularity": {
+          "distinct_nodes": 32407,
+          "distinct_python_nodes": 31577,
+          "top_nodes": [
+            {
+              "category": "build_ci",
+              "node_id": "docs/source/en/_toctree.yml::__file__::__whole__",
+              "writes": 115
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/auto/modeling_auto.py::module_header::__header__",
+              "writes": 104
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/__init__.py::module_header::__header__",
+              "writes": 71
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/conversion_mapping.py::function::_build_checkpoint_conversion_mapping",
+              "writes": 65
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/auto/auto_mappings.py::module_header::__header__",
+              "writes": 53
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/auto/tokenization_auto.py::module_header::__header__",
+              "writes": 53
+            },
+            {
+              "category": "import_header",
+              "node_id": "setup.py::module_header::__header__",
+              "writes": 48
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/dependency_versions_table.py::module_header::__header__",
+              "writes": 45
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/auto/configuration_auto.py::module_header::__header__",
+              "writes": 45
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/__init__.py::module_header::__header__",
+              "writes": 38
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/modeling_utils.py::method::PreTrainedModel.from_pretrained",
+              "writes": 37
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/auto/processing_auto.py::module_header::__header__",
+              "writes": 36
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/integrations/hub_kernels.py::module_header::__header__",
+              "writes": 34
+            },
+            {
+              "category": "import_header",
+              "node_id": "utils/check_config_attributes.py::module_header::__header__",
+              "writes": 31
+            },
+            {
+              "category": "import_header",
+              "node_id": "utils/check_repo.py::module_header::__header__",
+              "writes": 31
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/auto/image_processing_auto.py::module_header::__header__",
+              "writes": 28
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/core_model_loading.py::function::convert_and_load_state_dict_in_model",
+              "writes": 27
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/training_args.py::class::TrainingArguments",
+              "writes": 27
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/conversion_mapping.py::module_header::__header__",
+              "writes": 26
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/modeling_utils.py::module_header::__header__",
+              "writes": 25
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/pr-ci-caller.yml::__file__::__whole__",
+              "writes": 23
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/processing_utils.py::method::ProcessorMixin.apply_chat_template",
+              "writes": 23
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/utils/__init__.py::module_header::__header__",
+              "writes": 23
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/generation/continuous_batching/continuous_api.py::method::ContinuousBatchingManager.__init__",
+              "writes": 22
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/models/auto/tokenization_auto.py::method::AutoTokenizer.from_pretrained",
+              "writes": 22
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/qwen3_5/modeling_qwen3_5.py::module_header::__header__",
+              "writes": 22
+            },
+            {
+              "category": "import_header",
+              "node_id": "tests/generation/test_continuous_batching.py::module_header::__header__",
+              "writes": 22
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/generation/continuous_batching/continuous_api.py::module_header::__header__",
+              "writes": 20
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "README.md::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "settings",
+              "node_id": "setup.py::module_body::__body__",
+              "writes": 19
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/generation/continuous_batching/continuous_api.py::method::ContinuousBatchProcessor.__init__",
+              "writes": 19
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/trainer.py::module_header::__header__",
+              "writes": 19
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/self-comment-ci.yml::__file__::__whole__",
+              "writes": 18
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/core_model_loading.py::module_header::__header__",
+              "writes": 18
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/modeling_utils.py::method::PreTrainedModel.save_pretrained",
+              "writes": 18
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/tokenization_utils_tokenizers.py::method::TokenizersBackend.convert_to_native_format",
+              "writes": 18
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/utils/auto_docstring.py::module_header::__header__",
+              "writes": 18
+            },
+            {
+              "category": "build_ci",
+              "node_id": "Makefile::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/generation/configuration_utils.py::class::ContinuousBatchingConfig",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/modeling_utils.py::method::PreTrainedModel._load_pretrained_model",
+              "writes": 17
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/qwen3_5_moe/modeling_qwen3_5_moe.py::module_header::__header__",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/trainer.py::method::Trainer._inner_training_loop",
+              "writes": 17
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/source/en/continuous_batching.md::__file__::__whole__",
+              "writes": 16
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/generation/utils.py::module_header::__header__",
+              "writes": 16
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/integrations/__init__.py::module_header::__header__",
+              "writes": 16
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/models/auto/feature_extraction_auto.py::module_header::__header__",
+              "writes": 16
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/pr-ci-post-dashboard-link.yml::__file__::__whole__",
+              "writes": 15
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/generation/continuous_batching/continuous_api.py::method::ContinuousBatchProcessor._generation_step",
+              "writes": 15
+            },
+            {
+              "category": "other",
+              "node_id": "src/transformers/generation/utils.py::method::GenerationMixin._beam_search",
+              "writes": 15
+            },
+            {
+              "category": "import_header",
+              "node_id": "src/transformers/integrations/finegrained_fp8.py::module_header::__header__",
+              "writes": 15
+            }
+          ],
+          "writes_histogram": [
+            [
+              1,
+              24100
+            ],
+            [
+              2,
+              5318
+            ],
+            [
+              3,
+              1631
+            ],
+            [
+              4,
+              545
+            ],
+            [
+              5,
+              287
+            ],
+            [
+              6,
+              162
+            ],
+            [
+              7,
+              105
+            ],
+            [
+              8,
+              67
+            ],
+            [
+              9,
+              47
+            ],
+            [
+              10,
+              33
+            ],
+            [
+              11,
+              26
+            ],
+            [
+              12,
+              13
+            ],
+            [
+              13,
+              9
+            ],
+            [
+              14,
+              12
+            ],
+            [
+              15,
+              6
+            ],
+            [
+              16,
+              4
+            ],
+            [
+              17,
+              5
+            ],
+            [
+              18,
+              5
+            ],
+            [
+              19,
+              4
+            ],
+            [
+              20,
+              1
+            ],
+            [
+              22,
+              4
+            ],
+            [
+              23,
+              3
+            ],
+            [
+              25,
+              1
+            ],
+            [
+              26,
+              1
+            ],
+            [
+              27,
+              2
+            ],
+            [
+              28,
+              1
+            ],
+            [
+              31,
+              2
+            ],
+            [
+              34,
+              1
+            ],
+            [
+              36,
+              1
+            ],
+            [
+              37,
+              1
+            ],
+            [
+              38,
+              1
+            ],
+            [
+              45,
+              2
+            ],
+            [
+              48,
+              1
+            ],
+            [
+              53,
+              2
+            ],
+            [
+              65,
+              1
+            ],
+            [
+              71,
+              1
+            ],
+            [
+              104,
+              1
+            ],
+            [
+              115,
+              1
+            ]
+          ],
+          "zipf": {
+            "alpha": 2.0699547096369724,
+            "gini": 0.2800848451762723,
+            "r_squared": 0.8736579732678758,
+            "tail_size": 32407,
+            "x_min": 1
+          }
+        },
+        "pair_probabilities": {
+          "co_flight_hours": {
+            "count": 24999,
+            "maximum": 1152,
+            "mean": 25.74594983799352,
+            "p50": 7.0,
+            "p90": 71.0,
+            "p99": 228.0
+          },
+          "definition": "base_overlap",
+          "merge_sample": 24999,
+          "population_pairs": 25748,
+          "same_file": 0.017554761534876496,
+          "same_file_different_node": 0.009981357775361193,
+          "same_node": 0.0075734037595153025,
+          "same_python_file": 0.014603075967065404,
+          "same_python_node": 0.00462171819170421,
+          "shared_node_all_append": 0.0017088705918906323,
+          "textual_conflict": 0.0,
+          "textual_conflict_without_shared_node": 0.0,
+          "verdict_counts": {
+            "clean": 24999,
+            "rebase_conflict": 1
+          }
+        },
+        "repo": "huggingface/transformers",
+        "schema_version": 1,
+        "window": {
+          "clone_main_branch": "main",
+          "clone_main_sha": "8445b13cd24961e47f25a649fb113580f71a8d11",
+          "since": "2025-01-01",
+          "until": "2026-09-01"
+        },
+        "window_curves": [
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 2,
+            "mean_contended_files": 0.08577405857740586,
+            "mean_contended_nodes": 0.07897489539748954,
+            "mean_contended_py_files": 0.04811715481171548,
+            "mean_contended_py_nodes": 0.04131799163179916,
+            "mean_distinct_nodes": 34.52562761506276,
+            "mean_distinct_py_nodes": 32.84832635983263,
+            "mean_effective_k": 2.0,
+            "mean_max_file_chain": 1.0486401673640167,
+            "mean_max_node_chain": 1.028765690376569,
+            "mean_max_py_file_chain": 1.00418410041841,
+            "mean_max_py_node_chain": 0.9843096234309623,
+            "p_file_collision": 0.04864016736401674,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.028765690376569036,
+            "p_py_file_collision": 0.036610878661087864,
+            "p_py_node_collision": 0.016736401673640166,
+            "windows": 1912
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 4,
+            "mean_contended_files": 0.38586387434554975,
+            "mean_contended_nodes": 0.3219895287958115,
+            "mean_contended_py_files": 0.2513089005235602,
+            "mean_contended_py_nodes": 0.187434554973822,
+            "mean_distinct_nodes": 68.88376963350785,
+            "mean_distinct_py_nodes": 65.64712041884816,
+            "mean_effective_k": 3.5405405405405403,
+            "mean_max_file_chain": 1.2151832460732985,
+            "mean_max_node_chain": 1.12565445026178,
+            "mean_max_py_file_chain": 1.168062827225131,
+            "mean_max_py_node_chain": 1.0764397905759162,
+            "p_file_collision": 0.20052356020942408,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.11675392670157068,
+            "p_py_file_collision": 0.16282722513089004,
+            "p_py_node_collision": 0.07696335078534032,
+            "windows": 1910
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 8,
+            "mean_contended_files": 1.3793284365162644,
+            "mean_contended_nodes": 1.0739769150052465,
+            "mean_contended_py_files": 1.031479538300105,
+            "mean_contended_py_nodes": 0.7261280167890871,
+            "mean_distinct_nodes": 137.42707240293808,
+            "mean_distinct_py_nodes": 131.1180482686254,
+            "mean_effective_k": 6.201342281879195,
+            "mean_max_file_chain": 1.642707240293809,
+            "mean_max_node_chain": 1.4113326337880379,
+            "mean_max_py_file_chain": 1.5493179433368311,
+            "mean_max_py_node_chain": 1.2906610703043022,
+            "p_file_collision": 0.565582371458552,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.3656873032528856,
+            "p_py_file_collision": 0.5036726128016789,
+            "p_py_node_collision": 0.276495278069255,
+            "windows": 1906
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 16,
+            "mean_contended_files": 4.733403582718651,
+            "mean_contended_nodes": 3.6122233930453107,
+            "mean_contended_py_files": 3.8540569020021076,
+            "mean_contended_py_nodes": 2.732876712328767,
+            "mean_distinct_nodes": 273.17439409905165,
+            "mean_distinct_py_nodes": 260.8835616438356,
+            "mean_effective_k": 11.46,
+            "mean_max_file_chain": 2.357218124341412,
+            "mean_max_node_chain": 2.0136986301369864,
+            "mean_max_py_file_chain": 2.227081138040042,
+            "mean_max_py_node_chain": 1.7834562697576397,
+            "p_file_collision": 0.9494204425711275,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.7760800842992623,
+            "p_py_file_collision": 0.9230769230769231,
+            "p_py_node_collision": 0.6649104320337197,
+            "windows": 1898
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 32,
+            "mean_contended_files": 15.313496280552604,
+            "mean_contended_nodes": 12.07173219978746,
+            "mean_contended_py_files": 13.124335812964931,
+            "mean_contended_py_nodes": 9.882571732199787,
+            "mean_distinct_nodes": 539.3554729011689,
+            "mean_distinct_py_nodes": 515.5850159404888,
+            "mean_effective_k": 20.686666666666667,
+            "mean_max_file_chain": 3.5132837407013815,
+            "mean_max_node_chain": 2.9543039319872477,
+            "mean_max_py_file_chain": 3.2747077577045696,
+            "mean_max_py_node_chain": 2.5345377258235917,
+            "p_file_collision": 1.0,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.9994686503719448,
+            "p_py_file_collision": 1.0,
+            "p_py_node_collision": 0.9739638682252922,
+            "windows": 1882
+          },
+          {
+            "git_conflict_step_share": 0.00037023324694557573,
+            "k": 64,
+            "mean_contended_files": 43.002162162162165,
+            "mean_contended_nodes": 37.28972972972973,
+            "mean_contended_py_files": 37.69567567567567,
+            "mean_contended_py_nodes": 31.983243243243244,
+            "mean_distinct_nodes": 1063.2443243243242,
+            "mean_distinct_py_nodes": 1017.7189189189189,
+            "mean_effective_k": 37.013333333333335,
+            "mean_max_file_chain": 5.437837837837838,
+            "mean_max_node_chain": 4.537297297297298,
+            "mean_max_py_file_chain": 5.101081081081081,
+            "mean_max_py_node_chain": 3.7567567567567566,
+            "p_file_collision": 1.0,
+            "p_git_conflict": 0.013333333333333334,
+            "p_node_collision": 1.0,
+            "p_py_file_collision": 1.0,
+            "p_py_node_collision": 1.0,
+            "windows": 1850
+          }
+        ]
+      },
+      "semantic": {
+        "ci95": [
+          0.0,
+          0.009512640599680667
+        ],
+        "kinds": [],
+        "probed": 400,
+        "share": 0.0,
+        "total_new_defects": 0,
+        "with_new_defects": 0
+      },
+      "slug": "huggingface/transformers",
+      "two_by_two": {
+        "clean_not_shared": 24809,
+        "clean_shared": 190,
+        "clean_shared_all_append": 42,
+        "conflict_not_shared": 0,
+        "conflict_py_not_shared": 0,
+        "conflict_py_shared": 0,
+        "conflict_shared": 0,
+        "error": 0,
+        "rebase_conflict": 1
+      },
+      "validation": {
+        "mapper": {
+          "extra_ratio": 0.30158730158730157,
+          "file_accuracy": 0.9871134020618557,
+          "files_agreeing": 383,
+          "files_checked": 388,
+          "symbol_recall": 0.9933862433862434,
+          "symbols_expected": 756,
+          "symbols_extra": 228,
+          "symbols_matched": 751
+        },
+        "merge": {
+          "accuracy": 1.0,
+          "agreeing": 26,
+          "checked": 26,
+          "disagreements": []
+        },
+        "naive_bias": {
+          "corrected_checked": 322,
+          "corrected_conflicts": 0,
+          "corrected_rate": 0.0,
+          "naive_checked": 1200,
+          "naive_conflicts": 257,
+          "naive_conflicts_sharing_no_file": 229,
+          "naive_rate": 0.21416666666666667,
+          "provably_spurious": 0.8910505836575876
+        },
+        "pair_sampling_rate": "0.970949",
+        "survivorship": {
+          "abandoned": {
+            "changes": 1184,
+            "file_collisions": 2238,
+            "file_rate": 0.023314442870239187,
+            "node_collisions": 1044,
+            "node_rate": 0.010875906325527127,
+            "pairs": 95992,
+            "population": "abandoned",
+            "py_file_collisions": 2132,
+            "py_node_collisions": 935,
+            "py_node_rate": 0.00974039503291941
+          },
+          "merged": {
+            "changes": 1913,
+            "file_collisions": 904,
+            "file_rate": 0.017554761534876496,
+            "node_collisions": 390,
+            "node_rate": 0.0075734037595153025,
+            "pairs": 51496,
+            "population": "merged",
+            "py_file_collisions": 752,
+            "py_node_collisions": 238,
+            "py_node_rate": 0.00462171819170421
+          }
+        }
+      }
+    },
+    {
+      "non_python": {
+        "non_python_conflict_files": 0,
+        "non_python_conflict_share": 0.0,
+        "non_python_touch_share": 0.1448847122650649,
+        "non_python_touches": 2991,
+        "total_conflict_files": 0,
+        "total_touches": 20644
+      },
+      "profile": {
+        "changes": {
+          "append_only_touch_share": 0.18082735903894595,
+          "count": 1802,
+          "files_histogram": [
+            [
+              1,
+              515
+            ],
+            [
+              2,
+              375
+            ],
+            [
+              3,
+              382
+            ],
+            [
+              4,
+              176
+            ],
+            [
+              5,
+              94
+            ],
+            [
+              6,
+              61
+            ],
+            [
+              7,
+              44
+            ],
+            [
+              8,
+              24
+            ],
+            [
+              9,
+              19
+            ],
+            [
+              10,
+              17
+            ],
+            [
+              11,
+              13
+            ],
+            [
+              12,
+              7
+            ],
+            [
+              13,
+              10
+            ],
+            [
+              14,
+              14
+            ],
+            [
+              15,
+              4
+            ],
+            [
+              16,
+              2
+            ],
+            [
+              17,
+              2
+            ],
+            [
+              18,
+              5
+            ],
+            [
+              19,
+              5
+            ],
+            [
+              20,
+              4
+            ],
+            [
+              21,
+              2
+            ],
+            [
+              22,
+              1
+            ],
+            [
+              23,
+              1
+            ],
+            [
+              24,
+              3
+            ],
+            [
+              27,
+              2
+            ],
+            [
+              28,
+              2
+            ],
+            [
+              29,
+              2
+            ],
+            [
+              31,
+              2
+            ],
+            [
+              32,
+              1
+            ],
+            [
+              33,
+              1
+            ],
+            [
+              34,
+              2
+            ],
+            [
+              39,
+              1
+            ],
+            [
+              44,
+              1
+            ],
+            [
+              46,
+              1
+            ],
+            [
+              55,
+              1
+            ],
+            [
+              57,
+              1
+            ],
+            [
+              60,
+              1
+            ],
+            [
+              61,
+              2
+            ],
+            [
+              67,
+              1
+            ],
+            [
+              75,
+              1
+            ]
+          ],
+          "files_per_change": {
+            "count": 1802,
+            "maximum": 75,
+            "mean": 3.786348501664817,
+            "p50": 3.0,
+            "p90": 7.0,
+            "p99": 28.0
+          },
+          "nodes_histogram": [
+            [
+              1,
+              373
+            ],
+            [
+              2,
+              305
+            ],
+            [
+              3,
+              192
+            ],
+            [
+              4,
+              136
+            ],
+            [
+              5,
+              140
+            ],
+            [
+              6,
+              91
+            ],
+            [
+              7,
+              92
+            ],
+            [
+              8,
+              58
+            ],
+            [
+              9,
+              50
+            ],
+            [
+              10,
+              40
+            ],
+            [
+              11,
+              32
+            ],
+            [
+              12,
+              32
+            ],
+            [
+              13,
+              27
+            ],
+            [
+              14,
+              17
+            ],
+            [
+              15,
+              19
+            ],
+            [
+              16,
+              16
+            ],
+            [
+              17,
+              18
+            ],
+            [
+              18,
+              16
+            ],
+            [
+              19,
+              11
+            ],
+            [
+              20,
+              14
+            ],
+            [
+              21,
+              8
+            ],
+            [
+              22,
+              8
+            ],
+            [
+              23,
+              7
+            ],
+            [
+              24,
+              8
+            ],
+            [
+              25,
+              5
+            ],
+            [
+              26,
+              6
+            ],
+            [
+              27,
+              6
+            ],
+            [
+              28,
+              3
+            ],
+            [
+              29,
+              5
+            ],
+            [
+              31,
+              2
+            ],
+            [
+              32,
+              2
+            ],
+            [
+              33,
+              4
+            ],
+            [
+              34,
+              2
+            ],
+            [
+              35,
+              2
+            ],
+            [
+              36,
+              3
+            ],
+            [
+              37,
+              1
+            ],
+            [
+              38,
+              3
+            ],
+            [
+              39,
+              4
+            ],
+            [
+              40,
+              3
+            ],
+            [
+              41,
+              2
+            ],
+            [
+              42,
+              1
+            ],
+            [
+              43,
+              2
+            ],
+            [
+              45,
+              1
+            ],
+            [
+              47,
+              1
+            ],
+            [
+              49,
+              3
+            ],
+            [
+              50,
+              2
+            ],
+            [
+              51,
+              2
+            ],
+            [
+              52,
+              2
+            ],
+            [
+              57,
+              1
+            ],
+            [
+              58,
+              1
+            ],
+            [
+              59,
+              1
+            ],
+            [
+              60,
+              1
+            ],
+            [
+              62,
+              1
+            ],
+            [
+              63,
+              1
+            ],
+            [
+              66,
+              1
+            ],
+            [
+              67,
+              1
+            ],
+            [
+              69,
+              1
+            ],
+            [
+              73,
+              1
+            ],
+            [
+              76,
+              1
+            ],
+            [
+              79,
+              1
+            ],
+            [
+              84,
+              1
+            ],
+            [
+              89,
+              1
+            ],
+            [
+              97,
+              1
+            ],
+            [
+              100,
+              1
+            ]
+          ],
+          "nodes_per_change": {
+            "count": 1802,
+            "maximum": 208,
+            "mean": 7.630965593784683,
+            "p50": 4.0,
+            "p90": 17.0,
+            "p99": 65.97000000000003
+          },
+          "python_nodes_per_change": {
+            "count": 1802,
+            "maximum": 203,
+            "mean": 6.417869034406215,
+            "p50": 3.0,
+            "p90": 15.0,
+            "p99": 61.98000000000002
+          }
+        },
+        "filters": {
+          "bot": 104,
+          "kept": 2642,
+          "no_footprint": 6,
+          "oversize": 36,
+          "unusable": 4,
+          "whitespace_sweep": 0
+        },
+        "generated_at": "2026-09-22T11:04:42.854503+00:00",
+        "hot_node_categories": [
+          {
+            "category": "other",
+            "nodes": 107,
+            "writes": 1470
+          },
+          {
+            "category": "docs_changelog",
+            "nodes": 31,
+            "writes": 1241
+          },
+          {
+            "category": "import_header",
+            "nodes": 41,
+            "writes": 424
+          },
+          {
+            "category": "build_ci",
+            "nodes": 18,
+            "writes": 358
+          },
+          {
+            "category": "tests",
+            "nodes": 2,
+            "writes": 14
+          },
+          {
+            "category": "registry",
+            "nodes": 1,
+            "writes": 7
+          }
+        ],
+        "node_popularity": {
+          "distinct_nodes": 12447,
+          "distinct_python_nodes": 12071,
+          "top_nodes": [
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/whatsnew/v3.1.0.rst::__file__::__whole__",
+              "writes": 847
+            },
+            {
+              "category": "other",
+              "node_id": "ci/code_checks.sh::__file__::__whole__",
+              "writes": 143
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/tslibs/offsets.pyx::__file__::__whole__",
+              "writes": 120
+            },
+            {
+              "category": "build_ci",
+              "node_id": "pyproject.toml::__file__::__whole__",
+              "writes": 105
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/parsers.pyx::__file__::__whole__",
+              "writes": 45
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/tslibs/period.pyx::__file__::__whole__",
+              "writes": 43
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/user_guide/io.rst::__file__::__whole__",
+              "writes": 42
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/unit-tests.yml::__file__::__whole__",
+              "writes": 40
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/tslibs/timedeltas.pyx::__file__::__whole__",
+              "writes": 40
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/whatsnew/v3.0.0.rst::__file__::__whole__",
+              "writes": 39
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/tslibs/timestamps.pyx::__file__::__whole__",
+              "writes": 35
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/src/parser/tokenizer.c::__file__::__whole__",
+              "writes": 32
+            },
+            {
+              "category": "import_header",
+              "node_id": "pandas/core/frame.py::module_header::__header__",
+              "writes": 29
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/lib.pyx::__file__::__whole__",
+              "writes": 28
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/user_guide/indexing.rst::__file__::__whole__",
+              "writes": 27
+            },
+            {
+              "category": "build_ci",
+              "node_id": "environment.yml::__file__::__whole__",
+              "writes": 27
+            },
+            {
+              "category": "build_ci",
+              "node_id": "requirements-dev.txt::__file__::__whole__",
+              "writes": 27
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/whatsnew/v3.0.1.rst::__file__::__whole__",
+              "writes": 26
+            },
+            {
+              "category": "import_header",
+              "node_id": "pandas/core/arrays/arrow/array.py::module_header::__header__",
+              "writes": 25
+            },
+            {
+              "category": "build_ci",
+              "node_id": "pixi.toml::__file__::__whole__",
+              "writes": 24
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/io/parsers/readers.py::function::read_csv#5",
+              "writes": 23
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/whatsnew/v3.0.2.rst::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/tslibs/tzconversion.pyx::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/io/parsers/readers.py::function::read_table#5",
+              "writes": 21
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/conf.py::module_body::__body__",
+              "writes": 20
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/tslibs/offsets.pyi::__file__::__whole__",
+              "writes": 20
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/algos.pyx::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/src/vendored/ujson/python/objToJSON.c::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".pre-commit-config.yaml::__file__::__whole__",
+              "writes": 18
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/meson.build::__file__::__whole__",
+              "writes": 18
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/whatsnew/v3.0.3.rst::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/include/pandas/parser/tokenizer.h::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "import_header",
+              "node_id": "pandas/core/indexes/base.py::module_header::__header__",
+              "writes": 17
+            },
+            {
+              "category": "import_header",
+              "node_id": "pandas/core/indexes/datetimelike.py::module_header::__header__",
+              "writes": 17
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/docbuild-and-upload.yml::__file__::__whole__",
+              "writes": 16
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_testing/asserters.py::function::assert_series_equal",
+              "writes": 16
+            },
+            {
+              "category": "import_header",
+              "node_id": "pandas/core/arrays/datetimelike.py::module_header::__header__",
+              "writes": 16
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/core/frame.py::method::DataFrame.select_dtypes",
+              "writes": 16
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/tslibs/conversion.pyx::__file__::__whole__",
+              "writes": 15
+            },
+            {
+              "category": "import_header",
+              "node_id": "pandas/core/indexes/multi.py::module_header::__header__",
+              "writes": 15
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "README.md::__file__::__whole__",
+              "writes": 14
+            },
+            {
+              "category": "build_ci",
+              "node_id": "ci/deps/actions-311-minimum_versions.yaml::__file__::__whole__",
+              "writes": 14
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/user_guide/10min.rst::__file__::__whole__",
+              "writes": 14
+            },
+            {
+              "category": "import_header",
+              "node_id": "pandas/core/generic.py::module_header::__header__",
+              "writes": 14
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/user_guide/timeseries.rst::__file__::__whole__",
+              "writes": 13
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/source/whatsnew/v3.0.4.rst::__file__::__whole__",
+              "writes": 13
+            },
+            {
+              "category": "other",
+              "node_id": "meson.build::__file__::__whole__",
+              "writes": 13
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/sas.pyx::__file__::__whole__",
+              "writes": 13
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/_libs/tslibs/period.pyi::__file__::__whole__",
+              "writes": 13
+            },
+            {
+              "category": "other",
+              "node_id": "pandas/core/algorithms.py::function::factorize",
+              "writes": 13
+            }
+          ],
+          "writes_histogram": [
+            [
+              1,
+              9270
+            ],
+            [
+              2,
+              1847
+            ],
+            [
+              3,
+              643
+            ],
+            [
+              4,
+              277
+            ],
+            [
+              5,
+              149
+            ],
+            [
+              6,
+              70
+            ],
+            [
+              7,
+              49
+            ],
+            [
+              8,
+              34
+            ],
+            [
+              9,
+              12
+            ],
+            [
+              10,
+              22
+            ],
+            [
+              11,
+              14
+            ],
+            [
+              12,
+              7
+            ],
+            [
+              13,
+              9
+            ],
+            [
+              14,
+              4
+            ],
+            [
+              15,
+              2
+            ],
+            [
+              16,
+              4
+            ],
+            [
+              17,
+              4
+            ],
+            [
+              18,
+              2
+            ],
+            [
+              19,
+              2
+            ],
+            [
+              20,
+              2
+            ],
+            [
+              21,
+              3
+            ],
+            [
+              23,
+              1
+            ],
+            [
+              24,
+              1
+            ],
+            [
+              25,
+              1
+            ],
+            [
+              26,
+              1
+            ],
+            [
+              27,
+              3
+            ],
+            [
+              28,
+              1
+            ],
+            [
+              29,
+              1
+            ],
+            [
+              32,
+              1
+            ],
+            [
+              35,
+              1
+            ],
+            [
+              39,
+              1
+            ],
+            [
+              40,
+              2
+            ],
+            [
+              42,
+              1
+            ],
+            [
+              43,
+              1
+            ],
+            [
+              45,
+              1
+            ],
+            [
+              105,
+              1
+            ],
+            [
+              120,
+              1
+            ],
+            [
+              143,
+              1
+            ],
+            [
+              847,
+              1
+            ]
+          ],
+          "zipf": {
+            "alpha": 2.052538854118874,
+            "gini": 0.34716826027121805,
+            "r_squared": 0.8790788211793555,
+            "tail_size": 12447,
+            "x_min": 1
+          }
+        },
+        "pair_probabilities": {
+          "co_flight_hours": {
+            "count": 25000,
+            "maximum": 2695,
+            "mean": 60.80424,
+            "p50": 22.0,
+            "p90": 141.0,
+            "p99": 638.0099999999984
+          },
+          "definition": "base_overlap",
+          "merge_sample": 25000,
+          "population_pairs": 45986,
+          "same_file": 0.1901448266863828,
+          "same_file_different_node": 0.01730961597007785,
+          "same_node": 0.17283521071630495,
+          "same_python_file": 0.025442525986169705,
+          "same_python_node": 0.0024790153524985865,
+          "shared_node_all_append": 0.12753881616144044,
+          "textual_conflict": 0.0,
+          "textual_conflict_without_shared_node": 0.0,
+          "verdict_counts": {
+            "clean": 25000
+          }
+        },
+        "repo": "pandas-dev/pandas",
+        "schema_version": 1,
+        "window": {
+          "clone_main_branch": "main",
+          "clone_main_sha": "7d287a5a8368259c96daec9606691070245bfe2d",
+          "since": "2025-01-01",
+          "until": "2026-09-01"
+        },
+        "window_curves": [
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 2,
+            "mean_contended_files": 0.3198223209328151,
+            "mean_contended_nodes": 0.2809550249861188,
+            "mean_contended_py_files": 0.0560799555802332,
+            "mean_contended_py_nodes": 0.017212659633536923,
+            "mean_distinct_nodes": 14.975013881177123,
+            "mean_distinct_py_nodes": 12.811771238200999,
+            "mean_effective_k": 2.0,
+            "mean_max_file_chain": 1.2715158245419211,
+            "mean_max_node_chain": 1.2509716823986674,
+            "mean_max_py_file_chain": 0.9872293170460855,
+            "mean_max_py_node_chain": 0.9533592448639645,
+            "p_file_collision": 0.27151582454192114,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.2509716823986674,
+            "p_py_file_collision": 0.046640755136035536,
+            "p_py_node_collision": 0.012770682953914493,
+            "windows": 1801
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 4,
+            "mean_contended_files": 0.9127292940522512,
+            "mean_contended_nodes": 0.7342968315730961,
+            "mean_contended_py_files": 0.2529182879377432,
+            "mean_contended_py_nodes": 0.0744858254585881,
+            "mean_distinct_nodes": 29.43190661478599,
+            "mean_distinct_py_nodes": 25.592551417454143,
+            "mean_effective_k": 3.352517985611511,
+            "mean_max_file_chain": 1.9866592551417455,
+            "mean_max_node_chain": 1.9266259032795998,
+            "mean_max_py_file_chain": 1.1989994441356309,
+            "mean_max_py_node_chain": 1.0366870483602002,
+            "p_file_collision": 0.6397998888271261,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.5897720956086715,
+            "p_py_file_collision": 0.1934408004446915,
+            "p_py_node_collision": 0.049471928849360754,
+            "windows": 1799
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 8,
+            "mean_contended_files": 2.2440111420612814,
+            "mean_contended_nodes": 1.5743732590529247,
+            "mean_contended_py_files": 0.9766016713091922,
+            "mean_contended_py_nodes": 0.30696378830083565,
+            "mean_distinct_nodes": 57.73593314763231,
+            "mean_distinct_py_nodes": 50.96490250696379,
+            "mean_effective_k": 5.541095890410959,
+            "mean_max_file_chain": 3.519777158774373,
+            "mean_max_node_chain": 3.4445682451253483,
+            "mean_max_py_file_chain": 1.6774373259052924,
+            "mean_max_py_node_chain": 1.1866295264623956,
+            "p_file_collision": 0.9286908077994429,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.8807799442896936,
+            "p_py_file_collision": 0.5303621169916435,
+            "p_py_node_collision": 0.16044568245125349,
+            "windows": 1795
+          },
+          {
+            "git_conflict_step_share": 0.00078064012490242,
+            "k": 16,
+            "mean_contended_files": 5.61611639619474,
+            "mean_contended_nodes": 3.541130386121992,
+            "mean_contended_py_files": 3.2831561275881365,
+            "mean_contended_py_nodes": 1.208170117515389,
+            "mean_distinct_nodes": 112.89815332960269,
+            "mean_distinct_py_nodes": 100.93452714045887,
+            "mean_effective_k": 9.54,
+            "mean_max_file_chain": 6.580302182428651,
+            "mean_max_node_chain": 6.52993844432009,
+            "mean_max_py_file_chain": 2.4868494683827644,
+            "mean_max_py_node_chain": 1.548964745383324,
+            "p_file_collision": 0.9944040290990487,
+            "p_git_conflict": 0.006666666666666667,
+            "p_node_collision": 0.9882484611080022,
+            "p_py_file_collision": 0.8757694459988808,
+            "p_py_node_collision": 0.4303301622831561,
+            "windows": 1787
+          },
+          {
+            "git_conflict_step_share": 0.0016884761502743773,
+            "k": 32,
+            "mean_contended_files": 14.351778656126482,
+            "mean_contended_nodes": 8.556747600225862,
+            "mean_contended_py_files": 9.784302653867872,
+            "mean_contended_py_nodes": 3.98927159796725,
+            "mean_distinct_nodes": 220.2772444946358,
+            "mean_distinct_py_nodes": 199.18351214003388,
+            "mean_effective_k": 16.793333333333333,
+            "mean_max_file_chain": 12.687747035573123,
+            "mean_max_node_chain": 12.658385093167702,
+            "mean_max_py_file_chain": 3.8560135516657255,
+            "mean_max_py_node_chain": 2.162619988706945,
+            "p_file_collision": 1.0,
+            "p_git_conflict": 0.02666666666666667,
+            "p_node_collision": 1.0,
+            "p_py_file_collision": 0.9841897233201581,
+            "p_py_node_collision": 0.7944664031620553,
+            "windows": 1771
+          },
+          {
+            "git_conflict_step_share": 0.001488833746898263,
+            "k": 64,
+            "mean_contended_files": 34.891891891891895,
+            "mean_contended_nodes": 21.628522139160438,
+            "mean_contended_py_files": 25.28867165037378,
+            "mean_contended_py_nodes": 12.025301897642324,
+            "mean_distinct_nodes": 426.2909718228867,
+            "mean_distinct_py_nodes": 389.5359401955147,
+            "mean_effective_k": 27.866666666666667,
+            "mean_max_file_chain": 25.027027027027028,
+            "mean_max_node_chain": 25.027027027027028,
+            "mean_max_py_file_chain": 6.440483036227717,
+            "mean_max_py_node_chain": 2.953421506612996,
+            "p_file_collision": 1.0,
+            "p_git_conflict": 0.04,
+            "p_node_collision": 1.0,
+            "p_py_file_collision": 1.0,
+            "p_py_node_collision": 0.9706728004600345,
+            "windows": 1739
+          }
+        ]
+      },
+      "semantic": {
+        "ci95": [
+          0.0,
+          0.009512640599680667
+        ],
+        "kinds": [],
+        "probed": 400,
+        "share": 0.0,
+        "total_new_defects": 0,
+        "with_new_defects": 0
+      },
+      "slug": "pandas-dev/pandas",
+      "two_by_two": {
+        "clean_not_shared": 20635,
+        "clean_shared": 4365,
+        "clean_shared_all_append": 3179,
+        "conflict_not_shared": 0,
+        "conflict_py_not_shared": 0,
+        "conflict_py_shared": 0,
+        "conflict_shared": 0,
+        "error": 0,
+        "rebase_conflict": 0
+      },
+      "validation": {
+        "mapper": {
+          "extra_ratio": 0.3170028818443804,
+          "file_accuracy": 0.9821428571428571,
+          "files_agreeing": 165,
+          "files_checked": 168,
+          "symbol_recall": 0.9913544668587896,
+          "symbols_expected": 347,
+          "symbols_extra": 110,
+          "symbols_matched": 344
+        },
+        "merge": {
+          "accuracy": 1.0,
+          "agreeing": 26,
+          "checked": 26,
+          "disagreements": []
+        },
+        "naive_bias": {
+          "corrected_checked": 451,
+          "corrected_conflicts": 0,
+          "corrected_rate": 0.0,
+          "naive_checked": 1200,
+          "naive_conflicts": 294,
+          "naive_conflicts_sharing_no_file": 152,
+          "naive_rate": 0.245,
+          "provably_spurious": 0.5170068027210885
+        },
+        "pair_sampling_rate": "0.543644",
+        "survivorship": {
+          "abandoned": {
+            "changes": 840,
+            "file_collisions": 27237,
+            "file_rate": 0.1739216500111746,
+            "node_collisions": 24698,
+            "node_rate": 0.15770888541234315,
+            "pairs": 156605,
+            "population": "abandoned",
+            "py_file_collisions": 3629,
+            "py_node_collisions": 396,
+            "py_node_rate": 0.002528654896076115
+          },
+          "merged": {
+            "changes": 1802,
+            "file_collisions": 17488,
+            "file_rate": 0.1901448266863828,
+            "node_collisions": 15896,
+            "node_rate": 0.17283521071630495,
+            "pairs": 91972,
+            "population": "merged",
+            "py_file_collisions": 2340,
+            "py_node_collisions": 228,
+            "py_node_rate": 0.0024790153524985865
+          }
+        }
+      }
+    },
+    {
+      "non_python": {
+        "non_python_conflict_files": 0,
+        "non_python_conflict_share": 0.0,
+        "non_python_touch_share": 0.22924047829938,
+        "non_python_touches": 4141,
+        "total_conflict_files": 0,
+        "total_touches": 18064
+      },
+      "profile": {
+        "changes": {
+          "append_only_touch_share": 0.11974092116917626,
+          "count": 1851,
+          "files_histogram": [
+            [
+              0,
+              238
+            ],
+            [
+              1,
+              773
+            ],
+            [
+              2,
+              285
+            ],
+            [
+              3,
+              197
+            ],
+            [
+              4,
+              101
+            ],
+            [
+              5,
+              68
+            ],
+            [
+              6,
+              43
+            ],
+            [
+              7,
+              27
+            ],
+            [
+              8,
+              22
+            ],
+            [
+              9,
+              12
+            ],
+            [
+              10,
+              7
+            ],
+            [
+              11,
+              8
+            ],
+            [
+              12,
+              6
+            ],
+            [
+              13,
+              6
+            ],
+            [
+              14,
+              7
+            ],
+            [
+              15,
+              2
+            ],
+            [
+              16,
+              4
+            ],
+            [
+              17,
+              6
+            ],
+            [
+              18,
+              4
+            ],
+            [
+              19,
+              1
+            ],
+            [
+              20,
+              3
+            ],
+            [
+              21,
+              1
+            ],
+            [
+              22,
+              1
+            ],
+            [
+              24,
+              2
+            ],
+            [
+              25,
+              1
+            ],
+            [
+              26,
+              1
+            ],
+            [
+              27,
+              1
+            ],
+            [
+              29,
+              2
+            ],
+            [
+              31,
+              3
+            ],
+            [
+              34,
+              1
+            ],
+            [
+              35,
+              2
+            ],
+            [
+              36,
+              2
+            ],
+            [
+              39,
+              2
+            ],
+            [
+              40,
+              1
+            ],
+            [
+              43,
+              1
+            ],
+            [
+              46,
+              1
+            ],
+            [
+              66,
+              1
+            ],
+            [
+              71,
+              1
+            ],
+            [
+              73,
+              1
+            ],
+            [
+              75,
+              1
+            ],
+            [
+              76,
+              1
+            ],
+            [
+              81,
+              1
+            ],
+            [
+              93,
+              1
+            ],
+            [
+              98,
+              1
+            ],
+            [
+              99,
+              1
+            ]
+          ],
+          "files_per_change": {
+            "count": 1851,
+            "maximum": 99,
+            "mean": 3.0237709346299297,
+            "p50": 1.0,
+            "p90": 6.0,
+            "p99": 32.5
+          },
+          "nodes_histogram": [
+            [
+              0,
+              238
+            ],
+            [
+              1,
+              626
+            ],
+            [
+              2,
+              240
+            ],
+            [
+              3,
+              136
+            ],
+            [
+              4,
+              115
+            ],
+            [
+              5,
+              90
+            ],
+            [
+              6,
+              67
+            ],
+            [
+              7,
+              46
+            ],
+            [
+              8,
+              35
+            ],
+            [
+              9,
+              32
+            ],
+            [
+              10,
+              13
+            ],
+            [
+              11,
+              15
+            ],
+            [
+              12,
+              13
+            ],
+            [
+              13,
+              10
+            ],
+            [
+              14,
+              15
+            ],
+            [
+              15,
+              9
+            ],
+            [
+              16,
+              12
+            ],
+            [
+              17,
+              5
+            ],
+            [
+              18,
+              7
+            ],
+            [
+              19,
+              8
+            ],
+            [
+              20,
+              7
+            ],
+            [
+              21,
+              4
+            ],
+            [
+              22,
+              3
+            ],
+            [
+              23,
+              4
+            ],
+            [
+              24,
+              3
+            ],
+            [
+              25,
+              2
+            ],
+            [
+              26,
+              8
+            ],
+            [
+              27,
+              4
+            ],
+            [
+              28,
+              8
+            ],
+            [
+              29,
+              3
+            ],
+            [
+              30,
+              4
+            ],
+            [
+              31,
+              4
+            ],
+            [
+              33,
+              4
+            ],
+            [
+              34,
+              3
+            ],
+            [
+              36,
+              1
+            ],
+            [
+              37,
+              1
+            ],
+            [
+              38,
+              4
+            ],
+            [
+              39,
+              1
+            ],
+            [
+              40,
+              2
+            ],
+            [
+              41,
+              1
+            ],
+            [
+              42,
+              2
+            ],
+            [
+              43,
+              1
+            ],
+            [
+              44,
+              4
+            ],
+            [
+              45,
+              1
+            ],
+            [
+              47,
+              1
+            ],
+            [
+              49,
+              2
+            ],
+            [
+              50,
+              1
+            ],
+            [
+              51,
+              1
+            ],
+            [
+              55,
+              2
+            ],
+            [
+              56,
+              2
+            ],
+            [
+              57,
+              3
+            ],
+            [
+              58,
+              1
+            ],
+            [
+              60,
+              1
+            ],
+            [
+              61,
+              1
+            ],
+            [
+              62,
+              1
+            ],
+            [
+              63,
+              1
+            ],
+            [
+              67,
+              2
+            ],
+            [
+              69,
+              1
+            ],
+            [
+              70,
+              1
+            ],
+            [
+              71,
+              1
+            ],
+            [
+              73,
+              1
+            ],
+            [
+              76,
+              1
+            ],
+            [
+              82,
+              1
+            ],
+            [
+              83,
+              1
+            ]
+          ],
+          "nodes_per_change": {
+            "count": 1851,
+            "maximum": 338,
+            "mean": 6.072933549432739,
+            "p50": 2.0,
+            "p90": 12.0,
+            "p99": 70.5
+          },
+          "python_nodes_per_change": {
+            "count": 1851,
+            "maximum": 336,
+            "mean": 4.868179362506753,
+            "p50": 1.0,
+            "p90": 10.0,
+            "p99": 63.5
+          }
+        },
+        "filters": {
+          "bot": 20,
+          "kept": 2816,
+          "no_footprint": 11,
+          "oversize": 26,
+          "unusable": 7,
+          "whitespace_sweep": 3
+        },
+        "generated_at": "2026-09-22T11:04:43.556481+00:00",
+        "hot_node_categories": [
+          {
+            "category": "other",
+            "nodes": 97,
+            "writes": 1308
+          },
+          {
+            "category": "docs_changelog",
+            "nodes": 40,
+            "writes": 658
+          },
+          {
+            "category": "import_header",
+            "nodes": 41,
+            "writes": 510
+          },
+          {
+            "category": "build_ci",
+            "nodes": 18,
+            "writes": 310
+          },
+          {
+            "category": "tests",
+            "nodes": 4,
+            "writes": 42
+          }
+        ],
+        "node_popularity": {
+          "distinct_nodes": 8475,
+          "distinct_python_nodes": 7403,
+          "top_nodes": [
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/modules/array_api.rst::__file__::__whole__",
+              "writes": 60
+            },
+            {
+              "category": "build_ci",
+              "node_id": "pyproject.toml::__file__::__whole__",
+              "writes": 55
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/modules/linear_model.rst::__file__::__whole__",
+              "writes": 47
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/developers/contributing.rst::__file__::__whole__",
+              "writes": 46
+            },
+            {
+              "category": "other",
+              "node_id": "build_tools/update_environments_and_lock_files.py::module_body::__body__",
+              "writes": 42
+            },
+            {
+              "category": "other",
+              "node_id": "build_tools/azure/debian_32bit_lock.txt::__file__::__whole__",
+              "writes": 41
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/unit-tests.yml::__file__::__whole__",
+              "writes": 40
+            },
+            {
+              "category": "other",
+              "node_id": "build_tools/azure/ubuntu_atlas_lock.txt::__file__::__whole__",
+              "writes": 38
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "README.rst::__file__::__whole__",
+              "writes": 36
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/modules/model_evaluation.rst::__file__::__whole__",
+              "writes": 36
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/modules/ensemble.rst::__file__::__whole__",
+              "writes": 31
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/wheels.yml::__file__::__whole__",
+              "writes": 28
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/_min_dependencies.py::module_header::__header__",
+              "writes": 28
+            },
+            {
+              "category": "build_ci",
+              "node_id": "azure-pipelines.yml::__file__::__whole__",
+              "writes": 27
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/linear_model/_logistic.py::class::LogisticRegression",
+              "writes": 27
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/linear_model/_cd_fast.pyx::__file__::__whole__",
+              "writes": 25
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/glossary.rst::__file__::__whole__",
+              "writes": 24
+            },
+            {
+              "category": "other",
+              "node_id": "build_tools/github/debian_32bit_lock.txt::__file__::__whole__",
+              "writes": 23
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/ensemble/_forest.py::class::RandomForestClassifier",
+              "writes": 23
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/linear_model/_logistic.py::method::LogisticRegression.fit",
+              "writes": 23
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/utils/_test_common/instance_generator.py::module_body::__body__#2",
+              "writes": 23
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/modules/clustering.rst::__file__::__whole__",
+              "writes": 22
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/linear_model/_logistic.py::class::LogisticRegressionCV",
+              "writes": 22
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/utils/tests/test_array_api.py::module_header::__header__",
+              "writes": 22
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".pre-commit-config.yaml::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/about.rst::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/metrics/tests/test_common.py::module_header::__header__",
+              "writes": 21
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/modules/tree.rst::__file__::__whole__",
+              "writes": 20
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/ensemble/_forest.py::class::RandomForestRegressor",
+              "writes": 20
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/metrics/_classification.py::module_header::__header__",
+              "writes": 20
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/metrics/_plot/precision_recall_curve.py::method::PrecisionRecallDisplay.from_predictions",
+              "writes": 20
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/utils/validation.py::function::check_array",
+              "writes": 20
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/linear_model/_logistic.py::function::_logistic_regression_path",
+              "writes": 19
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/linear_model/_logistic.py::module_header::__header__",
+              "writes": 19
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/linear_model/_coordinate_descent.py::function::enet_path",
+              "writes": 18
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/linear_model/_logistic.py::method::LogisticRegressionCV.fit",
+              "writes": 18
+            },
+            {
+              "category": "other",
+              "node_id": "build_tools/github/ubuntu_atlas_lock.txt::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/templates/index.html::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/metrics/_plot/roc_curve.py::class::RocCurveDisplay",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/metrics/_ranking.py::function::average_precision_score",
+              "writes": 17
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/utils/_test_common/instance_generator.py::module_header::__header__",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "build_tools/azure/test_script.sh::__file__::__whole__",
+              "writes": 16
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "doc/api_reference.py::module_body::__body__",
+              "writes": 16
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/inspection/_plot/decision_boundary.py::method::DecisionBoundaryDisplay.from_estimator",
+              "writes": 16
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/linear_model/tests/test_logistic.py::module_header::__header__",
+              "writes": 16
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/metrics/_plot/precision_recall_curve.py::class::PrecisionRecallDisplay",
+              "writes": 16
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/preprocessing/_data.py::module_header::__header__",
+              "writes": 16
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/tests/test_metaestimators_metadata_routing.py::module_header::__header__",
+              "writes": 16
+            },
+            {
+              "category": "import_header",
+              "node_id": "sklearn/tree/_classes.py::module_header::__header__",
+              "writes": 16
+            },
+            {
+              "category": "other",
+              "node_id": "sklearn/tree/_partitioner.pyx::__file__::__whole__",
+              "writes": 16
+            }
+          ],
+          "writes_histogram": [
+            [
+              1,
+              5279
+            ],
+            [
+              2,
+              1649
+            ],
+            [
+              3,
+              653
+            ],
+            [
+              4,
+              301
+            ],
+            [
+              5,
+              166
+            ],
+            [
+              6,
+              104
+            ],
+            [
+              7,
+              81
+            ],
+            [
+              8,
+              52
+            ],
+            [
+              9,
+              49
+            ],
+            [
+              10,
+              32
+            ],
+            [
+              11,
+              20
+            ],
+            [
+              12,
+              13
+            ],
+            [
+              13,
+              13
+            ],
+            [
+              14,
+              8
+            ],
+            [
+              15,
+              5
+            ],
+            [
+              16,
+              9
+            ],
+            [
+              17,
+              5
+            ],
+            [
+              18,
+              2
+            ],
+            [
+              19,
+              2
+            ],
+            [
+              20,
+              5
+            ],
+            [
+              21,
+              3
+            ],
+            [
+              22,
+              3
+            ],
+            [
+              23,
+              4
+            ],
+            [
+              24,
+              1
+            ],
+            [
+              25,
+              1
+            ],
+            [
+              27,
+              2
+            ],
+            [
+              28,
+              2
+            ],
+            [
+              31,
+              1
+            ],
+            [
+              36,
+              2
+            ],
+            [
+              38,
+              1
+            ],
+            [
+              40,
+              1
+            ],
+            [
+              41,
+              1
+            ],
+            [
+              42,
+              1
+            ],
+            [
+              46,
+              1
+            ],
+            [
+              47,
+              1
+            ],
+            [
+              55,
+              1
+            ],
+            [
+              60,
+              1
+            ]
+          ],
+          "zipf": {
+            "alpha": 1.9055954084136202,
+            "gini": 0.4002362531208743,
+            "r_squared": 0.9282473153427563,
+            "tail_size": 8475,
+            "x_min": 1
+          }
+        },
+        "pair_probabilities": {
+          "co_flight_hours": {
+            "count": 16383,
+            "maximum": 1107,
+            "mean": 49.46816822315815,
+            "p50": 26.0,
+            "p90": 115.0,
+            "p99": 364.0
+          },
+          "definition": "base_overlap",
+          "merge_sample": 16383,
+          "population_pairs": 16383,
+          "same_file": 0.016358420313739852,
+          "same_file_different_node": 0.007568821339193066,
+          "same_node": 0.008789598974546786,
+          "same_python_file": 0.011353232008789599,
+          "same_python_node": 0.003601294024293475,
+          "shared_node_all_append": 0.0009155832265152902,
+          "textual_conflict": 0.0,
+          "textual_conflict_without_shared_node": 0.0,
+          "verdict_counts": {
+            "clean": 16383
+          }
+        },
+        "repo": "scikit-learn/scikit-learn",
+        "schema_version": 1,
+        "window": {
+          "clone_main_branch": "main",
+          "clone_main_sha": "a5046923f202f84cc1617f4ea555431194c52836",
+          "since": "2025-01-01",
+          "until": "2026-09-01"
+        },
+        "window_curves": [
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 2,
+            "mean_contended_files": 0.05081081081081081,
+            "mean_contended_nodes": 0.03513513513513514,
+            "mean_contended_py_files": 0.03945945945945946,
+            "mean_contended_py_nodes": 0.023783783783783784,
+            "mean_distinct_nodes": 12.108108108108109,
+            "mean_distinct_py_nodes": 9.70972972972973,
+            "mean_effective_k": 2.0,
+            "mean_max_file_chain": 0.9654054054054054,
+            "mean_max_node_chain": 0.9545945945945946,
+            "mean_max_py_file_chain": 0.7897297297297298,
+            "mean_max_py_node_chain": 0.778918918918919,
+            "p_file_collision": 0.03189189189189189,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.02108108108108108,
+            "p_py_file_collision": 0.02108108108108108,
+            "p_py_node_collision": 0.01027027027027027,
+            "windows": 1850
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 4,
+            "mean_contended_files": 0.2564935064935065,
+            "mean_contended_nodes": 0.18452380952380953,
+            "mean_contended_py_files": 0.18181818181818182,
+            "mean_contended_py_nodes": 0.10984848484848485,
+            "mean_distinct_nodes": 24.10822510822511,
+            "mean_distinct_py_nodes": 19.36796536796537,
+            "mean_effective_k": 3.5684931506849313,
+            "mean_max_file_chain": 1.1585497835497836,
+            "mean_max_node_chain": 1.103896103896104,
+            "mean_max_py_file_chain": 1.0254329004329004,
+            "mean_max_py_node_chain": 0.9691558441558441,
+            "p_file_collision": 0.1525974025974026,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.10335497835497835,
+            "p_py_file_collision": 0.10281385281385282,
+            "p_py_node_collision": 0.05194805194805195,
+            "windows": 1848
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 8,
+            "mean_contended_files": 0.9094360086767896,
+            "mean_contended_nodes": 0.7011930585683297,
+            "mean_contended_py_files": 0.6372017353579176,
+            "mean_contended_py_nodes": 0.4289587852494577,
+            "mean_distinct_nodes": 47.915401301518436,
+            "mean_distinct_py_nodes": 38.57592190889371,
+            "mean_effective_k": 6.4,
+            "mean_max_file_chain": 1.5113882863340564,
+            "mean_max_node_chain": 1.3676789587852494,
+            "mean_max_py_file_chain": 1.3503253796095445,
+            "mean_max_py_node_chain": 1.1795010845986984,
+            "p_file_collision": 0.447939262472885,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.3351409978308026,
+            "p_py_file_collision": 0.32266811279826463,
+            "p_py_node_collision": 0.18275488069414317,
+            "windows": 1844
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 16,
+            "mean_contended_files": 3.1269063180827885,
+            "mean_contended_nodes": 2.6345315904139435,
+            "mean_contended_py_files": 2.164488017429194,
+            "mean_contended_py_nodes": 1.6721132897603486,
+            "mean_distinct_nodes": 94.70915032679738,
+            "mean_distinct_py_nodes": 76.49455337690632,
+            "mean_effective_k": 11.213333333333333,
+            "mean_max_file_chain": 2.144335511982571,
+            "mean_max_node_chain": 1.881263616557734,
+            "mean_max_py_file_chain": 1.9242919389978212,
+            "mean_max_py_node_chain": 1.5413943355119826,
+            "p_file_collision": 0.8431372549019608,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.7227668845315904,
+            "p_py_file_collision": 0.7009803921568627,
+            "p_py_node_collision": 0.46459694989106753,
+            "windows": 1836
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 32,
+            "mean_contended_files": 9.760439560439561,
+            "mean_contended_nodes": 8.430769230769231,
+            "mean_contended_py_files": 6.518131868131868,
+            "mean_contended_py_nodes": 5.188461538461539,
+            "mean_distinct_nodes": 186.19010989010988,
+            "mean_distinct_py_nodes": 151.5098901098901,
+            "mean_effective_k": 20.86,
+            "mean_max_file_chain": 3.165934065934066,
+            "mean_max_node_chain": 2.702747252747253,
+            "mean_max_py_file_chain": 2.8763736263736264,
+            "mean_max_py_node_chain": 2.159340659340659,
+            "p_file_collision": 0.9873626373626374,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.9807692307692307,
+            "p_py_file_collision": 0.9554945054945055,
+            "p_py_node_collision": 0.8159340659340659,
+            "windows": 1820
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 64,
+            "mean_contended_files": 27.624720357941836,
+            "mean_contended_nodes": 25.17393736017897,
+            "mean_contended_py_files": 18.348993288590606,
+            "mean_contended_py_nodes": 15.898210290827741,
+            "mean_distinct_nodes": 361.12863534675614,
+            "mean_distinct_py_nodes": 297.1364653243848,
+            "mean_effective_k": 39.17333333333333,
+            "mean_max_file_chain": 4.818791946308725,
+            "mean_max_node_chain": 4.121364653243848,
+            "mean_max_py_file_chain": 4.26510067114094,
+            "mean_max_py_node_chain": 3.0145413870246087,
+            "p_file_collision": 1.0,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 1.0,
+            "p_py_file_collision": 0.9876957494407159,
+            "p_py_node_collision": 0.9636465324384788,
+            "windows": 1788
+          }
+        ]
+      },
+      "semantic": {
+        "ci95": [
+          0.0,
+          0.009512640599680667
+        ],
+        "kinds": [],
+        "probed": 400,
+        "share": 0.0,
+        "total_new_defects": 0,
+        "with_new_defects": 0
+      },
+      "slug": "scikit-learn/scikit-learn",
+      "two_by_two": {
+        "clean_not_shared": 16239,
+        "clean_shared": 144,
+        "clean_shared_all_append": 15,
+        "conflict_not_shared": 0,
+        "conflict_py_not_shared": 0,
+        "conflict_py_shared": 0,
+        "conflict_shared": 0,
+        "error": 0,
+        "rebase_conflict": 0
+      },
+      "validation": {
+        "mapper": {
+          "extra_ratio": 0.17083333333333334,
+          "file_accuracy": 0.9871794871794872,
+          "files_agreeing": 231,
+          "files_checked": 234,
+          "symbol_recall": 0.99375,
+          "symbols_expected": 480,
+          "symbols_extra": 82,
+          "symbols_matched": 477
+        },
+        "merge": {
+          "accuracy": 1.0,
+          "agreeing": 26,
+          "checked": 26,
+          "disagreements": []
+        },
+        "naive_bias": {
+          "corrected_checked": 236,
+          "corrected_conflicts": 0,
+          "corrected_rate": 0.0,
+          "naive_checked": 1200,
+          "naive_conflicts": 355,
+          "naive_conflicts_sharing_no_file": 341,
+          "naive_rate": 0.29583333333333334,
+          "provably_spurious": 0.9605633802816902
+        },
+        "pair_sampling_rate": "1.000000",
+        "survivorship": {
+          "abandoned": {
+            "changes": 965,
+            "file_collisions": 947,
+            "file_rate": 0.013551997023426209,
+            "node_collisions": 458,
+            "node_rate": 0.006554186522417321,
+            "pairs": 69879,
+            "population": "abandoned",
+            "py_file_collisions": 796,
+            "py_node_collisions": 301,
+            "py_node_rate": 0.004307445727614877
+          },
+          "merged": {
+            "changes": 1851,
+            "file_collisions": 536,
+            "file_rate": 0.016358420313739852,
+            "node_collisions": 288,
+            "node_rate": 0.008789598974546786,
+            "pairs": 32766,
+            "population": "merged",
+            "py_file_collisions": 372,
+            "py_node_collisions": 118,
+            "py_node_rate": 0.003601294024293475
+          }
+        }
+      }
+    },
+    {
+      "non_python": {
+        "non_python_conflict_files": 0,
+        "non_python_conflict_share": 0.0,
+        "non_python_touch_share": 0.15981873111782477,
+        "non_python_touches": 3174,
+        "total_conflict_files": 0,
+        "total_touches": 19860
+      },
+      "profile": {
+        "changes": {
+          "append_only_touch_share": 0.1511077542799597,
+          "count": 1242,
+          "files_histogram": [
+            [
+              1,
+              463
+            ],
+            [
+              2,
+              275
+            ],
+            [
+              3,
+              170
+            ],
+            [
+              4,
+              120
+            ],
+            [
+              5,
+              47
+            ],
+            [
+              6,
+              33
+            ],
+            [
+              7,
+              23
+            ],
+            [
+              8,
+              19
+            ],
+            [
+              9,
+              15
+            ],
+            [
+              10,
+              6
+            ],
+            [
+              11,
+              9
+            ],
+            [
+              12,
+              7
+            ],
+            [
+              13,
+              11
+            ],
+            [
+              14,
+              5
+            ],
+            [
+              15,
+              3
+            ],
+            [
+              16,
+              3
+            ],
+            [
+              17,
+              2
+            ],
+            [
+              18,
+              2
+            ],
+            [
+              19,
+              1
+            ],
+            [
+              20,
+              1
+            ],
+            [
+              21,
+              1
+            ],
+            [
+              22,
+              4
+            ],
+            [
+              23,
+              1
+            ],
+            [
+              24,
+              1
+            ],
+            [
+              25,
+              2
+            ],
+            [
+              26,
+              2
+            ],
+            [
+              27,
+              1
+            ],
+            [
+              28,
+              2
+            ],
+            [
+              30,
+              2
+            ],
+            [
+              31,
+              1
+            ],
+            [
+              32,
+              2
+            ],
+            [
+              34,
+              1
+            ],
+            [
+              41,
+              2
+            ],
+            [
+              43,
+              1
+            ],
+            [
+              47,
+              2
+            ],
+            [
+              58,
+              1
+            ],
+            [
+              67,
+              1
+            ]
+          ],
+          "files_per_change": {
+            "count": 1242,
+            "maximum": 67,
+            "mean": 3.5555555555555554,
+            "p50": 2.0,
+            "p90": 7.0,
+            "p99": 29.179999999999836
+          },
+          "nodes_histogram": [
+            [
+              1,
+              389
+            ],
+            [
+              2,
+              182
+            ],
+            [
+              3,
+              134
+            ],
+            [
+              4,
+              85
+            ],
+            [
+              5,
+              57
+            ],
+            [
+              6,
+              52
+            ],
+            [
+              7,
+              41
+            ],
+            [
+              8,
+              34
+            ],
+            [
+              9,
+              37
+            ],
+            [
+              10,
+              22
+            ],
+            [
+              11,
+              20
+            ],
+            [
+              12,
+              18
+            ],
+            [
+              13,
+              18
+            ],
+            [
+              14,
+              15
+            ],
+            [
+              15,
+              5
+            ],
+            [
+              16,
+              10
+            ],
+            [
+              17,
+              3
+            ],
+            [
+              18,
+              6
+            ],
+            [
+              19,
+              12
+            ],
+            [
+              20,
+              7
+            ],
+            [
+              21,
+              5
+            ],
+            [
+              22,
+              4
+            ],
+            [
+              23,
+              8
+            ],
+            [
+              24,
+              2
+            ],
+            [
+              25,
+              5
+            ],
+            [
+              26,
+              5
+            ],
+            [
+              27,
+              4
+            ],
+            [
+              28,
+              3
+            ],
+            [
+              29,
+              1
+            ],
+            [
+              30,
+              4
+            ],
+            [
+              31,
+              1
+            ],
+            [
+              32,
+              5
+            ],
+            [
+              33,
+              1
+            ],
+            [
+              35,
+              8
+            ],
+            [
+              36,
+              5
+            ],
+            [
+              37,
+              1
+            ],
+            [
+              40,
+              2
+            ],
+            [
+              41,
+              1
+            ],
+            [
+              42,
+              2
+            ],
+            [
+              44,
+              1
+            ],
+            [
+              47,
+              1
+            ],
+            [
+              48,
+              3
+            ],
+            [
+              50,
+              1
+            ],
+            [
+              54,
+              1
+            ],
+            [
+              55,
+              1
+            ],
+            [
+              56,
+              1
+            ],
+            [
+              59,
+              1
+            ],
+            [
+              60,
+              1
+            ],
+            [
+              64,
+              1
+            ],
+            [
+              67,
+              1
+            ],
+            [
+              69,
+              1
+            ],
+            [
+              70,
+              1
+            ],
+            [
+              78,
+              1
+            ],
+            [
+              89,
+              1
+            ],
+            [
+              91,
+              1
+            ],
+            [
+              92,
+              1
+            ],
+            [
+              94,
+              1
+            ],
+            [
+              95,
+              1
+            ],
+            [
+              97,
+              1
+            ],
+            [
+              121,
+              1
+            ],
+            [
+              123,
+              1
+            ],
+            [
+              125,
+              1
+            ],
+            [
+              153,
+              1
+            ],
+            [
+              271,
+              1
+            ]
+          ],
+          "nodes_per_change": {
+            "count": 1242,
+            "maximum": 336,
+            "mean": 7.566022544283414,
+            "p50": 3.0,
+            "p90": 16.0,
+            "p99": 74.71999999999935
+          },
+          "python_nodes_per_change": {
+            "count": 1242,
+            "maximum": 323,
+            "mean": 6.095008051529791,
+            "p50": 2.0,
+            "p90": 14.0,
+            "p99": 72.30999999999926
+          }
+        },
+        "filters": {
+          "bot": 0,
+          "kept": 2446,
+          "no_footprint": 3,
+          "oversize": 33,
+          "unusable": 7,
+          "whitespace_sweep": 1
+        },
+        "generated_at": "2026-09-22T11:17:04.483577+00:00",
+        "hot_node_categories": [
+          {
+            "category": "docs_changelog",
+            "nodes": 59,
+            "writes": 1225
+          },
+          {
+            "category": "other",
+            "nodes": 51,
+            "writes": 496
+          },
+          {
+            "category": "import_header",
+            "nodes": 45,
+            "writes": 451
+          },
+          {
+            "category": "build_ci",
+            "nodes": 20,
+            "writes": 276
+          },
+          {
+            "category": "tests",
+            "nodes": 16,
+            "writes": 176
+          },
+          {
+            "category": "registry",
+            "nodes": 6,
+            "writes": 69
+          },
+          {
+            "category": "settings",
+            "nodes": 3,
+            "writes": 51
+          }
+        ],
+        "node_popularity": {
+          "distinct_nodes": 11501,
+          "distinct_python_nodes": 10839,
+          "top_nodes": [
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/releases/6.1.txt::__file__::__whole__",
+              "writes": 132
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/releases/6.0.txt::__file__::__whole__",
+              "writes": 74
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/models/querysets.txt::__file__::__whole__",
+              "writes": 52
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/settings.txt::__file__::__whole__",
+              "writes": 46
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/releases/6.2.txt::__file__::__whole__",
+              "writes": 46
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/internals/deprecation.txt::__file__::__whole__",
+              "writes": 43
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/topics/email.txt::__file__::__whole__",
+              "writes": 39
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "README.rst::__file__::__whole__",
+              "writes": 38
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/models/fields.txt::__file__::__whole__",
+              "writes": 38
+            },
+            {
+              "category": "settings",
+              "node_id": "django/conf/global_settings.py::module_body::__body__",
+              "writes": 34
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/checks.txt::__file__::__whole__",
+              "writes": 33
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/databases.txt::__file__::__whole__",
+              "writes": 28
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/internals/howto-release-django.txt::__file__::__whole__",
+              "writes": 27
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/topics/db/queries.txt::__file__::__whole__",
+              "writes": 27
+            },
+            {
+              "category": "other",
+              "node_id": "django/contrib/admin/static/admin/css/base.css::__file__::__whole__",
+              "writes": 26
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/contrib/admin/index.txt::__file__::__whole__",
+              "writes": 25
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/topics/http/shortcuts.txt::__file__::__whole__",
+              "writes": 25
+            },
+            {
+              "category": "import_header",
+              "node_id": "django/db/models/query.py::module_header::__header__",
+              "writes": 24
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/django-admin.txt::__file__::__whole__",
+              "writes": 24
+            },
+            {
+              "category": "other",
+              "node_id": "django/contrib/admin/static/admin/css/forms.css::__file__::__whole__",
+              "writes": 23
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/models/expressions.txt::__file__::__whole__",
+              "writes": 23
+            },
+            {
+              "category": "registry",
+              "node_id": "django/db/backends/base/features.py::class::BaseDatabaseFeatures",
+              "writes": 22
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/models/instances.txt::__file__::__whole__",
+              "writes": 22
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/tests.yml::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "other",
+              "node_id": "django/shortcuts.py::function::make_toast",
+              "writes": 21
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/internals/contributing/writing-code/unit-tests.txt::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/ref/request-response.txt::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "tests",
+              "node_id": "tests/requirements/py3.txt::__file__::__whole__",
+              "writes": 21
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/schedule_tests.yml::__file__::__whole__",
+              "writes": 20
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/internals/contributing/writing-code/submitting-patches.txt::__file__::__whole__",
+              "writes": 20
+            },
+            {
+              "category": "import_header",
+              "node_id": "tests/shortcuts/test_make_toast.py::module_header::__header__",
+              "writes": 20
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/postgis.yml::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/screenshots.yml::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/intro/contributing.txt::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/releases/5.2.txt::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/spelling_wordlist::__file__::__whole__",
+              "writes": 19
+            },
+            {
+              "category": "tests",
+              "node_id": "tests/shortcuts/test_make_toast.py::class::MakeToastTests",
+              "writes": 19
+            },
+            {
+              "category": "tests",
+              "node_id": "tests/shortcuts/test_make_toast.py::method::MakeToastTests.test_make_toast",
+              "writes": 19
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/topics/cache.txt::__file__::__whole__",
+              "writes": 18
+            },
+            {
+              "category": "tests",
+              "node_id": "docs/topics/testing/tools.txt::__file__::__whole__",
+              "writes": 18
+            },
+            {
+              "category": "other",
+              "node_id": "django/contrib/admin/static/admin/css/responsive.css::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "django/contrib/admin/static/admin/css/widgets.css::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "other",
+              "node_id": "django/contrib/admin/templates/admin/change_list.html::__file__::__whole__",
+              "writes": 17
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/labels.yml::__file__::__whole__",
+              "writes": 16
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/linters.yml::__file__::__whole__",
+              "writes": 16
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/releases/5.2.1.txt::__file__::__whole__",
+              "writes": 16
+            },
+            {
+              "category": "docs_changelog",
+              "node_id": "docs/releases/6.1.1.txt::__file__::__whole__",
+              "writes": 16
+            },
+            {
+              "category": "build_ci",
+              "node_id": ".github/workflows/docs.yml::__file__::__whole__",
+              "writes": 15
+            },
+            {
+              "category": "registry",
+              "node_id": "django/db/backends/oracle/features.py::class::DatabaseFeatures",
+              "writes": 15
+            },
+            {
+              "category": "build_ci",
+              "node_id": "pyproject.toml::__file__::__whole__",
+              "writes": 15
+            }
+          ],
+          "writes_histogram": [
+            [
+              1,
+              8107
+            ],
+            [
+              2,
+              1801
+            ],
+            [
+              3,
+              783
+            ],
+            [
+              4,
+              293
+            ],
+            [
+              5,
+              215
+            ],
+            [
+              6,
+              79
+            ],
+            [
+              7,
+              60
+            ],
+            [
+              8,
+              37
+            ],
+            [
+              9,
+              20
+            ],
+            [
+              10,
+              14
+            ],
+            [
+              11,
+              19
+            ],
+            [
+              12,
+              9
+            ],
+            [
+              13,
+              9
+            ],
+            [
+              14,
+              5
+            ],
+            [
+              15,
+              3
+            ],
+            [
+              16,
+              4
+            ],
+            [
+              17,
+              3
+            ],
+            [
+              18,
+              2
+            ],
+            [
+              19,
+              7
+            ],
+            [
+              20,
+              3
+            ],
+            [
+              21,
+              5
+            ],
+            [
+              22,
+              2
+            ],
+            [
+              23,
+              2
+            ],
+            [
+              24,
+              2
+            ],
+            [
+              25,
+              2
+            ],
+            [
+              26,
+              1
+            ],
+            [
+              27,
+              2
+            ],
+            [
+              28,
+              1
+            ],
+            [
+              33,
+              1
+            ],
+            [
+              34,
+              1
+            ],
+            [
+              38,
+              2
+            ],
+            [
+              39,
+              1
+            ],
+            [
+              43,
+              1
+            ],
+            [
+              46,
+              2
+            ],
+            [
+              52,
+              1
+            ],
+            [
+              74,
+              1
+            ],
+            [
+              132,
+              1
+            ]
+          ],
+          "zipf": {
+            "alpha": 1.999429842815819,
+            "gini": 0.348528452002292,
+            "r_squared": 0.9017987751487753,
+            "tail_size": 11501,
+            "x_min": 1
+          }
+        },
+        "pair_probabilities": {
+          "co_flight_hours": {
+            "count": 8099,
+            "maximum": 2877,
+            "mean": 58.98802321274231,
+            "p50": 21.0,
+            "p90": 140.0,
+            "p99": 593.0
+          },
+          "definition": "base_overlap",
+          "merge_sample": 8099,
+          "population_pairs": 8099,
+          "same_file": 0.02197802197802198,
+          "same_file_different_node": 0.0062970737128040495,
+          "same_node": 0.015680948265217928,
+          "same_python_file": 0.008396098283738733,
+          "same_python_node": 0.0014816644030127175,
+          "shared_node_all_append": 0.0046919372762069395,
+          "textual_conflict": 0.0,
+          "textual_conflict_without_shared_node": 0.0,
+          "verdict_counts": {
+            "clean": 8099
+          }
+        },
+        "repo": "django/django",
+        "schema_version": 1,
+        "window": {
+          "clone_main_branch": "main",
+          "clone_main_sha": "dd6f6b1531984823e3dc56740dfa93f3ceb09357",
+          "since": "2025-01-01",
+          "until": "2026-09-01"
+        },
+        "window_curves": [
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 2,
+            "mean_contended_files": 0.0862207896857373,
+            "mean_contended_nodes": 0.06688154713940371,
+            "mean_contended_py_files": 0.0346494762288477,
+            "mean_contended_py_nodes": 0.015310233682514102,
+            "mean_distinct_nodes": 15.07010475423046,
+            "mean_distinct_py_nodes": 12.178887993553586,
+            "mean_effective_k": 2.0,
+            "mean_max_file_chain": 1.064464141821112,
+            "mean_max_node_chain": 1.0515713134568896,
+            "mean_max_py_file_chain": 0.9065269943593876,
+            "mean_max_py_node_chain": 0.8912167606768735,
+            "p_file_collision": 0.064464141821112,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.0515713134568896,
+            "p_py_file_collision": 0.0249798549556809,
+            "p_py_node_collision": 0.009669621273166801,
+            "windows": 1241
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 4,
+            "mean_contended_files": 0.38821630347054076,
+            "mean_contended_nodes": 0.30024213075060535,
+            "mean_contended_py_files": 0.162227602905569,
+            "mean_contended_py_nodes": 0.07425343018563357,
+            "mean_distinct_nodes": 29.971751412429377,
+            "mean_distinct_py_nodes": 24.325262308313157,
+            "mean_effective_k": 3.506666666666667,
+            "mean_max_file_chain": 1.294592413236481,
+            "mean_max_node_chain": 1.2356739305891848,
+            "mean_max_py_file_chain": 1.0968523002421307,
+            "mean_max_py_node_chain": 1.0274414850686038,
+            "p_file_collision": 0.27199354317998387,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.21388216303470542,
+            "p_py_file_collision": 0.11057304277643261,
+            "p_py_node_collision": 0.042776432606941084,
+            "windows": 1239
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 8,
+            "mean_contended_files": 1.3627530364372469,
+            "mean_contended_nodes": 1.162753036437247,
+            "mean_contended_py_files": 0.6364372469635627,
+            "mean_contended_py_nodes": 0.43643724696356273,
+            "mean_distinct_nodes": 59.34089068825911,
+            "mean_distinct_py_nodes": 48.417004048582996,
+            "mean_effective_k": 6.306666666666667,
+            "mean_max_file_chain": 1.859919028340081,
+            "mean_max_node_chain": 1.7376518218623482,
+            "mean_max_py_file_chain": 1.4008097165991902,
+            "mean_max_py_node_chain": 1.182995951417004,
+            "p_file_collision": 0.6809716599190283,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.5748987854251012,
+            "p_py_file_collision": 0.3659919028340081,
+            "p_py_node_collision": 0.16761133603238867,
+            "windows": 1235
+          },
+          {
+            "git_conflict_step_share": 0.0,
+            "k": 16,
+            "mean_contended_files": 4.323553382233089,
+            "mean_contended_nodes": 3.8810105949470253,
+            "mean_contended_py_files": 2.0920945395273023,
+            "mean_contended_py_nodes": 1.6495517522412388,
+            "mean_distinct_nodes": 116.61776691116545,
+            "mean_distinct_py_nodes": 95.99348003259983,
+            "mean_effective_k": 11.806666666666667,
+            "mean_max_file_chain": 2.8948655256723717,
+            "mean_max_node_chain": 2.779951100244499,
+            "mean_max_py_file_chain": 1.9991850040749797,
+            "mean_max_py_node_chain": 1.533007334963325,
+            "p_file_collision": 0.9918500407497962,
+            "p_git_conflict": 0.0,
+            "p_node_collision": 0.9616951915240424,
+            "p_py_file_collision": 0.8092909535452323,
+            "p_py_node_collision": 0.4849225753871231,
+            "windows": 1227
+          },
+          {
+            "git_conflict_step_share": 0.0006491398896462187,
+            "k": 32,
+            "mean_contended_files": 12.294797687861271,
+            "mean_contended_nodes": 11.65813377374071,
+            "mean_contended_py_files": 6.363336085879438,
+            "mean_contended_py_nodes": 5.726672171758877,
+            "mean_distinct_nodes": 226.89512799339388,
+            "mean_distinct_py_nodes": 188.8934764657308,
+            "mean_effective_k": 21.54,
+            "mean_max_file_chain": 4.691990090834022,
+            "mean_max_node_chain": 4.616019818331957,
+            "mean_max_py_file_chain": 2.825763831544178,
+            "mean_max_py_node_chain": 2.0644095788604457,
+            "p_file_collision": 1.0,
+            "p_git_conflict": 0.013333333333333334,
+            "p_node_collision": 1.0,
+            "p_py_file_collision": 0.9975227085053675,
+            "p_py_node_collision": 0.8860445912469034,
+            "windows": 1211
+          },
+          {
+            "git_conflict_step_share": 0.0005275189027606822,
+            "k": 64,
+            "mean_contended_files": 31.649703138252757,
+            "mean_contended_nodes": 31.13401187446989,
+            "mean_contended_py_files": 17.24936386768448,
+            "mean_contended_py_nodes": 16.73367260390161,
+            "mean_distinct_nodes": 441.4715860899067,
+            "mean_distinct_py_nodes": 372.3630195080577,
+            "mean_effective_k": 38.913333333333334,
+            "mean_max_file_chain": 8.116200169635285,
+            "mean_max_node_chain": 8.108566581849024,
+            "mean_max_py_file_chain": 4.212044105173876,
+            "mean_max_py_node_chain": 2.59626802374894,
+            "p_file_collision": 1.0,
+            "p_git_conflict": 0.02,
+            "p_node_collision": 1.0,
+            "p_py_file_collision": 1.0,
+            "p_py_node_collision": 0.998303647158609,
+            "windows": 1179
+          }
+        ]
+      },
+      "semantic": {
+        "ci95": [
+          0.0,
+          0.009512640599680667
+        ],
+        "kinds": [],
+        "probed": 400,
+        "share": 0.0,
+        "total_new_defects": 0,
+        "with_new_defects": 0
+      },
+      "slug": "django/django",
+      "two_by_two": {
+        "clean_not_shared": 7972,
+        "clean_shared": 127,
+        "clean_shared_all_append": 38,
+        "conflict_not_shared": 0,
+        "conflict_py_not_shared": 0,
+        "conflict_py_shared": 0,
+        "conflict_shared": 0,
+        "error": 0,
+        "rebase_conflict": 0
+      },
+      "validation": {
+        "mapper": {
+          "extra_ratio": 0.39650872817955113,
+          "file_accuracy": 0.9823788546255506,
+          "files_agreeing": 223,
+          "files_checked": 227,
+          "symbol_recall": 0.9900249376558603,
+          "symbols_expected": 401,
+          "symbols_extra": 159,
+          "symbols_matched": 397
+        },
+        "merge": {
+          "accuracy": 1.0,
+          "agreeing": 26,
+          "checked": 26,
+          "disagreements": []
+        },
+        "naive_bias": {
+          "corrected_checked": 219,
+          "corrected_conflicts": 0,
+          "corrected_rate": 0.0,
+          "naive_checked": 1200,
+          "naive_conflicts": 246,
+          "naive_conflicts_sharing_no_file": 223,
+          "naive_rate": 0.205,
+          "provably_spurious": 0.9065040650406504
+        },
+        "pair_sampling_rate": "1.000000",
+        "survivorship": {
+          "abandoned": {
+            "changes": 1204,
+            "file_collisions": 1216,
+            "file_rate": 0.025881701892173765,
+            "node_collisions": 832,
+            "node_rate": 0.017708532873592576,
+            "pairs": 46983,
+            "population": "abandoned",
+            "py_file_collisions": 544,
+            "py_node_collisions": 133,
+            "py_node_rate": 0.0028308111444565057
+          },
+          "merged": {
+            "changes": 1242,
+            "file_collisions": 356,
+            "file_rate": 0.02197802197802198,
+            "node_collisions": 254,
+            "node_rate": 0.015680948265217928,
+            "pairs": 16198,
+            "population": "merged",
+            "py_file_collisions": 136,
+            "py_node_collisions": 24,
+            "py_node_rate": 0.0014816644030127175
+          }
+        }
+      }
+    }
+  ]
+}

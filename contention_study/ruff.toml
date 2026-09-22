@@ -1,0 +1,27 @@
+# Lint configuration for the contention study only.
+#
+# The study lives outside the `mak` package and must not change the kernel's
+# own configuration, so it carries its own file. The rules match the kernel's
+# conventions (88 columns, sorted import groups, docstrings on public API);
+# only the test-file exemptions differ, and they mirror the kernel's.
+
+target-version = "py311"
+line-length = 88
+src = ["."]
+
+[lint]
+# Same rule set as the kernel (`pyproject.toml`), so the study is held to the
+# conventions AGENTS.md documents: annotations everywhere, docstrings on public
+# API, sorted imports, pyupgrade and bugbear.
+select = ["E", "F", "I", "B", "UP", "ANN", "D"]
+# D203/D213: conflicting docstring conventions. D107: __init__ is documented by
+# the class docstring, not a separate one.
+ignore = ["D203", "D213", "D107"]
+
+[lint.isort]
+known-first-party = ["mining"]
+known-third-party = ["mak"]
+
+[lint.per-file-ignores]
+# Test names are the documentation; a docstring on each would only repeat them.
+"tests/**" = ["D100", "D101", "D102", "D103", "D104"]

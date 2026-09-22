@@ -1,0 +1,5 @@
+# Research-only dependencies. Deliberately NOT in the kernel's pyproject.toml:
+# `mak` must stay installable without a plotting stack.
+numpy>=2.0
+matplotlib>=3.8
+pytest
