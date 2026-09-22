@@ -1,0 +1,15 @@
+# Isolated research virtualenv — never part of the kernel's dependency set.
+.venv/
+__pycache__/
+*.pyc
+
+# Bulk intermediates. The *derived* dataset under data/<repo>/ is committed
+# (see DATASHEET.md); the SQLite working caches are not.
+data/**/cache.sqlite
+data/**/cache.sqlite-*
+data/apache__airflow
+data/django__django
+data/home-assistant__core
+data/huggingface__transformers
+data/pandas-dev__pandas
+data/scikit-learn__scikit-learn
