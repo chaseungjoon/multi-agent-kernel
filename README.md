@@ -34,11 +34,12 @@ arbitrates shared memory between threads.
 - [Run](#run)
   - [CLI App](#cli-app)
   - [CLI Command](#cli-command)
+- [Cloud Models](#cloud-models)
 - [Local Models](#local-models)
-- [Custom & OpenAI-Compatible Endpoints](#custom--openai-compatible-endpoints)
-- [Configuration & API Keys](#configuration--api-keys)
 - [Benchmark](#benchmark)
-  - [Research](#research)
+  - [Real Model Benchmark](#real-model-benchmark)
+  - [Simulated Scaling Benchmark](#simulated-scaling-benchmark)
+- [Real-life Contention Study](#real-life-contention-study)
 - [Contribute](#contribute)
 - [License](#license)
 
@@ -154,7 +155,7 @@ mak
 * `/local` - Overview of this machine's runtimes and connected remote hosts; `/local url <host:port>` connects (and remembers) one (see [Local Models](#local-models))
 * `/mode [cloud|local|hybrid]` - Show or switch how this session gets its models
 * `/max-agents <int>` - Set number of concurrently running agents
-* `/config` - Returns to auto-discovery (see [Configuration & API Keys](#configuration--api-keys))
+* `/config` - Returns to auto-discovery (see [Cloud Models](#cloud-models))
 * `/config /path/to/config.yaml` - Point to a custom config
 * `/no-review true` - Omit user review of planner
 * `/clear` - clears the screen, `/exit` (or `/quit`, Ctrl+C) quits, Ctrl+J inserts a newline for multi-line tasks.
@@ -164,9 +165,8 @@ mak
 ### CLI Command
 
 For scripted / non-interactive runs, use `mak run` (equivalently `python3 -m mak`
-in a source checkout). Set your API keys first — see
-[Configuration & API Keys](#configuration--api-keys). You only need keys for the
-agents you actually run.
+in a source checkout). Set your API keys first — see [Cloud Models](#cloud-models).
+You only need keys for the agents you actually run.
 
 > ***⚠️ MAK is still in beta. So just to be safe, create a separate branch for MAK to work on***
 
@@ -232,165 +232,69 @@ update. Run `/refresh-models` to fetch immediately instead of waiting.
 > orgs get a 400 on every request), and it can decline requests with a `refusal` stop reason
 > (which MAK treats as a failed task).
 
-## Local Models
+## Cloud Models
 
-MAK supports local LLMs via an OpenAI-compatible server.
+MAK supports Anthropic, OpenAI, Google Gemini, and custom OpenAI-compatible
+services.
 
-```bash
-mak       #  choose "local" at first-run setup, or /local url http://host:port
-```
+### Configuration and API keys
 
-Or non-interactively:
+Use `/apikey` during setup, or provide `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY`, or a custom endpoint's key variable in the environment.
+`~/.config/mak/.env` stores keys entered through MAK; exported variables take
+precedence.
 
-```bash
-mak examples local-ollama > mak.yaml   # a ready-to-run config for Ollama
-mak run --task "your task" --work-dir /path/to/project
+Without `--config` or `/config`, MAK uses the first available configuration:
 
-# or point directly at a runtime, no config file needed
-mak run --task "your task" --work-dir /path/to/project \
-  --models ollama:qwen2.5-coder:14b
-```
+1. `./mak.yaml`
+2. `~/.config/mak/config.yaml` (or `$XDG_CONFIG_HOME/mak/config.yaml`)
+3. The built-in [default configuration](mak/config.yaml)
 
-`ollama:<model>` talks to [Ollama](https://ollama.com)'s native API and defaults
-to `http://localhost:11434`; `local:<model>@<url>` talks to any
-OpenAI-compatible server (vLLM, LM Studio, llama.cpp) at an explicit endpoint.
+Set `session.max_total_tokens` in the YAML configuration to cap a run's token
+usage. The default is unlimited.
 
+### OpenAI-compatible and custom endpoints
 
-MAK also sizes the model's context window for you and refuses a bundle that
-would not fit, rather than letting it be silently truncated into a wrong
-answer. 
-
-If your local model plans worse than it edits, pair it with a hosted
-planner — `mak.yaml` naming a cloud `planner.model` beside local `agents:` — the
-first-run local setup recommends this automatically for smaller models. 
-
-See
-[mak/examples/](mak/examples/) for ready-made configs and [CONTRIBUTING.md §7.7/§14](CONTRIBUTING.md) for
-the full detail.
-
-## Custom & OpenAI-Compatible Endpoints
-
-Beyond the three built-in providers, MAK can talk to **any service that speaks
-the OpenAI Chat Completions API** — NVIDIA Build, OpenRouter, DeepSeek, Z.ai, a
-self-hosted vLLM gateway, or anything else. Add one from the interactive CLI:
-
-```bash
-mak       #  then: /endpoint add
-```
-
-`/endpoint add` walks you through a preset (NVIDIA, OpenRouter, DeepSeek, Z.ai)
-or a fully custom service, asks for the **name of the environment variable**
-holding your key (never the key itself), and saves it to
-`~/.config/mak/endpoints.json` so it's there on your next run. Other useful
-sub-commands: `/endpoint list`, `/endpoint test <id>`, `/endpoint models <id>`,
-`/endpoint export <id>` (prints a pasteable, secret-free `mak.yaml` block).
-
-Once configured, an endpoint id works anywhere a provider name does:
+Run `/endpoint add` to configure NVIDIA Build, OpenRouter, DeepSeek, Z.ai, or
+any OpenAI Chat Completions-compatible service. MAK stores the endpoint in
+`~/.config/mak/endpoints.json` and references its API key by environment
+variable name, never by the key itself.
 
 ```bash
 export NVIDIA_API_KEY=...
 mak run --task "your task" --work-dir /path/to/project \
   --models nvidia:meta/llama-3.3-70b-instruct
-
-# Several models on the same endpoint, or several endpoints, in one run:
-mak run --task "your task" --work-dir /path/to/project \
-  --models nvidia:meta/llama-3.3-70b-instruct nvidia:qwen/qwen2.5-coder-32b-instruct \
-           openrouter:some/model
 ```
 
-Or non-interactively:
+Use `/endpoint list`, `/endpoint test <id>`, `/endpoint models <id>`, or
+`/endpoint export <id>` to manage endpoints. Templates are also available:
 
 ```bash
-mak examples hosted-openai-compatible > mak.yaml   # NVIDIA Build, ready to edit
-mak examples custom-endpoint > mak.yaml            # a provider-neutral template
+mak examples hosted-openai-compatible > mak.yaml
+mak examples custom-endpoint > mak.yaml
 ```
 
-**Models that don't support structured outputs work anyway.** MAK asks for a
-strict JSON schema when it can, because that is what stops an agent replying
-with prose instead of a result. Plenty of models — most free OpenRouter routes,
-and anything behind an upstream provider that hasn't implemented it — don't
-accept that request. You don't have to know which, or configure anything: MAK
-reads what the endpoint publishes about each model, asks for the strongest
-reply format that model actually supports, and falls back to a prompt-only JSON
-contract for the ones that support none. A model whose limits aren't published
-is discovered once per session, not once per task.
+MAK automatically adapts its response format to each model's capabilities.
 
-This is per **exact** model id, suffix included: `some/model` and
-`some/model:free` are different products and are often routed to different
-providers with different capabilities.
+## Local Models
 
-MAK never accepts a raw API key in a config file, on the command line, or in a
-log — only the *name* of the environment variable that holds it. See
-[mak/endpoints/profiles.py](mak/endpoints/profiles.py) for the preset table and
-[CONTRIBUTING.md](CONTRIBUTING.md) (search "Universal OpenAI-compatible
-endpoints" and "Capability-aware OpenRouter") for the full design.
+MAK supports Ollama and OpenAI-compatible local servers such as vLLM, LM
+Studio, and llama.cpp. Choose `local` during setup or connect with
+`/local url http://host:port`.
 
-## Configuration & API Keys
+```bash
+# Ollama defaults to http://localhost:11434
+mak run --task "your task" --work-dir /path/to/project \
+  --models ollama:qwen2.5-coder:14b
 
-> MAK drives hosted models from **three built-in providers — Anthropic, OpenAI,
-and Google Gemini** — plus any number of custom endpoints (see
-[above](#custom--openai-compatible-endpoints)).
-
-Keys are read from the environment
-(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or an endpoint's own
-configured variable) or from `~/.config/mak/.env`.
-
-The TUI's `/apikey` command (and its first-run setup)
-writes them there for you, creating the file readable only by you.
-Exported environment variables always win.
-
-> When `--config` (or `/config`) is not given, MAK auto-discovers
-its configuration, first match wins:
-
-1. `./mak.yaml` — a per-project config in the current directory
-2. `~/.config/mak/config.yaml` (respects `$XDG_CONFIG_HOME`) — your user default
-3. The built-in default shipped with the package ([view it](mak/config.yaml))
-
-To customize, copy the built-in default to either location and edit it.
-
-
-
-**Capping what a run costs.** Nothing bounds a run's spend by default: retries,
-iterations, and cascade waves multiply out. Set `session.max_total_tokens` to cap
-it
-
-```yaml
-session:
-  max_total_tokens: 2000000   # unset (the default) is unbounded
+# Any OpenAI-compatible local server
+mak run --task "your task" --work-dir /path/to/project \
+  --models local:my-model@http://localhost:8000/v1
 ```
 
-**Keeping files out of MAK.** On its first run in a project, MAK creates a
-`.makignore` next to your code with `.mak/` and `.git/` already listed. Edit it like a
-`.gitignore` to keep generated, vendored, or scratch code out of the node store:
-
-```gitignore
-.mak/
-.git/
-scratch/
-/legacy_script.py
-migrations/*.py
-!migrations/keep_me.py
-```
-
-A path you add is dropped from the node store on the next run; the file itself is not
-touched. MAK always skips its own `.mak/` folder, even if you remove that line. See
-[CONTRIBUTING.md §3.1.1](CONTRIBUTING.md#311-makignore--the-projects-own-ignore-list--makignorepy)
-for the full syntax.
-
-**One MAK per project.** A session takes an exclusive lease on the project's `.mak/`
-before it touches anything, so a second `mak` on the same checkout fails
-immediately.
-
-**Semantic conflicts.** Node-level locks stop two agents from writing the same
-symbol at once, but not two edits on *different* symbols that are each correct
-alone and wrong together (a stale read, a signature changed under a new call, a
-duplicated registry key). MAK also tracks and validates this: every task's
-context is version-stamped and re-checked at commit, interface changes are
-locked apart from body changes, and anything still slipping through is caught
-and offered as a fix-up wave, same as any other cascade. It is on by default and
-tunable under `semantic:` in `mak/config.yaml`; see
-[CONTRIBUTING.md §5.2](CONTRIBUTING.md#52-semantic-conflicts-wave-20) for the
-full mechanism and a worktree comparison.
+For a ready-made configuration, run `mak examples local-ollama > mak.yaml`.
+Local agents can also use a cloud planner. See [mak/examples/](mak/examples/)
+for more configurations.
 
 ## Benchmark
 
@@ -440,21 +344,6 @@ With four agents, node-level MAK finished in about **21 seconds under**
 both contention shapes. File-level locking rose to 29 seconds for uniform and
 53 seconds for [Zipf contention](https://en.wikipedia.org/wiki/Zipf%27s_law), while merge-at-end lost one Zipf registration.
 
-### Research
-
-Wave 23 mined six Python repositories to compare concurrent file and AST-node
-contention. Python-node collisions were **2.2–10.3× less frequent** than
-Python-file collisions. All **5,316 shared-node pairs** merged cleanly, and no
-shallow static defect appeared in **2,400 clean merges**.
-
-![Collision probability by concurrency and lock granularity.](contention_study/plots/01-collision-vs-k.png)
-
-![Naive merge measurement versus corrected shared-base measurement.](contention_study/plots/05-naive-merge-bias.png)
-
-[Full study](contention_study/CONTENTION_STUDY.md) ·
-[Results tables](contention_study/data/RESULTS.md) ·
-[Dataset documentation](contention_study/DATASHEET.md)
-
 ### Reproduce results
 
 ```bash
@@ -468,6 +357,23 @@ python3 benchmark/sweep.py --config benchmark/sweeps/smoke.yaml --fresh
 
 [Benchmark details](benchmark/README.md) · [Real-model statistics](benchmark/STATS.md) ·
 [Scaling verdicts](benchmark/sim/RESULTS.md)
+
+## Real-life Contention Study
+
+[contention_study](contention_study) mined six Python repositories to compare concurrent file and AST-node
+contention in real-life open source systems. 
+
+Python-node collisions were **2.2–10.3× less frequent** than
+Python-file collisions. 
+
+All **5,316 shared-node pairs** merged cleanly, and no
+shallow static defect appeared in **2,400 clean merges**.
+
+![Collision probability by concurrency and lock granularity.](contention_study/plots/01-collision-vs-k.png)
+
+[Full study](contention_study/CONTENTION_STUDY.md) ·
+[Results tables](contention_study/data/RESULTS.md) ·
+[Dataset documentation](contention_study/DATASHEET.md)
 
 ## Contribute
 
