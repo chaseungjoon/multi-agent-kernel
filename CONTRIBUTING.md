@@ -226,7 +226,7 @@ endpoint support, local runtimes, and the interactive app are all implemented.
 |---|---|
 | `mypy --strict mak cli` | clean |
 | `ruff check mak cli tests` | clean |
-| `pytest -q` | green in CI (Python 3.11). On a local Python 3.13, or with a third-party endpoint catalog cached in `~/.config/mak/`, **4 tests fail** — see [issues 1 and 2](#1-bugs) |
+| `pytest -q` | green in CI (Python 3.11). On a local Python 3.13, or with a third-party endpoint catalog cached in `~/.config/mak/`, **4 tests fail** — see [Wave 25](#wave-25) |
 
 | Area | Modules |
 |---|---|
@@ -471,7 +471,7 @@ The kernel's core mechanism — a structured replacement for diff/merge.
   glob→regex translator whose `*` never crosses `/` and whose `**/` spans zero or
   more whole segments. Symlinked directories are not descended. Its behaviour is
   pinned by a differential test against `Path.glob` (see
-  [issue 2](#1-bugs) for its one open discrepancy).
+  [Wave 25](#wave-25) for its one open discrepancy).
 
 ### 3.2 `.makignore` (`makignore.py`)
 
@@ -636,7 +636,7 @@ On POSIX the lease is an `flock`, which the OS releases when the holder dies
 however it dies — no timeout, no pid heuristic. The JSON record inside the file
 is diagnostics. On Windows, `msvcrt` byte-range locks can outlive their process,
 so that path falls back to a heartbeat-age threshold (`stale_after_s`, 90s); it is
-the weaker path and is not exercised by CI (see [issue 10](#2-release-readiness)).
+the weaker path and is not exercised by CI (see [Wave R](#wave-r)).
 
 ### 4.5 Derived lock resources and the lock policy
 
@@ -1587,7 +1587,7 @@ Rules:
 - **Keys are never stored in config.** `api_key_env` names a variable read at
   composition time. Keys live in `~/.config/mak/.env` (created `0600`) or the
   environment; exported variables win. The in-package `mak/.env` is deprecated —
-  it is still read with a warning ([issue 19](#2-release-readiness)).
+  it is still read with a warning ([Wave R](#wave-r)).
 - **`session.max_total_tokens`** is the only spend ceiling (§11). `0` or negative
   is a `ConfigError`.
 - **`node_store.version_retention`** must be `-1` or ≥ 2.
@@ -1626,7 +1626,7 @@ Rules:
 orders them with `_version_key` (a plain release above its pre-releases), skips
 the reinstall when already current (PEP 610 `direct_url.json`), and falls back to
 `main` — and says so — while the repo publishes no tags. See
-[issues 6–8](#2-release-readiness) for its open problems.
+[Wave R](#wave-r) for its open problems.
 
 ### `mak run`
 
@@ -1962,7 +1962,7 @@ Reading it:
 
 Caveats: single model family (both sides identical, so fair, but not
 cross-model), and maximal contention. Extending both is an
-[open issue](#3-roadmap).
+[Wave 33](#wave-33).
 
 ### Running it
 
@@ -2146,7 +2146,7 @@ python -m venv .venv
 source .venv/bin/activate           # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"             # mypy, pytest, types-PyYAML; ruff is a base dependency
 
-pre-commit install                  # optional (see issue 12 for a known mismatch with CI)
+pre-commit install                  # optional (its paths differ from CI's; see Wave R)
 ```
 
 For real calls, put keys in `~/.config/mak/.env` (or run `mak` and use
@@ -2235,7 +2235,7 @@ requests. Focused runs while iterating: `pytest tests/node_store/ -q`,
   the implementation being replaced.
 - **No test may read the real user configuration.** `tests/conftest.py` isolates
   `.env` lookups and `XDG_CONFIG_HOME` per test; see
-  [issue 1](#1-bugs) for the one module-level registry that still escapes it.
+  [Wave 25](#wave-25) for the one module-level registry that still escapes it.
 - No test touches the network — provider fetches use fake sources, local-runtime
   tests inject the client, and endpoint tests use `tests/support/fake_openai_server.py`
   on loopback.
@@ -2282,221 +2282,334 @@ Enforced by `ruff` and `mypy --strict`:
 
 ## Open issues
 
-Everything below is verified against the current tree. Open an issue to align
-before starting a large item. Items are grouped by priority.
+The open work is organized into **waves**: each wave is one coherent change
+developed on its own branch (`feat/<wave>-<name>`) and merged when its tests,
+gates, and docs are complete. Waves are listed below in priority order, with the
+problem each one solves and what it delivers. Everything here was verified
+against the current tree. Open an issue to coordinate before starting a wave or
+any large part of one.
 
-### 1. Bugs
+| Order | Wave | Title | Depends on |
+|:-:|:-:|---|---|
+| 1 | [25](#wave-25) | Green hermetic test suite, endpoint-aware model identity, one front-end API | — |
+| 2 | [27](#wave-27) | Session decomposition (refactor only) | 25 |
+| 3 | [7](#wave-7) | Retrieval-based, graph-aware planner | 25 |
+| 4 | [28](#wave-28) | Write sets that can grow safely | 27 |
+| 5 | [29](#wave-29) | Agents that can look and test | 27, 28 |
+| 6 | [30](#wave-30) | Respect the user's repository | — |
+| 7 | [R](#wave-r) | First public release | 25, 30 |
+| 8 | [31](#wave-31) | SQLite state store | 27 |
+| 9 | [32](#wave-32) | Scheduler fairness and plan-review previews | 27 |
+| 10 | [33](#wave-33) | Evaluate what can actually fail | 7, 28 |
+| 11 | [8](#wave-8) | Language boundary and structured non-Python files | 27, 30 |
+| 12 | [34](#wave-34) | The kernel as a coordination service (library + MCP) | 27, 28 |
 
-**Issue 1 — `ModelEntry.api_key_env` and `.adapter_type` raise for endpoint
-models; a test depends on the developer's home directory.**
-`mak/models/catalog.py` resolves both properties through `PROVIDER_KEY_ENV` /
-`PROVIDER_ADAPTER`, which only know `anthropic`, `openai`, and `gemini`, so any
-entry from a configured endpoint (e.g. OpenRouter) raises
-`ValueError: unknown provider`. The authority on a model's credential and adapter
-is its **endpoint** (`EndpointConfig.api_key_env`, the transport), so the
-properties are a stale three-row reimplementation. Separately,
-`tests/models/test_cli_adapter.py::test_every_entry_resolves_its_key_env` reads
-`all_models()`, whose `ModelRegistry()` is built at **import** of
-`cli/core/models.py` from the real `~/.config/mak/models.json` — so it passes in
-CI and fails for anyone with an endpoint catalog cached. Fix:
+Rules that apply to all of them:
 
-- widen both properties to `str | None`, returning `None` for a non-built-in
-  provider (never a guessed value; do not delete them — that is a breaking
-  change);
-- give the test suite a session-scoped fixture (or rebuild hook) that points the
-  CLI registry at a temporary config dir, plus a guard test that fails if
-  `manifest_path()` resolves under the real `$HOME` during a run;
-- keep the invariant test, feeding it fixture data that includes a third-party
-  entry.
+- **Scope freeze.** Until Waves 27, 7, 28 and 29 are merged, the peripheral
+  subsystems — model-catalog refresh, provider/endpoint wizards and capability
+  negotiation, the CLI-agent bridges, local-runtime management, the Docker
+  sandbox, the optional semantic gates — take bug fixes only.
+- **Consolidation cadence.** Every fourth wave is refactoring, deletion and docs
+  only; Wave 27 is the first.
+- **A wave is not done with a red suite**, on CI's Python or on the newest
+  Python the project claims. `xfail` only with `strict=True` and a reason naming
+  the wave that will fix it.
+- **History lives in `CHANGELOG.md`**, not in docstrings or comments.
 
-**Issue 2 — `iter_source_files` disagrees with `Path.glob` for a trailing `**`
-on Python 3.13.** Three parametrizations of
-`tests/node_store/test_ingestion.py::TestIterSourceFiles::test_matches_the_glob_it_replaces`
-fail for the include pattern `("src/**",)`. The walker compiles a trailing bare
-`**` to a never-matching pattern because `Path.glob` returned directories only for
-it — true on 3.11/3.12, but on 3.13 `Path.glob("src/**")` also yields files. CI
-runs 3.11, so it stays green. Decide which behaviour `include_patterns` should
-have, implement it independently of the running Python, and make the test assert
-that behaviour rather than whatever `Path.glob` does on the host. Adding 3.13 to
-CI (issue 11) would have caught this.
+### Wave 25
 
-**Issue 3 — An unexpected exception in a slash command ends the interactive
-session.** `cli/app.py` calls `handle_command` with no surrounding guard, so any
-uncaught error leaves the REPL loop and discards the session's state (work dir,
-planner, roster, mode, keys) behind a raw traceback. Wrap the call so a command's
-failure prints one error line and returns to the prompt; log the traceback at
-`DEBUG`; do not swallow `KeyboardInterrupt` / `EOFError`, which the loop already
-treats as exit.
+**Green hermetic test suite, endpoint-aware model identity, one front-end API.**
+Branch `feat/25-front-end-unification`.
 
-**Issue 4 — Make the planner-route invariant structural.** Each `CliState`
-planner setter clears the other routes by hand. Replace that with one helper
-(e.g. `clear_planner_target()`) that every setter calls first, and add a test
-asserting that at most one of `planner_endpoint_id`,
-`planner_backend`/`planner_base_url`, or the plain cloud route is set after any
-transition — so the next setter added cannot forget a field.
+Problems:
 
-### 2. Release readiness
+- `ModelEntry.api_key_env` and `.adapter_type` (`mak/models/catalog.py`) raise
+  `ValueError: unknown provider` for every entry that comes from a configured
+  endpoint, because they only know the three built-in providers.
+- `tests/models/test_cli_adapter.py::test_every_entry_resolves_its_key_env`
+  reads `all_models()`, whose registry is built **at import** of
+  `cli/core/models.py` from the real `~/.config/mak/models.json`. It passes in
+  CI and fails for anyone with an endpoint catalog cached.
+- `iter_source_files` disagrees with `Path.glob` for a trailing `**`
+  (`include_patterns: ["src/**"]`): Python 3.13's `Path.glob` yields files there,
+  3.11/3.12 only directories. Three parametrizations of
+  `TestIterSourceFiles::test_matches_the_glob_it_replaces` fail on 3.13; CI runs
+  3.11 only, so it stays green.
+- `cli/app.py` calls `handle_command` with no guard, so one failing slash
+  command ends the whole interactive session.
+- The four `CliState` planner fields are kept consistent by hand in four
+  setters.
+- The two front ends duplicate logic: planner-key resolution exists twice
+  (`mak/__main__._planner_api_key`, used in production, and
+  `cli/runner._resolve_planner_api_key`, reached only by tests), the app builds
+  sessions by importing `mak.__main__` and mutating `os.environ`, and
+  `cli/runner.plan_in_thread` reads `session._planner` and
+  `session._node_store`.
+- Module-level mutable state: `cli/local.py`'s seams are reassigned through
+  `global`, and `cli/core/models.py` holds a process-wide registry.
 
-MAK is installed from git today. Publishing a public beta on PyPI needs the
-following; order matters where noted.
+Delivers: widen both properties to `str | None`; isolate `HOME` and
+`XDG_CONFIG_HOME` before any test module is imported, make the CLI registry lazy,
+and add a guard test that no real config path is read; a host-independent rule
+for trailing `**` (it matches files and directories, like `.makignore`) and
+Python 3.13 in CI; a frozen `PlannerRoute` value replacing the four planner
+fields; a `mak/application/` package (`RunRequest`, `build_config`,
+`build_session`, the single `resolve_planner_key`) that both front ends call,
+with an explicit `env` mapping instead of `os.environ` mutation;
+`Session.propose_plan`; injected seams instead of globals; a guard around slash
+commands; and a parity test that the same settings produce the same config and
+planner key through both front ends.
 
-**Decisions to record first** (in `CHANGELOG.md` or here): the distribution
-channel (PyPI, GitHub tags, or both — PyPI canonical is recommended, and any
-choice affects `mak update`); the supported Python versions and operating systems
-(metadata, CI, and README must agree); whether the base install keeps the three
-provider SDKs (issue 5); and the default spend cap (issue 13).
+### Wave 27
 
-**Issue 5 — Move provider SDKs to extras, together with `mak update`.** The SDKs
-are in base `dependencies` because `mak update` reinstalls from git and resolves
-fresh; moving them to extras alone would strip them from every existing install
-on its next update. Ship both halves in one release: SDKs in
-`[anthropic]` / `[openai]` / `[gemini]` / `[all]`, and `mak update` installing
-with the user's extras (or `[all]` for the transition). Document
-`uv tool install "multi-agent-kernel[all]"` as the default and `[local]` as the
-zero-SDK path.
+**Session decomposition.** Branch `feat/27-session-decomposition`. A
+consolidation wave: no behaviour change.
 
-**Issue 6 — `mak update` does not follow the install channel.**
-`_is_uv_tool_install()` is true for a PyPI `uv tool install`, and `_update()` then
-reinstalls from `git+https://…@<tag>`, silently converting the user to a git
-install; `_installed_commit()` returns `None` for a PyPI install, so every update
-reinstalls. Detect the origin from `direct_url.json` and update along it (PyPI →
-`uv tool upgrade multi-agent-kernel --prerelease allow`; git → today's path), and
-preserve extras.
+Problem: `mak/session.py` is 4,617 lines, with ~180 methods and ~60 attributes
+covering lifecycle, reconciliation, planning, dispatch enrichment, the commit
+pipeline, parking, no-op and retry policy, post-wave analysis, recovery, and
+teardown. `install_plan` resets 31 per-wave attributes one by one, so a new one
+that is forgotten there leaks state into the next wave. `_validate_and_commit`
+is a hand-ordered chain of nine checks, and every new check has meant a new
+`Session` method. Tests reach 16 private members. Docstrings across `mak/` and
+`cli/` narrate past waves instead of describing the current contract.
 
-**Issue 7 — Pre-release tags compare lexically.** `_version_key` in
-`cli/__main__.py` orders suffixes as strings, so `b10 < b2`. Parse the numeric
-tail. Also define and test the behaviour when the newest tag is a pre-release
-(users on `main` must not be moved backwards).
+Delivers: a `WaveState` dataclass created fresh per wave; `mak/session/` as a
+package (`Session` re-exported, so imports keep working) with
+`WorkTreeReconciler`, `DispatchEnricher`, `CommitPipeline`, `CommitApplier`,
+`ParkedCommits`, `NoopPolicy`/`RetryPolicy`/`FailureLog`, `PostWaveAnalyzer`,
+`RecoveryManager`, `Finalizer`, and `LockWatchdog`; the commit pipeline as an
+ordered list of `CommitCheck` objects returning accept / reject / defer / resend
+verdicts; golden event-log tests proving behaviour is unchanged; a size-budget
+test (`Session` ≤ 600 lines); the LLM adjudicator fenced (logged as
+nondeterministic, counted, rejected in config where it can never be consulted);
+and a docstring sweep so `grep -rnE "Wave [0-9]+" mak cli` is empty.
 
-**Issue 8 — Test `mak update` against real tags.** Every branch of it is covered
-only by mocks. Note in the release runbook that the **first pushed tag is a
-one-way door**: from then on `mak update` pins users to tags instead of `main`,
-and deleting a tag strands them — recover by shipping a higher tag.
+### Wave 7
 
-**Issue 9 — Package metadata and contents.** `pyproject.toml` has no authors,
-license, project URLs, classifiers, or keywords. Add SPDX `license = "MIT"` with
-`license-files` (requires `setuptools>=77`), `[project.urls]`, classifiers
-matching the decided platforms and Pythons, and keywords. Add a `MANIFEST.in` so
-the sdist excludes `benchmark/`, `contention_study/`, `graphics/`,
-`screenshots/`, `diagram/`, and `demo/`. Verify the wheel ships
-`config.yaml`, `.env.example`, `models/seed.json`, and `examples/*.yaml`, and
-that `multi-agent-kernel` is available on PyPI and TestPyPI.
+**Retrieval-based, graph-aware planner.** Branch `feat/7-planner-retrieval`.
 
-**Issue 10 — Dependency bounds and reproducibility.** Add upper bounds to the SDK
-pins and to `ruff` (a ruff release that changes default formatting changes the
-bytes MAK writes into user repos). Commit a lock or constraints file for the
-tested resolution and scan it for vulnerabilities.
+Problem: `Session.plan` and the app pass the **entire** node inventory to the
+planner as bare ids on every call and every retry — for MAK's own 146 files,
+1,829 ids ≈ 26 K tokens. Outline mode still lists every file and symbol. The
+prompt asks the model to *guess* callers of a changed signature from names,
+while the kernel already has the real reference graph (`DepGraph`), which it
+only uses after planning. Per-call planner token use is not logged.
 
-**Issue 11 — CI matrix and release workflow.** CI runs Ubuntu + Python 3.11 on an
-editable install only. Expand to every claimed Python/OS, test a non-editable
-install, and pin actions to SHAs with minimal `permissions:` and `concurrency:`.
-Add a tag-triggered `release.yml`: build sdist + wheel → `twine check --strict`
-→ install the built wheel in a clean venv → smoke tests (`mak --version`,
-`--help`, `examples`, every packaged config loads, a keyless benchmark smoke run)
-→ publish via PyPI Trusted Publishing behind a protected environment, after a
-TestPyPI dry run. Attach artifacts to a GitHub Release marked pre-release, with
-build attestations. Windows: either add a CI job that exercises the `msvcrt`
-project-lease path or declare MAK POSIX-only — the lease is a safety property.
+Delivers: a `PLANNER_CALL` event with sizes and usage per call; a hierarchical
+inventory (file tree → per-file symbol summaries with signatures and caller
+counts → node ids); an `expand` reply the planner can use to ask for detail,
+bounded by `planner.max_expansions` and `planner.inventory_token_budget`;
+`planner.strategy: auto` (flat listing when small, retrieval otherwise) with
+deterministic seeding from the task text and the dependency graph; kernel-supplied
+callers (a `missing_caller` finding and proposed caller tasks); prompt caching
+with a byte-stable prefix (Anthropic `cache_control`, OpenAI automatic caching);
+and before/after planner-token numbers in the benchmark.
 
-**Issue 12 — Pre-commit does not mirror CI.** `.pre-commit-config.yaml` runs
-`ruff check mak tests` and `mypy --strict mak`; CI runs `ruff check mak cli tests`
-and `mypy --strict mak cli`. `cli/` is unchecked locally.
+### Wave 28
 
-**Issue 13 — Safety defaults for a public release.** `session.max_total_tokens`
-is unbounded by default; ship a finite default with a clear message on breach,
-or require acknowledgement on first run. Consider defaulting
-`git.require_clean_tree` to true, or at least warn loudly before writing into a
-dirty tree or a non-git directory.
+**Write sets that can grow safely.** Branch `feat/28-growable-write-sets`.
 
-**Issue 14 — Disclose network use and data flow.** State plainly, in the README
-and `SECURITY.md`, that source code is sent to the configured providers and that
-MAK refreshes provider model lists in the background on the 1st and 15th of each
-month (opt out with `models.auto_refresh: false` or `MAK_NO_MODEL_REFRESH`).
+Problem: `protocol.map_returned_sources` drops every returned node outside the
+task's grant. All of a file's imports live in one `module_header` node, so every
+task that needs an import must write-lock it and serialize on it — and the
+planner prompt never mentions headers, so a forgotten header means a dropped
+import and a retry. Planners respond by over-claiming whole files, which destroys
+parallelism. New nodes are always appended at the end of their file.
 
-**Issue 15 — `SECURITY.md` and secret handling.** Add private vulnerability
-reporting, a supported-versions table, and beta expectations. Document where keys
-live (`~/.config/mak/.env`, `0600`), that they never enter config files, how to
-remove them, and that `.mak/` holds plaintext fragments of the user's source and
-should be added to the project's `.gitignore`.
+Delivers: an `imports` field on `TaskResult`, merged into the header
+commutatively under key-level locks (`#import=<name>`) with conflicts detected
+by `import_check`; additive new functions and classes accepted next to a task's
+target under the file's intention lock (capped per task); lock escalation for
+unpredicted nodes that is immediate-or-restart — if the extra locks are free the
+grant widens, otherwise the task releases everything and is re-queued with the
+larger target set, so no task ever waits while holding locks; placed insertion
+in the node store; and metrics for merges, additions and escalations.
 
-**Issue 16 — Live README badges.** `README.md` badges are static images — the
-"CI Passing" badge stays green when CI is red. Use the workflow-status badge and
-a PyPI version badge, and update the install and update sections for the chosen
-channel.
+### Wave 29
 
-**Issue 17 — Triage infrastructure.** `.github/` has only `workflows/`. Add issue
-templates (the bug form should require `mak --version`, OS, Python, install
-method, provider/model, and whether the target repo is Python-only), a feature
-request template, a PR template referencing the quality gates, and link
-`CODE_OF_CONDUCT.md` from the README.
+**Agents that can look and test.** Branch `feat/29-agent-tools`.
 
-**Issue 18 — `mak doctor`.** A diagnostics command printing version, install
-channel, Python, OS, resolved config path, importable provider SDKs, which keys
-are *present* (never their values), and local runtime status.
+Problem: every agent call is a single shot (`format_task → send →
+parse_result`); the Anthropic adapter pins `tool_choice` to the result tool.
+Agents cannot read code the enrichment layers did not include, cannot run a
+test, and get feedback only through a retry note after a wasted attempt. Agent
+calls run on threads, which Python cannot interrupt.
 
-**Issue 19 — Remove the legacy in-package `mak/.env`.** It is still read (with a
-deprecation warning) by `cli/core/api_keys.py` and `mak/__main__.py`. Remove the
-read path, the warning, and the related test isolation.
+Delivers: opt-in `agents[].tools: none | read | read_test` (default `none`);
+read tools (`get_node`, `list_file`, `find_symbol`, `callers_of`, `search`)
+served from a snapshot pinned at dispatch, with **every node an agent reads
+added to its read set** so stale-read validation stays sound; `run_tests`
+against a temporary overlay of committed state plus the agent's candidate
+sources, never touching the work dir; one provider-neutral tool-loop driver;
+and `session.agent_isolation: process`, which runs each call in a child process
+that can be killed on timeout.
 
-**Deferred, and should be tracked rather than dropped:** an official Docker image
-(`docker run -v "$PWD:/work" …`, published to GHCR) once the PyPI channel is
-stable; Homebrew; signed tags / full SLSA beyond build attestations; splitting
-this document into a `docs/` tree.
+### Wave 30
 
-### 3. Roadmap
+**Respect the user's repository.** Branch `feat/30-repository-respect`.
 
-**Issue 20 — Planner token efficiency.** `Planner.decompose` sends the **entire**
-node inventory on every call and every retry. In order:
+Problem: every file MAK writes is reformatted with `ruff format`, with no
+setting to turn it off — and the store keeps unformatted fragments while disk
+holds formatted files. Audit commits go onto whatever branch is checked out,
+which is why the README tells users to create a separate branch. A file a person
+edits during a run is overwritten without warning, because external-edit
+detection runs only at startup.
 
-1. Measure planner input/output tokens per call and log them.
-2. Extend `PlannerLLM` from `complete(prompt)` to a cacheable prefix/suffix
-   interface and use provider prompt caching (Anthropic `cache_control`,
-   OpenAI/Gemini equivalents) for the stable inventory.
-3. Narrow the inventory before building the prompt — keyword/embedding
-   retrieval or a coarse→fine module pick — and validate targets against the
-   full inventory.
-4. Optionally: a module-level summarized inventory, and a template bypass for
-   fixed task shapes.
+Delivers: byte-faithful reconstruction (the whitespace between fragments is
+recorded at ingestion); `reconstruction.formatter: none | ruff | black |
+"<command>"` defaulting to `none`, applied only to changed fragments so store
+and disk stay identical; a write-time check in `install_files` against the
+digest MAK expects on disk, handled by `session.on_external_edit`;
+`git.branch_mode: refs | session | current` defaulting to `refs`, which records
+audit commits under `refs/mak/<session-id>` without moving the user's branch,
+plus an optional squash "land" at the end; and a clean-tree policy with clear
+warnings.
 
-Acceptance: planner input grows sub-linearly with repo size, retries reuse a
-cached prefix, and the benchmark records planner tokens before and after.
-Coordinate with the bundle context budgets (§3.3) rather than solving budgets
-twice.
+### Wave R
 
-**Issue 21 — Multi-language support.** Ingestion, reconstruction, and the
-conflict checks are Python-`ast`-specific; the store schema, locks, scheduler,
-session, and transport are not. Plan:
+**First public release.** Branch `feat/R-release-prep`. MAK is installed from
+git today; publishing a public beta on PyPI needs the following.
 
-1. A `LanguageBackend` ABC (`parse_into_fragments`, `reconstruct`, optional
-   checks, extension routing) with the Python backend extracted behind it — a
-   pure refactor with no regressions.
-2. A **TypeScript** backend on tree-sitter (its node ranges fit span tiling),
-   gated by the round-trip property test.
-3. A formatter abstraction (`ruff` / `prettier` / `gofmt` / `rustfmt`) with
-   discovery and fallback, mirroring `_find_ruff`.
-4. Conflict checks for new languages: parse gate and name collisions first.
-5. Go and Rust; mixed-language repos routed by extension.
+- **Decisions first:** the first PyPI version (keep a `bN` suffix); PyPI as the
+  canonical channel; supported Python versions and operating systems (metadata,
+  CI and README must agree); whether the SQLite store (Wave 31) lands before the
+  release, since it changes the `.mak/` format.
+- **Package metadata:** `pyproject.toml` has no authors, license, URLs,
+  classifiers or keywords (SPDX `license = "MIT"` needs `setuptools>=77`); add a
+  `MANIFEST.in` excluding `benchmark/`, `contention_study/`, `graphics/`,
+  `screenshots/`, `diagram/`, `demo/`; verify the wheel's package data; claim the
+  name on PyPI and TestPyPI.
+- **Dependencies:** move the provider SDKs to extras **in the same release** as
+  making `mak update` keep the user's extras (otherwise the next update strips
+  them); upper bounds on SDK pins and on `ruff`; a lock or constraints file; a
+  vulnerability scan.
+- **`mak update`:** it converts a PyPI install into a git install and reinstalls
+  every time (`_is_uv_tool_install` / `_installed_commit`); pre-release tags
+  compare lexically, so `b10 < b2` (`_version_key`); it has never run against a
+  real tag. The first pushed tag is a one-way door for `mak update` users.
+- **Automation and CI:** a tag-triggered `release.yml` (build → `twine check
+  --strict` → install the built wheel in a clean venv → smoke tests → Trusted
+  Publishing after a TestPyPI dry run → pre-release GitHub Release with
+  attestations); CI across every claimed Python and OS, a non-editable install,
+  pinned actions; Windows either tested (the `msvcrt` project-lease path) or
+  declared unsupported; `.pre-commit-config.yaml` checks `mak tests` / `mak`
+  while CI checks `mak cli tests` / `mak cli` — make them match.
+- **Safety and disclosure:** a finite default `session.max_total_tokens` (or a
+  first-run acknowledgement); state plainly that source code goes to the
+  configured providers and that the model catalog refreshes on the 1st and 15th
+  of each month (opt out with `models.auto_refresh: false` or
+  `MAK_NO_MODEL_REFRESH`).
+- **Docs and triage:** `SECURITY.md`; documented key handling and `.mak/`
+  contents; live README badges instead of static images; issue and PR
+  templates; a `mak doctor` diagnostics command; link the Code of Conduct from
+  the README; remove the deprecated in-package `mak/.env` key location.
+- **Deferred, tracked:** a Docker/GHCR image, Homebrew, signed tags beyond
+  attestations.
 
-Acceptance: `mak run --task` edits a TypeScript project end to end. The planner's
-Python-only target rule (§9) changes with this work.
+### Wave 31
 
-**Issue 22 — `mak init`.** Config discovery exists, but there is no scaffolder.
-Add `mak init` to write a starter `mak.yaml` (and `.makignore`) for a project.
+**SQLite state store.** Branch `feat/31-sqlite-state`.
 
-**Issue 23 — Extend the benchmark.** More model mixes, larger and *partially*
-contended workloads (to show parallelism on independent work), harder tasks, and
-real-model calibration points for the simulated sweep (`sim/calibrate.py`).
+Problem: `NodeStore._save_metadata` rewrites the entire `metadata.json` on every
+commit (713 KB in a store of this repository), every node version is its own
+file (4,904 files in that store), the lock table and task graph are rewritten
+on every change, and the commit transaction is hand-built around a single
+metadata save.
 
-**Issue 24 — Stronger semantic gates.** A differential property-test gate for
-behaviour changes behind an unchanged signature (today only `impact_tests` sees
-shape 3); coverage-driven test selection for `impact_tests` instead of the static
-import closure; an optional "revert instead of fix-up" resolution offered to the
-reviewer (`revert_node` already supports it).
+Delivers: one `.mak/state.db` in WAL mode (nodes, content-addressed version
+blobs, file state, locks, task graph, commit-journal record, a symbol table); a
+`StoreBackend` boundary with the current file layout as the other
+implementation; the database COMMIT as the commit point; a verified one-way
+migration that keeps the old store; and benchmarks showing per-commit writes
+independent of store size.
 
-**Issue 25 — Retired-node metadata sweep.** A retired node's metadata entry is
-kept forever, even after retention prunes its last version file. Add a `gc` pass
-that removes entries whose versions are all gone, without letting `gc` mistake
-live directories for orphans.
+### Wave 32
+
+**Scheduler fairness and plan-review previews.** Branch
+`feat/32-scheduler-fairness`.
+
+Problem: `Scheduler.tick` dispatches the ready queue in FIFO order with no
+priority or aging, so a task needing a wide lock (a whole-file WRITE) can starve
+behind a stream of fragment writers of that file, and long dependency chains
+are not started first. The deadlock watchdog runs every 5 s although it cannot
+fire by construction. Plan review shows no contention or cost.
+
+Delivers: critical-path priority; reservation of a task after N failed ticks so
+no new conflicting grant is issued until it runs; the watchdog as a rare
+assertion; and a `PlanPreview` shown before approval in both front ends — hot
+resources, predicted rounds and concurrency, over-claim hints, and a token-cost
+range compared with the remaining `max_total_tokens`.
+
+### Wave 33
+
+**Evaluate what can actually fail.** Branch `feat/33-honest-evaluation`.
+
+Problem: the headline benchmarks give MAK an oracle plan (exact targets,
+`changes_api=False`, precomputed registry keys, the registry line applied by a
+helper), compare it with a *simulated* worktree pipeline, use one model family,
+and run only project-authored workloads. They measure the kernel, not the
+planner, write-set prediction, or agent quality.
+
+Delivers: an end-to-end arm using MAK's own planner with plan-quality metrics;
+a real baseline of agentic CLIs in real git worktrees with test loops and real
+merges; 6–10 real open-source tasks pinned to upstream commits; at least three
+model families; the non-Python share of every task; separate, labelled tables
+for oracle-plan and end-to-end results; a mandatory token cap for real runs; and
+keyless mock versions of every arm in CI. Real-model calibration points for the
+simulated sweep (`sim/calibrate.py`) come from the same campaign.
+
+### Wave 8
+
+**Language boundary and structured non-Python files.** Branch
+`feat/8-language-boundary`.
+
+Problem: Python-specific logic (the `compile()` gates, node kinds, `api_digest`,
+registrar detection, signature and import checks, `depgraph`, the planner's
+Python-only target rule) is spread across subsystems with no boundary. The
+planner is told to leave non-Python work out, yet the contention study found that
+non-Python files — build/CI config, dependency lists, changelogs, registries —
+are exactly where contention saturates first.
+
+Delivers, phase A: a `LanguageBackend` protocol with Python as its first
+implementation (pure refactor); structured, key-level-locked append merges for
+changelogs, dependency lists, and YAML/JSON/TOML maps and arrays; other text files
+as validated whole-file nodes. Phase B: a TypeScript backend on tree-sitter
+gated by the round-trip property test, parse-gate and collision checks for new
+languages, then Go and Rust.
+
+### Wave 34
+
+**The kernel as a coordination service.** Branch `feat/34-kernel-service`.
+
+Problem: the kernel's guarantees — node locks, transactional commits, stale-read
+detection, semantic checks — are reachable only through `Session` driving MAK's
+own planner and adapters. The contention study shows that "no merge conflicts"
+is a weak argument for human-style parallelism; MAK's strength is safe,
+validated fan-out of many agent edits into shared hot spots, which other agent
+frameworks could use if they could commit through MAK.
+
+Delivers: a stable `mak.kernel` facade (`open_project`, `begin_task`, `read`,
+`stage`, `request_nodes`, `commit`, `abort`, `post_wave_check`); an MCP server
+(`mak mcp serve`, optional `[mcp]` extra) exposing it to agentic CLIs, with
+locks expiring for clients that disappear; `Session` rebuilt on the same facade;
+a worked integration demo; and README positioning that leads with fan-out and
+commit-time semantic checking.
+
+### Not yet scheduled
+
+Real, but not part of any wave yet:
+
+- **Stronger semantic gates** — a differential property-test gate for behaviour
+  changes behind an unchanged signature; coverage-driven test selection for
+  `impact_tests`; an optional "revert instead of fix-up" resolution offered to
+  the reviewer (`revert_node` already supports it).
+- **Retired-node metadata sweep** — a retired node's metadata entry is kept
+  forever, even after retention prunes its last version; add a `gc` pass that
+  removes entries whose versions are all gone.
+- **Finer granularity** — splitting `module_body` by statement groups, and
+  nested functions and inner classes as nodes (revisit after Wave 28).
 
 ## Known limitations
 
@@ -2515,16 +2628,16 @@ Deliberate, fail-safe tradeoffs — not bugs:
 - **Impacted-test selection is static** (import closure), so a test reaching a
   module only through late binding or dependency injection is missed.
 - **Out-of-store files** (config, SQL, docs) are not nodes; MAK neither locks nor
-  checks them.
+  checks them. Structured text files are planned in [Wave 8](#wave-8).
 - **The deadlock watchdog finds nothing by design** — atomic pre-allocation makes
-  the wait graph acyclic.
+  the wait graph acyclic. [Wave 32](#wave-32) turns it into a rare assertion.
 - **Abandoning a wedged agent call is cooperative.** Python cannot kill a thread
   mid-call; the per-request timeout bounds it, and non-blocking shutdown stops the
-  session waiting for it.
+  session waiting for it. [Wave 29](#wave-29) adds killable per-call processes.
 - **One MAK per project.** Concurrent runs on one checkout are refused with
   `ProjectBusyError`; distinct projects run fine.
 - **The Windows project lease is weaker** than the POSIX `flock` (see §4.4 and
-  issue 11).
+  [Wave R](#wave-r)).
 - **Reconciliation adopts the working tree by default**, so MAK builds on edits
   it never saw made. Use `on_external_edit: conflict` to stop instead.
 
@@ -2537,7 +2650,9 @@ Deliberate, fail-safe tradeoffs — not bugs:
 - Hardening a CLI bridge wrapper (`mak/agent_runner/wrappers/`) for a specific
   `claude` / `codex` / `gh copilot` version, or extending the sandbox (host
   allowlisting).
-- Issues 3, 4, 7, 12, and 19 above are small and self-contained.
+- Small, self-contained pieces of the waves above: the slash-command guard
+  (Wave 25), matching `.pre-commit-config.yaml` to CI, numeric pre-release tag
+  ordering, and removing the legacy `mak/.env` (Wave R).
 
 ---
 
