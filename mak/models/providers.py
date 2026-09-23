@@ -196,10 +196,16 @@ class GeminiSource:
         """Fetch Gemini models that actually support content generation."""
         try:
             from google import genai
+            from google.genai import types
         except ImportError as exc:
             raise _missing_sdk("gemini", exc) from exc
         try:
-            client = genai.Client(api_key=api_key)
+            # google-genai has no default timeout; without one a stalled
+            # connection blocks /refresh-models indefinitely. Milliseconds.
+            client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(timeout=int(timeout * 1000)),
+            )
             models: list[FetchedModel] = []
             for m in client.models.list():
                 name = str(getattr(m, "name", "") or "")

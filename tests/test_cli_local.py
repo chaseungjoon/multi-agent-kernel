@@ -55,7 +55,7 @@ class FakeClient:
         self._guard()
         return "0.5.7"
 
-    def list_models(self) -> list[OllamaModel]:
+    def list_models(self, *, timeout: float | None = None) -> list[OllamaModel]:
         self._guard()
         return [
             OllamaModel(name=name, parameter_size="14.8B", quantization="Q4_K_M")

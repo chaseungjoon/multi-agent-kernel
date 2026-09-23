@@ -241,7 +241,10 @@ def refresh_local_models(state: CliState) -> tuple[list[str], list[str]]:
     list untouched.
     """
     previous = list(state.local_models)
-    current = [model.name for model in _client(state).list_models()]
+    # Same bound as a saved-host probe: an unreachable host (a VPN peer that is
+    # offline) otherwise blocks /refresh-models for the full generation timeout.
+    listed = _client(state).list_models(timeout=_HOST_PROBE_TIMEOUT_S)
+    current = [model.name for model in listed]
     state.local_models = current
     remember_hosts(state)
     added = [name for name in current if name not in previous]

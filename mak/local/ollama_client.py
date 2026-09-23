@@ -200,9 +200,13 @@ class OllamaClient:
         """Return the server's version — the cheapest proof it is reachable."""
         return _opt_str(self._request("/api/version").get("version")) or ""
 
-    def list_models(self) -> list[OllamaModel]:
-        """Return every model installed on the server (``GET /api/tags``)."""
-        raw = self._request("/api/tags").get("models")
+    def list_models(self, *, timeout: float | None = None) -> list[OllamaModel]:
+        """Return every model installed on the server (``GET /api/tags``).
+
+        ``timeout`` overrides the client's default for this one call, so a UI
+        path can ask an unreachable host and get an answer in seconds.
+        """
+        raw = self._request("/api/tags", timeout=timeout).get("models")
         entries = raw if isinstance(raw, list) else []
         models = [_model_from_tags(entry) for entry in entries]
         return [model for model in models if model is not None]
