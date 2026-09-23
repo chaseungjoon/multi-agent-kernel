@@ -28,7 +28,7 @@ contention_study/
 ## Setup
 
 ```bash
-cd contention_study
+cd research/contention_study
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 export GITHUB_TOKEN=...        # any token; only public metadata is read

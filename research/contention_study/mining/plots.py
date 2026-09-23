@@ -1,4 +1,4 @@
-"""Stage 23.7b — render the study's figures into ``contention_study/plots``.
+"""Stage 23.7b — render the study's figures into ``research/contention_study/plots``.
 
 Every figure is written twice, in light and dark, from the same data and the same
 validated categorical order. Series are direct-labelled rather than relying on a

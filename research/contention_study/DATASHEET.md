@@ -1,6 +1,6 @@
 # Datasheet — MAK contention study, derived dataset
 
-This datasheet describes the data released under `contention_study/data/`. It
+This datasheet describes the data released under `research/contention_study/data/`. It
 follows the shape of Gebru et al.'s *Datasheets for Datasets*, cut down to the
 sections that apply to a derived measurement of public repository history.
 

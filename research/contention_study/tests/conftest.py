@@ -6,6 +6,6 @@ import sys
 from pathlib import Path
 
 _STUDY_ROOT = Path(__file__).resolve().parent.parent
-for candidate in (_STUDY_ROOT, _STUDY_ROOT.parent):
+for candidate in (_STUDY_ROOT, _STUDY_ROOT.parent.parent):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
