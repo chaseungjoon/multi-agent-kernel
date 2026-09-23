@@ -22,7 +22,7 @@ contention_study/
   plots/               figures, light and dark
   CONTENTION_STUDY.md  the write-up: method, results, threats
   DATASHEET.md         what the released dataset contains and how it was derived
-  run.sh               launcher (isolated venv + PYTHONPATH)
+  run.sh               launcher (data download + isolated venv + PYTHONPATH)
 ```
 
 ## Setup
@@ -37,6 +37,20 @@ export GITHUB_TOKEN=...        # any token; only public metadata is read
 Repository clones live **outside** the project tree, under
 `$MAK_STUDY_CACHE` (default `~/.cache/mak-contention-study`), so the kernel's git
 history never carries third-party source. The six bare clones total about 2.5 GB.
+
+### Data
+
+The per-repository directories under `data/<owner__repo>/` (SQLite caches,
+`profile.json`, audit samples, release CSVs) are too large for git and are
+gitignored. They are published as the
+[`contention-study-data-v1`](https://github.com/chaseungjoon/multi-agent-kernel/releases/tag/contention-study-data-v1)
+release asset (~32 MB). `run.sh` downloads them automatically: on each run it
+checks that all six directories exist, and if any are missing it downloads the
+archive, verifies its SHA-256, and extracts the missing ones into `data/` before
+running the requested module. If the data is already there, nothing is
+downloaded. With the caches in place, every stage is already done, so
+`./run.sh mining.run_study` reproduces the published tables and figures without
+calling the GitHub API.
 
 ## Running
 
