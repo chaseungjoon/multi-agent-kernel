@@ -367,7 +367,7 @@ python3 benchmark/sweep.py --config benchmark/sweeps/smoke.yaml --fresh
 
 ## Real-life Contention Study
 
-[contention_study](contention_study) mined six Python repositories to compare concurrent file and AST-node
+[contention_study](research/contention_study) mined six Python repositories to compare concurrent file and AST-node
 contention in real-life open source systems. 
 
 Python-node collisions were **2.2–10.3× less frequent** than
@@ -376,11 +376,11 @@ Python-file collisions.
 All **5,316 shared-node pairs** merged cleanly, and no
 shallow static defect appeared in **2,400 clean merges**.
 
-![Collision probability by concurrency and lock granularity.](contention_study/plots/01-collision-vs-k.png)
+![Collision probability by concurrency and lock granularity.](research/contention_study/plots/01-collision-vs-k.png)
 
-[Full study](contention_study/CONTENTION_STUDY.md) ·
-[Results tables](contention_study/data/RESULTS.md) ·
-[Dataset documentation](contention_study/DATASHEET.md)
+[Full study](research/contention_study/CONTENTION_STUDY.md) ·
+[Results tables](research/contention_study/data/RESULTS.md) ·
+[Dataset documentation](research/contention_study/DATASHEET.md)
 
 ## Contribute
 

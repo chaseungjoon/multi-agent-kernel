@@ -1,75 +1,25 @@
-# TASKS.md
+# TASKS
 
-The planned work for MAK, in priority order. Every wave runs on its own branch,
-`feat/<wave_number>-<feature_name>`, following the Planning → Executing →
-Documenting cycle in `AGENTS.md`, with `CUR_WAVE.md` tracking the active one.
-
-**State of the tree this file was written against:** `main` @ `2d89f69`,
-version `0.9.2b0`, 2026-09-23. `2,432 passed / 4 failed` locally (Python 3.13):
-three `TestIterSourceFiles` parametrizations and
-`test_every_entry_resolves_its_key_env`. `mypy --strict mak cli` and
-`ruff check mak cli tests` are clean. Line numbers below refer to this commit;
-re-check them before you edit.
-
-**Wave numbers in use:** 10–24 have branches; 26 shipped as
-`origin/26/cascade-task-validity-fix` (0.9.1b). 25 was planned and never
-started. New waves in this file therefore start at **27**.
-
-**Sources.** Waves R, 7, 8 and 25 predate this revision. Waves 27–34 come from
-the architectural review in `OPUS_REPORT.md` (2026-09-23). Wherever a review
-suggestion overlapped an existing wave, the two were merged and the existing
-wave number kept.
+The planned work for MAK, in priority order.
 
 ---
 
 ## Wave index (priority order)
 
-| Order | Wave | Title | Review items | Depends on | Branch |
-|:-:|:-:|---|---|---|---|
-| 1 | **25** | Green hermetic suite, endpoint-aware model identity, one front-end API | S7, S14 (tests), B7, B8, Q9 | — | `feat/25-front-end-unification` |
-| 2 | **27** | Session decomposition (consolidation, no features) | S1, B1, Q7, Q10, Q11 | 25 | `feat/27-session-decomposition` |
-| 3 | **7** | Retrieval-based, graph-aware planner | S2, B2 | 25 (27 recommended) | `feat/7-planner-retrieval` |
-| 4 | **28** | Write sets that can grow safely | S3, B3, Q4 (headers) | 27 | `feat/28-growable-write-sets` |
-| 5 | **29** | Agents that can look and test | S4, B4, Q5 | 27, 28 | `feat/29-agent-tools` |
-| 6 | **30** | Respect the user's repository | S5, S9, S10, S16 (clean tree), B5, B10, B11 | 27 recommended | `feat/30-repository-respect` |
-| 7 | **R** | First public release | S16 (spend cap), Q6 | 25, 30 | `feat/R-release-prep` |
-| 8 | **31** | SQLite state store | S6, B6 | 27 | `feat/31-sqlite-state` |
-| 9 | **32** | Scheduler fairness and plan-review previews | S8, S16 (previews), B9 | 27 | `feat/32-scheduler-fairness` |
-| 10 | **33** | Evaluate what can actually fail | S11, Q2 | 7, 28 (for meaningful numbers) | `feat/33-honest-evaluation` |
-| 11 | **8** | Language boundary and structured non-Python resources | S12, Q3, Q12 | 27, 30 | `feat/8-language-boundary` |
-| 12 | **34** | The kernel as a coordination service (library + MCP) | S15, Q1 | 27, 28 | `feat/34-kernel-service` |
-
-Review items with no wave of their own are handled as program rules (below):
-S13 (scope discipline), Q8 (complexity budget), Q11 and the last bullet of
-S14 (consolidation cadence).
-
-## Program rules
-
-These apply to every wave and are not tasks.
-
-- **P.1 Scope freeze (S13, Q8).** Until Waves 27, 7, 28 and 29 are merged, the
-  peripheral subsystems — model-catalog refresh, provider/endpoint wizards and
-  capability negotiation, the three CLI-agent bridges, local-runtime discovery
-  and host management, the Docker sandbox, the optional semantic gates — take
-  **bug fixes only**. A wave that needs to change one of them says why in its
-  design decisions.
-- **P.2 Delegating provider abstraction is an open decision, not a task.**
-  Before any new provider work after the freeze, write down whether
-  `mak/endpoints/` + the four API adapters should be replaced by an existing
-  library (e.g. LiteLLM). Criteria: preserves forced structured output and the
-  structured-output ladder; preserves the "never forward an ambient key" rule;
-  preserves `TaskResult.usage`/`stop_reason`; dependency weight; how many MAK
-  tests would need rewriting. Record the answer in `CHANGELOG.md`.
-- **P.3 Consolidation cadence (Q11).** Every fourth wave is a consolidation
-  wave: refactoring, deletion and docs only, no new features and no new config
-  keys. Wave 27 is the first; the next falls after Wave 30.
-- **P.4 A wave is not `done` with a red suite.** The full suite must pass on
-  CI's Python and on the newest Python the project claims. A test may be
-  `xfail`ed only with `strict=True` and a reason that names the wave that will
-  fix it.
-- **P.5 History lives in `CHANGELOG.md`.** Docstrings and comments describe the
-  current contract. No new `Wave N` references in `mak/` or `cli/`; Wave 27
-  removes the existing ones.
+| Wave | Title | Review items | Depends on | Branch |
+|:-:|---|---|---|---|
+| [**25**](#wave-25--green-hermetic-suite-endpoint-aware-model-identity-one-front-end-api) | Green hermetic suite, endpoint-aware model identity, one front-end API | S7, S14 (tests), B7, B8, Q9 | — | `feat/25-front-end-unification` |
+| [**27**](#wave-27--session-decomposition-consolidation-wave) | Session decomposition (consolidation, no features) | S1, B1, Q7, Q10, Q11 | 25 | `feat/27-session-decomposition` |
+| [**7**](#wave-7--retrieval-based-graph-aware-planner) | Retrieval-based, graph-aware planner | S2, B2 | 25 (27 recommended) | `feat/7-planner-retrieval` |
+| [**28**](#wave-28--write-sets-that-can-grow-safely) | Write sets that can grow safely | S3, B3, Q4 (headers) | 27 | `feat/28-growable-write-sets` |
+| [**29**](#wave-29--agents-that-can-look-and-test) | Agents that can look and test | S4, B4, Q5 | 27, 28 | `feat/29-agent-tools` |
+| [**30**](#wave-30--respect-the-users-repository) | Respect the user's repository | S5, S9, S10, S16 (clean tree), B5, B10, B11 | 27 recommended | `feat/30-repository-respect` |
+| [**R**](#wave-r--first-public-release) | First public release | S16 (spend cap), Q6 | 25, 30 | `feat/R-release-prep` |
+| [**31**](#wave-31--sqlite-state-store) | SQLite state store | S6, B6 | 27 | `feat/31-sqlite-state` |
+| [**32**](#wave-32--scheduler-fairness-and-plan-review-previews) | Scheduler fairness and plan-review previews | S8, S16 (previews), B9 | 27 | `feat/32-scheduler-fairness` |
+| [**33**](#wave-33--evaluate-what-can-actually-fail) | Evaluate what can actually fail | S11, Q2 | 7, 28 (for meaningful numbers) | `feat/33-honest-evaluation` |
+| [**8**](#wave-8--language-boundary-and-structured-non-python-resources) | Language boundary and structured non-Python resources | S12, Q3, Q12 | 27, 30 | `feat/8-language-boundary` |
+| [**34**](#wave-34--the-kernel-as-a-coordination-service-library--mcp) | The kernel as a coordination service (library + MCP) | S15, Q1 | 27, 28 | `feat/34-kernel-service` |
 
 ---
 
@@ -1353,7 +1303,7 @@ keywords**. On PyPI that renders as an anonymous, unlicensed package.
   Generators; Environment :: Console.
 - **R.2.5 `keywords`** — llm, agents, multi-agent, codegen, ast, orchestration.
 - **R.2.6 sdist contents.** No `MANIFEST.in` exists. Add one pruning
-  `benchmark/`, `contention_study/`, `graphics/`, `screenshots/`, `diagram/`,
+  `benchmark/`, `research/contention_study/`, `graphics/`, `screenshots/`, `diagram/`,
   `demo/`. Keep `LICENSE` and `README.md`.
 - **R.2.7 `package-data` survives the wheel** — `config.yaml`, `.env.example`,
   `models/seed.json`, `examples/*.yaml`. Config discovery falls back to the
@@ -1511,7 +1461,7 @@ the output for the release notes.
   example config loads, the packaged `config.yaml` resolves.
 - **R.12.6** A real run on a scratch repo with a cheap model, and the keyless
   `python3 benchmark/sweep.py --config benchmark/sweeps/smoke.yaml`.
-- **R.12.7** The wheel contains no `.mak/`, `benchmark/`, `contention_study/`,
+- **R.12.7** The wheel contains no `.mak/`, `benchmark/`, `research/contention_study/`,
   test fixtures, or `graphify-out/`.
 - **R.12.8** CI green on the exact release commit.
 - **R.12.9** First-run setup on a machine with no `~/.config/mak/`.
@@ -1598,7 +1548,7 @@ changed rather than to the repository.
 - **The transaction is hand-rolled.** `NodeStore.transaction()` snapshots the
   in-memory index and defers deletions so a single metadata save can serve as
   the commit point. A database transaction provides exactly that natively.
-- **Precedent in the repo.** `contention_study/` already uses SQLite caches with
+- **Precedent in the repo.** `research/contention_study/` already uses SQLite caches with
   a migration layer.
 
 ### Design decisions

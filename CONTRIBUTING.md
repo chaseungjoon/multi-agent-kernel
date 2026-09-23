@@ -1845,13 +1845,13 @@ python benchmark/sweep.py --config benchmark/sweeps/smoke.yaml   # keyless
 
 ## Research: real-world contention
 
-[`contention_study/`](contention_study/) measures how often real concurrent
+[`research/contention_study/`](research/contention_study/) measures how often real concurrent
 changes in six large Python projects touch the same file versus the same MAK
 node. Its findings, method and threats to validity are in
-[`CONTENTION_STUDY.md`](contention_study/CONTENTION_STUDY.md); setup, commands
+[`CONTENTION_STUDY.md`](research/contention_study/CONTENTION_STUDY.md); setup, commands
 and the pipeline stages are in
-[`contention_study/README.md`](contention_study/README.md); generated tables are
-in `contention_study/data/RESULTS.md` — check that file before quoting any number.
+[`research/contention_study/README.md`](research/contention_study/README.md); generated tables are
+in `research/contention_study/data/RESULTS.md` — check that file before quoting any number.
 
 Rules for changing the study:
 
@@ -1868,7 +1868,7 @@ Rules for changing the study:
   named buckets.
 - Regenerate `data/RESULTS.md`, `data/results.json`, profiles, CSVs and plots
   from code; never hand-edit aggregates.
-- Research dependencies stay in `contention_study/.venv`; never add NumPy or
+- Research dependencies stay in `research/contention_study/.venv`; never add NumPy or
   Matplotlib to the kernel's `pyproject.toml`. The study has its own gates:
   `./run.sh pytest tests -q`, `ruff check .`, and strict mypy on `mining`.
 
@@ -1954,7 +1954,8 @@ mak/
 
 tests/                        # mirrors mak/ and cli/; tests/support/ holds a fake OpenAI server
 benchmark/                    # Part III
-contention_study/             # Part III (own venv, tests, and gates)
+research/
+└── contention_study/         # Part III (own venv, tests, and gates)
 demo/                         # a small demo project and config
 diagram/                      # Mermaid architecture and sequence diagrams
 ```
@@ -2020,7 +2021,7 @@ Enforced by `ruff` and `mypy --strict`:
 - **Behaviour changes need tests.**
 - **Update the docs you change the truth of, in one place each:** this file for
   architecture and workflow; `mak/config.yaml` or `mak/examples/` for config
-  keys; `benchmark/` and `contention_study/` docs for their own method and
+  keys; `benchmark/` and `research/contention_study/` docs for their own method and
   results; [`TASKS.md`](TASKS.md) for planned work (mark a wave done, add new
   ones); `README.md` for user-facing behaviour; `CHANGELOG.md` for every release. The version lives in `mak/_version.py` and the
   README badge (line 6) must match it.
