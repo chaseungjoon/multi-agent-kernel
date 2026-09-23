@@ -8,7 +8,6 @@ __pycache__
 .idea
 .env
 .claude
-graphify-out
 
 # Personal/local notes
 PLANS.md
