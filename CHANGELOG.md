@@ -10,7 +10,7 @@ API is not yet stable and minor versions may carry breaking changes.
 Versions are defined in `mak/_version.py`, which is the single source of truth
 for packaging metadata and `mak.__version__`.
 
-## [Unreleased]
+## [Official Release]
 
 Nothing yet.
 

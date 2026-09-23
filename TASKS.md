@@ -2183,3 +2183,12 @@ scripted fan-out demo.
 - **Embedding retrieval for the planner** (after Wave 7's `Retriever`).
 - **Default `tools: read` for agents** (after Wave 33's data).
 - **Splitting `mak/config.py`** (next consolidation wave).
+- **Stronger semantic gates:** a differential property-test gate for behaviour
+  changes behind an unchanged signature; coverage-driven test selection for
+  `impact_tests` instead of the static import closure; an optional "revert
+  instead of fix-up" resolution offered to the reviewer (`revert_node` already
+  supports it).
+- **Retired-node metadata sweep:** a retired node's metadata entry is kept
+  forever, even after retention prunes its last version file; add a `gc` pass
+  that removes entries whose versions are all gone, without letting `gc` treat
+  live directories as orphans.

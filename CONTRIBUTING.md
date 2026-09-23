@@ -226,7 +226,7 @@ endpoint support, local runtimes, and the interactive app are all implemented.
 |---|---|
 | `mypy --strict mak cli` | clean |
 | `ruff check mak cli tests` | clean |
-| `pytest -q` | green in CI (Python 3.11). On a local Python 3.13, or with a third-party endpoint catalog cached in `~/.config/mak/`, **4 tests fail** — see [Wave 25](#wave-25) |
+| `pytest -q` | green in CI (Python 3.11). On a local Python 3.13, or with a third-party endpoint catalog cached in `~/.config/mak/`, **4 tests fail** — see Wave 25 in [`TASKS.md`](TASKS.md) |
 
 | Area | Modules |
 |---|---|
@@ -247,7 +247,7 @@ endpoint support, local runtimes, and the interactive app are all implemented.
 | Interactive app | `cli/` |
 
 What is not done yet — packaging for a public release, planner token efficiency,
-multi-language support — is listed under [Open issues](#open-issues).
+multi-language support — is planned in [`TASKS.md`](TASKS.md).
 
 ---
 
@@ -471,7 +471,7 @@ The kernel's core mechanism — a structured replacement for diff/merge.
   glob→regex translator whose `*` never crosses `/` and whose `**/` spans zero or
   more whole segments. Symlinked directories are not descended. Its behaviour is
   pinned by a differential test against `Path.glob` (see
-  [Wave 25](#wave-25) for its one open discrepancy).
+  Wave 25 in [`TASKS.md`](TASKS.md) for its one open discrepancy).
 
 ### 3.2 `.makignore` (`makignore.py`)
 
@@ -636,7 +636,7 @@ On POSIX the lease is an `flock`, which the OS releases when the holder dies
 however it dies — no timeout, no pid heuristic. The JSON record inside the file
 is diagnostics. On Windows, `msvcrt` byte-range locks can outlive their process,
 so that path falls back to a heartbeat-age threshold (`stale_after_s`, 90s); it is
-the weaker path and is not exercised by CI (see [Wave R](#wave-r)).
+the weaker path and is not exercised by CI (see Wave R in [`TASKS.md`](TASKS.md)).
 
 ### 4.5 Derived lock resources and the lock policy
 
@@ -1452,121 +1452,21 @@ raising.
 
 ## 12. Configuration
 
-`mak/config.py` loads YAML into a frozen `MakConfig` dataclass tree. The packaged
-default is `mak/config.yaml`.
+`mak/config.py` loads YAML into a frozen `MakConfig` dataclass tree. The
+annotated reference for every key is the packaged default,
+[`mak/config.yaml`](mak/config.yaml): each setting is listed with its default and
+what it does. The sections it leaves out are shown in the packaged examples under
+[`mak/examples/`](mak/examples/) (`mak examples <name>` prints one):
 
-```yaml
-session:
-  work_dir: "."
-  mak_dir: ".mak"                  # relative paths resolve against work_dir
-  max_concurrent_agents: 3
-  lock_timeout_s: 300.0
-  deadlock_check_interval_s: 5.0
-  test_command: "pytest -q"        # run at teardown; gates auto_push
-  dependency_context_bytes: 24000  # layer-5 budget (§3.3); 0 off, -1 unbounded
-  cross_file_context_bytes: 32000  # layer-4 budget (§3.3); 0 off, -1 unbounded
-  # max_total_tokens: 2000000      # spend ceiling per run; unset = unbounded
-  on_external_edit: "adopt"        # adopt | conflict (§11)
-  test_policy: "require_pass"      # require_pass | allow_skip (§11)
+| Example | Shows |
+|---|---|
+| `custom-endpoint.yaml`, `hosted-openai-compatible.yaml` | `endpoints:` and every capability setting (§8), agents routed by `endpoint` |
+| `local-ollama.yaml`, `local-openai-compatible.yaml` | `ollama_api` / `local_api` agents and their fields (§7.8) |
+| `hybrid-cloud-planner-local-agents.yaml`, `fully-local-offline.yaml` | planner `backend` / `base_url` / `endpoint` routes |
 
-# endpoints:                       # named OpenAI-compatible services (§8)
-#   - id: "nvidia"
-#     profile: "nvidia"            # nvidia | openrouter | deepseek | zai-general |
-#                                  # zai-coding | custom
-#     location: "hosted"           # hosted | private | local — informational only
-#   - id: "house-gateway"
-#     transport: "openai_chat"
-#     base_url: "https://llm.internal.example/v1"
-#     api_key_env: "HOUSE_GATEWAY_KEY"   # the variable's NAME; omit for keyless
-#     model_discovery: "auto"      # auto | models | manual
-#     health_check: "models"       # models | chat | none
-#     structured_output: "auto"    # auto | json_schema | json_object | none
-#     token_parameter: "auto"      # auto | max_tokens | max_completion_tokens | none
-#     provider_routing: "none"     # none | openrouter
-#     headers:
-#       - name: "X-Title"
-#         value: "MAK"
-#       - name: "X-Tenant-Token"
-#         value_env: "HOUSE_TENANT_TOKEN"
-
-planner:
-  model: "claude-opus-5"
-  max_retries: 3
-  validate: true
-  strategy: "oneshot"              # oneshot | outline
-  self_critique: false
-  # backend: "ollama"              # anthropic | openai | gemini | ollama
-  # base_url: "http://localhost:11434"
-  # api_key_env: "VLLM_TOKEN"
-  # endpoint: "nvidia"             # exclusive with backend/base_url/api_key_env
-
-agents:                            # first entry is the default agent
-  - type: "anthropic_api"
-    model: "claude-sonnet-5"
-    api_key_env: "ANTHROPIC_API_KEY"
-    max_instances: 2
-    timeout: 300
-    # max_tokens: 32000
-  - type: "openai_api"
-    model: "gpt-5.6-sol"
-    api_key_env: "OPENAI_API_KEY"
-  - type: "gemini_api"
-    model: "gemini-3.5-flash"
-    api_key_env: "GEMINI_API_KEY"
-  # - type: "ollama_api"
-  #   model: "qwen2.5-coder:14b"
-  #   base_url: "http://localhost:11434"
-  #   structured_output: "json_schema"
-  #   repair_attempts: 1
-  #   num_ctx: 32768               # unset = sized per bundle
-  #   keep_alive: "30m"
-  #   temperature: 0.1
-  # - type: "local_api"
-  #   model: "Qwen/Qwen2.5-Coder-32B-Instruct"
-  #   base_url: "http://localhost:8000/v1"   # required
-  # - id: "nvidia-llama"           # routing key
-  #   endpoint: "nvidia"           # type derives from the endpoint's transport
-  #   model: "meta/llama-3.3-70b-instruct"
-
-git:
-  auto_commit: true
-  auto_push: false
-  commit_prefix: "[MAK]"
-  # require_clean_tree: false
-
-models:
-  auto_refresh: true               # background catalog refresh (§15)
-
-node_store:
-  include_patterns: ["**/*.py"]
-  # version_retention: 5           # floor 2; -1 keeps every version
-  exclude_patterns:                # replaces the defaults when set
-    - "**/.mak/**"
-    - "**/node_modules/**"
-    - "**/.venv/**"
-    - "**/__pycache__/**"
-    - "**/.git/**"
-    - "**/build/**"
-    - "**/dist/**"
-    - "**/.tox/**"
-    - "**/.mypy_cache/**"
-    - "**/.pytest_cache/**"
-    - "**/site-packages/**"
-
-# semantic:                        # defaults shown (§4.5, §5.3)
-#   stale_read: "revalidate"       # accept_if_api_stable | revalidate | redispatch | reject
-#   api_locks: true
-#   intention_locks: true
-#   registry_keys: true
-#   contract_dispatch: false
-#   type_check: "off"              # off | pyright | mypy
-#   impact_tests: "off"            # off | on
-#   import_smoke: "off"            # off | on
-#   adjudicator: "off"             # off | "<backend>:<model>"
-#   adjudicator_max_calls: 5
-#   gate_timeout_s: 300
-#   impact_max_overlays: 12
-```
+`tests/test_example_configs.py` loads and validates every example, so they cannot
+drift from the schema. When you add or change a config key, document it in
+`mak/config.yaml` (or an example), not here.
 
 Rules:
 
@@ -1587,7 +1487,7 @@ Rules:
 - **Keys are never stored in config.** `api_key_env` names a variable read at
   composition time. Keys live in `~/.config/mak/.env` (created `0600`) or the
   environment; exported variables win. The in-package `mak/.env` is deprecated —
-  it is still read with a warning ([Wave R](#wave-r)).
+  it is still read with a warning (Wave R in [`TASKS.md`](TASKS.md)).
 - **`session.max_total_tokens`** is the only spend ceiling (§11). `0` or negative
   is a `ConfigError`.
 - **`node_store.version_retention`** must be `-1` or ≥ 2.
@@ -1626,7 +1526,7 @@ Rules:
 orders them with `_version_key` (a plain release above its pre-releases), skips
 the reinstall when already current (PEP 610 `direct_url.json`), and falls back to
 `main` — and says so — while the repo publishes no tags. See
-[Wave R](#wave-r) for its open problems.
+Wave R in [`TASKS.md`](TASKS.md) for its open problems.
 
 ### `mak run`
 
@@ -1872,111 +1772,30 @@ can read and set the real context window.
 
 # Part III — Benchmarks and research
 
+Each benchmark and study keeps its full documentation — method, fairness
+controls, commands, and results — next to its code. This part says what each one
+measures and what to keep in mind when changing it.
+
 ## Benchmark: MAK vs. git worktrees
 
-[`benchmark/`](benchmark/) is a reproducible head-to-head between MAK and the
-git-worktree model. Both sides run the **same workload** with the **same agents**
-(models, prompts, task assignment); only the coordination model differs.
+[`benchmark/README.md`](benchmark/README.md) (per-run detail in
+[`benchmark/STATS.md`](benchmark/STATS.md)) is a head-to-head between MAK and the
+git-worktree model on four generated targets (Basic, Template 2, Template 3,
+Template 4). Both sides use the same agents, prompts, task assignment and test
+oracle; only the coordination model differs. Every target shares one registry
+that every task must append to, so the workloads are **maximally contended**.
 
-### Workloads
+When you change it:
 
-| Target | Size | Oracle |
-|---|---|---|
-| Basic (`project_template`) | 9 operations, 3 modules | 30 tests |
-| Template 2 | 90 operations, 9 modules of real-utility-style functions | 270 tests |
-| Template 3 | e-commerce-style `app/` package | operation and table tests |
-| Template 4 | 24 function tasks across a multi-tenant job service | 152 tests (112 contract/boundary, 30 wiring, 10 workflows) |
-
-Every target shares a registry that **every** operation must add a line to — the
-one contended symbol. Under MAK a node-level lock (or the keyed-registrar merge)
-serializes it and nothing is lost; under worktrees every merge after the first
-collides there. Modules are assigned one agent per module so the conflict is
-isolated to that symbol. Select with `--project basic|2|3|4|all`.
-
-Targets are **generated** — `benchmark/tools/gen_template{2,3,4}.py` from
-`harness/template*_spec.py` — so stubs, reference implementations, and tests
-cannot drift; a reference self-test proves each oracle is consistent before a
-model is called. Edit the spec, not the generated files.
-
-**Template 4** specifics: `harness/template4_spec.py` owns contracts, mock
-references, and expected results; `template4_workflows.py` owns integration
-scenarios. `harness/planner.py` produces one validated plan per repetition with
-`anthropic:claude-opus-5` (8,192-token budget, up to three attempts with
-corrective feedback; attempts are saved to `.runs/4/planner-N/attempt-M.json`).
-Three `anthropic:claude-opus-5` workers are the default (`--models`,
-`--planner-model`, `--agents`; one to six workers). Planning cost is included once
-on each side and reported separately. Pure service logic does not model database
-durability or network races; the traditional baseline reports simulated parallel
-call time plus measured merge time.
-
-### Fairness controls
-
-- Same agents, models, prompts; the registry line is applied by a deterministic
-  helper, so the model's only creative job is the function body.
-- Same assignment and oracle.
-- **Parallel timing** for worktrees: `max` over agents of call time, plus the
-  sequential merge phase. MAK is charged its real wall clock.
-- The worktree baseline **resolves** conflicts with one model call — the stronger
-  baseline.
-- A malformed agent response costs that operation on both sides, not the run.
-- A SIGALRM per-test timeout in each `conftest.py` stops a runaway implementation
-  from hanging the oracle.
-
-### Results
-
-Three `claude-sonnet-4-6` agents on both sides. Template 2 is the mean of 10 runs
-(per-run breakdown in [`benchmark/STATS.md`](benchmark/STATS.md)); Basic is one
-representative run.
-
-**Basic — 9 operations, 30 tests**
-
-| Metric | MAK | Worktrees |
-|---|---|---|
-| Implementation time | 20.37s | **11.64s** |
-| Total tokens | **2,052** | 3,192 |
-| Model calls | 9 | 11 |
-| Accuracy | 30/30 | 30/30 |
-| Registry merge conflicts | **0** | 2 |
-
-**Template 2 — 90 operations, 270 tests (mean of 10)**
-
-| Metric | MAK | Worktrees |
-|---|---|---|
-| Implementation time | 226.54s | **99.52s** |
-| Total tokens | **18,339** | 23,760 |
-| Model calls | 90.6 | 92 |
-| Accuracy | **253.1/270 (94%)** | 251.6/270 (93%) |
-| Registry merge conflicts | **0** | 2 |
-
-Reading it:
-
-- **Tokens:** MAK uses 23–36% fewer, because it never makes conflict-resolution
-  calls. MAK spent fewer tokens in all 10 Template 2 runs.
-- **Conflicts:** 0 vs. `agents − 1` by construction.
-- **Accuracy:** MAK matched or beat worktrees in every run (253 in nine, 254 in
-  one), while worktrees ranged 247–254.
-- **Time:** worktrees are ~2.3× faster here. These workloads are **maximally
-  contended** — every task edits the one shared symbol — so MAK serializes those
-  commits while worktrees implement fully in parallel and pay later in tokens,
-  conflicts, and risk of lost work. This is the worst case for MAK's latency.
-
-Caveats: single model family (both sides identical, so fair, but not
-cross-model), and maximal contention. Extending both is an
-[Wave 33](#wave-33).
-
-### Running it
-
-```bash
-python benchmark/run_benchmark.py --mode mock                          # keyless self-test
-python benchmark/run_benchmark.py --mode real                          # real models (needs keys)
-python benchmark/run_benchmark.py --mode real --project 2 --repeat 10  # as published
-python benchmark/run_benchmark.py --mode real --project 4 --repeat 10  # Template 4, Opus planner + workers
-python benchmark/run_benchmark.py --render-only                        # regenerate reports
-```
-
-Results go to `benchmark/README.md` (summary) and `benchmark/STATS.md` (detail);
-`--repeat N` reports the mean with a per-run table; `--keep` retains run
-artifacts. A per-call liveness line prints to stderr.
+- Targets are generated from `benchmark/harness/template*_spec.py` by
+  `benchmark/tools/gen_template*.py`; edit the spec, never the generated files.
+- The MAK side is given an **oracle plan** (exact targets, `changes_api=False`,
+  precomputed registry keys) and the worktree side is a **simulated** pipeline.
+  The numbers therefore measure the kernel, not the planner or agent quality;
+  label them that way. Wave 33 in [`TASKS.md`](TASKS.md) adds end-to-end and
+  real-baseline arms.
+- `python benchmark/run_benchmark.py --mode mock` is the keyless self-test;
+  `--render-only` regenerates the reports without spending tokens.
 
 ## Semantic conflict corpus
 
@@ -2012,118 +1831,46 @@ python benchmark/semantic/run_semantic.py --json   # one JSON object per shape
 
 ## Simulated-agent scaling sweep
 
-`benchmark/sweep.py` and `benchmark/sim/` measure scaling without model calls.
-A sweep materializes a synthetic target per arm and drives the real runners with
-`SimBackend`: MAK still runs the production session, locks, store, transaction,
-reconstruction, and conflict detection, and worktree baselines still run real
-git. Only model-facing calls are simulated, seeded by a stable hash of
-`(seed, call kind, operation, attempt)` so arms are paired (common random
-numbers).
-
-- `harness/synthetic_spec.py` is the source of truth for generated targets:
-  uniform or Zipf table popularity, zero to two registrations per task,
-  commutative appends, exclusive same-node edits, same-file work, caller/callee
-  pairs, and several assignment policies (module-owned, round-robin, random,
-  conflict-avoiding, profile-derived).
-- The worktree runner supports `merge_at_end` and `merge_often` and reports
-  registration survival; the MAK runner can serialize file-sharing tasks as a
-  file-granularity ablation. `Session` emits `phase_span` events, and the
-  benchmark wraps the lock table to measure waits.
-- Real calls write fitting telemetry when `MAK_BENCH_CALLS_PATH` is set;
-  `sim/fit.py` fits profiles (log-normal latency, bootstrap fallback, token
-  regressions, a Beta posterior for resolver line drops). **The bundled
-  `profiles/default.json` is a placeholder — do not describe it as calibrated.**
-  `sim/calibrate.py` reports prediction error against real points.
-- Sweeps append resumable JSONL keyed by case parameters, MAK SHA, and profile
-  hash (`--fresh` replaces one sweep's file), and write
-  `benchmark/simulated_agent_scaling_1_result.json`.
+`benchmark/sweep.py` drives the real kernel and real git with simulated model
+calls to measure scaling without spending tokens. Its design, calibration and
+threats to validity are in [`benchmark/sim/README.md`](benchmark/sim/README.md)
+and the "Simulated agent scaling" section of `benchmark/README.md`. Two rules:
+generated targets come from `benchmark/harness/synthetic_spec.py` (keep additions
+there so target code and oracle cannot drift), and the bundled
+`profiles/default.json` is a placeholder — never describe it as calibrated.
 
 ```bash
-python benchmark/sweep.py --config benchmark/sweeps/smoke.yaml
-python benchmark/analysis/scaling.py \
-  --input benchmark/results/simulated_agent_scaling_1_smoke.jsonl
+python benchmark/sweep.py --config benchmark/sweeps/smoke.yaml   # keyless
 ```
-
-Keep the real-versus-modeled boundary explicit in reports, and preserve negative
-hypothesis verdicts.
 
 ## Research: real-world contention
 
-[`contention_study/`](contention_study/) asks whether real history contains
-enough file-level-but-not-node-level contention for AST decomposition to matter.
-It is isolated from the runtime: nothing in `mak/`, `cli/`, `tests/`, or
-`benchmark/` is changed by it, and it imports
-`mak.node_store.ingestion.parse_file_into_fragments` read-only so a measured node
-is exactly a node MAK would lock.
+[`contention_study/`](contention_study/) measures how often real concurrent
+changes in six large Python projects touch the same file versus the same MAK
+node. Its findings, method and threats to validity are in
+[`CONTENTION_STUDY.md`](contention_study/CONTENTION_STUDY.md); setup, commands
+and the pipeline stages are in
+[`contention_study/README.md`](contention_study/README.md); generated tables are
+in `contention_study/data/RESULTS.md` — check that file before quoting any number.
 
-**Corpus.** Merged and closed-unmerged PRs from `home-assistant/core`,
-`apache/airflow`, `huggingface/transformers`, `pandas-dev/pandas`,
-`scikit-learn/scikit-learn`, and `django/django`, 2025-01-01 to 2026-09-01, capped
-at 2,000 merged PRs per repository.
+Rules for changing the study:
 
-**Headline results** (Python-only pair view):
-
-| repository | same Python file | same Python AST node | reduction |
-|---|---:|---:|---:|
-| home-assistant | 0.13% | 0.06% | 2.2× |
-| airflow | 0.29% | 0.11% | 2.8× |
-| transformers | 1.46% | 0.46% | 3.2× |
-| pandas | 2.54% | 0.25% | 10.3× |
-| scikit-learn | 1.14% | 0.36% | 3.2× |
-| django | 0.84% | 0.15% | 5.7× |
-
-- At *k*=16, 78.9–99.4% of windows have a path collision but 32.9–66.5% a
-  Python-node collision. Non-Python whole-file resources (build/CI config,
-  dependency lists, docs, registries) saturate first — structured operations for
-  append-oriented text are the next likely source of concurrency.
-- 124,473 resolvable pairs contain **zero** change-versus-change textual conflicts
-  (so the "conflicts avoided by node scheduling" fraction is reported as
-  unidentifiable); all 5,316 shared-node pairs merge cleanly, 3,324 append-only.
-- No new shallow static defect appears in 2,400 clean merges probed. This is a
-  narrow negative result — not behavioral correctness.
-- Survivorship effects are mixed across repositories and are not reduced to one
-  multiplier.
-
-**Method rules that must be preserved:**
-
-- Pairs require **base overlap** (neither fork point postdates the other's merge),
-  not just lifetime overlap.
-- Never use `git merge-tree A B`: its implicit base charges intervening mainline
-  commits to one PR (a 10–30% false-conflict rate here). `mining/rebase.py`
-  forward-ports the earlier change onto the later fork and merges against that
-  shared base; it agreed with real merges on all 156 audited pairs.
+- Keep the kernel read-only. The study imports
+  `mak.node_store.ingestion.parse_file_into_fragments` so a measured node is
+  exactly a node MAK would lock; a question that needs `mak/` changed is a
+  separate wave.
+- Pairs require **base overlap**, not just lifetime overlap, and merges are
+  judged against a shared base (`mining/rebase.py`). Never use
+  `git merge-tree A B` — it charges mainline commits to one PR.
 - Keep the failure taxonomy distinct: source conflict, rebase conflict, invalid
   Git operation, missing head, unparseable file.
-- Map hunks on both sides (removals on the base decomposition, additions on the
-  head). A parse failure or non-Python file is one whole-file node.
-- Add columns through the cache migration layer; record excluded populations with
-  named buckets; keep raw dicts inside serialization boundaries.
-- Regenerate `data/RESULTS.md`, `data/results.json`, profiles, CSVs, and plots
-  from code — never hand-edit aggregates. `RESULTS.md` is the authoritative
-  human-readable source; check it before quoting numbers.
-- A single-repository rerun must aggregate every available profile when
-  rebuilding global output (`run_study.py` enforces this).
-
-```bash
-cd contention_study
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-export GITHUB_TOKEN=...                      # public metadata only
-./run.sh mining.run_study                    # all repositories and stages
-./run.sh mining.run_study django/django      # one repository
-./run.sh mining.run_study --from pairs       # resume from a stage
-./run.sh mining.run_study --force            # recompute cached stages
-./run.sh pytest tests -q
-../.venv/bin/ruff check .
-PYTHONPATH=.:.. ../.venv/bin/mypy --config-file mypy.ini mining
-```
-
-Stages: `prs → refs → map → filter → pairs → windows → semantic → survivorship →
-audit → profile → release → analysis/plots`. Bare clones live in
-`$MAK_STUDY_CACHE` (default `~/.cache/mak-contention-study`, ~2.5 GB); research
-dependencies stay in `contention_study/.venv` — never add NumPy or Matplotlib to
-the kernel's `pyproject.toml`. See
-[`CONTENTION_STUDY.md`](contention_study/CONTENTION_STUDY.md) for the full
-interpretation.
+- Add columns through the cache migration layer; record excluded populations in
+  named buckets.
+- Regenerate `data/RESULTS.md`, `data/results.json`, profiles, CSVs and plots
+  from code; never hand-edit aggregates.
+- Research dependencies stay in `contention_study/.venv`; never add NumPy or
+  Matplotlib to the kernel's `pyproject.toml`. The study has its own gates:
+  `./run.sh pytest tests -q`, `ruff check .`, and strict mypy on `mining`.
 
 ---
 
@@ -2235,7 +1982,7 @@ requests. Focused runs while iterating: `pytest tests/node_store/ -q`,
   the implementation being replaced.
 - **No test may read the real user configuration.** `tests/conftest.py` isolates
   `.env` lookups and `XDG_CONFIG_HOME` per test; see
-  [Wave 25](#wave-25) for the one module-level registry that still escapes it.
+  Wave 25 in [`TASKS.md`](TASKS.md) for the one module-level registry that still escapes it.
 - No test touches the network — provider fetches use fake sources, local-runtime
   tests inject the client, and endpoint tests use `tests/support/fake_openai_server.py`
   on loopback.
@@ -2271,9 +2018,11 @@ Enforced by `ruff` and `mypy --strict`:
 - **Commit messages explain the *why*.** The `[MAK-<id>]` subject format is what
   the *kernel* writes for audit commits; your own commits follow ordinary practice.
 - **Behaviour changes need tests.**
-- **Update the docs you change the truth of:** this file for architecture,
-  configuration, and workflow; `README.md` for user-facing behaviour;
-  `CHANGELOG.md` for every release. The version lives in `mak/_version.py` and the
+- **Update the docs you change the truth of, in one place each:** this file for
+  architecture and workflow; `mak/config.yaml` or `mak/examples/` for config
+  keys; `benchmark/` and `contention_study/` docs for their own method and
+  results; [`TASKS.md`](TASKS.md) for planned work (mark a wave done, add new
+  ones); `README.md` for user-facing behaviour; `CHANGELOG.md` for every release. The version lives in `mak/_version.py` and the
   README badge (line 6) must match it.
 
 ---
@@ -2282,334 +2031,12 @@ Enforced by `ruff` and `mypy --strict`:
 
 ## Open issues
 
-The open work is organized into **waves**: each wave is one coherent change
-developed on its own branch (`feat/<wave>-<name>`) and merged when its tests,
-gates, and docs are complete. Waves are listed below in priority order, with the
-problem each one solves and what it delivers. Everything here was verified
-against the current tree. Open an issue to coordinate before starting a wave or
-any large part of one.
-
-| Order | Wave | Title | Depends on |
-|:-:|:-:|---|---|
-| 1 | [25](#wave-25) | Green hermetic test suite, endpoint-aware model identity, one front-end API | — |
-| 2 | [27](#wave-27) | Session decomposition (refactor only) | 25 |
-| 3 | [7](#wave-7) | Retrieval-based, graph-aware planner | 25 |
-| 4 | [28](#wave-28) | Write sets that can grow safely | 27 |
-| 5 | [29](#wave-29) | Agents that can look and test | 27, 28 |
-| 6 | [30](#wave-30) | Respect the user's repository | — |
-| 7 | [R](#wave-r) | First public release | 25, 30 |
-| 8 | [31](#wave-31) | SQLite state store | 27 |
-| 9 | [32](#wave-32) | Scheduler fairness and plan-review previews | 27 |
-| 10 | [33](#wave-33) | Evaluate what can actually fail | 7, 28 |
-| 11 | [8](#wave-8) | Language boundary and structured non-Python files | 27, 30 |
-| 12 | [34](#wave-34) | The kernel as a coordination service (library + MCP) | 27, 28 |
-
-Rules that apply to all of them:
-
-- **Scope freeze.** Until Waves 27, 7, 28 and 29 are merged, the peripheral
-  subsystems — model-catalog refresh, provider/endpoint wizards and capability
-  negotiation, the CLI-agent bridges, local-runtime management, the Docker
-  sandbox, the optional semantic gates — take bug fixes only.
-- **Consolidation cadence.** Every fourth wave is refactoring, deletion and docs
-  only; Wave 27 is the first.
-- **A wave is not done with a red suite**, on CI's Python or on the newest
-  Python the project claims. `xfail` only with `strict=True` and a reason naming
-  the wave that will fix it.
-- **History lives in `CHANGELOG.md`**, not in docstrings or comments.
-
-### Wave 25
-
-**Green hermetic test suite, endpoint-aware model identity, one front-end API.**
-Branch `feat/25-front-end-unification`.
-
-Problems:
-
-- `ModelEntry.api_key_env` and `.adapter_type` (`mak/models/catalog.py`) raise
-  `ValueError: unknown provider` for every entry that comes from a configured
-  endpoint, because they only know the three built-in providers.
-- `tests/models/test_cli_adapter.py::test_every_entry_resolves_its_key_env`
-  reads `all_models()`, whose registry is built **at import** of
-  `cli/core/models.py` from the real `~/.config/mak/models.json`. It passes in
-  CI and fails for anyone with an endpoint catalog cached.
-- `iter_source_files` disagrees with `Path.glob` for a trailing `**`
-  (`include_patterns: ["src/**"]`): Python 3.13's `Path.glob` yields files there,
-  3.11/3.12 only directories. Three parametrizations of
-  `TestIterSourceFiles::test_matches_the_glob_it_replaces` fail on 3.13; CI runs
-  3.11 only, so it stays green.
-- `cli/app.py` calls `handle_command` with no guard, so one failing slash
-  command ends the whole interactive session.
-- The four `CliState` planner fields are kept consistent by hand in four
-  setters.
-- The two front ends duplicate logic: planner-key resolution exists twice
-  (`mak/__main__._planner_api_key`, used in production, and
-  `cli/runner._resolve_planner_api_key`, reached only by tests), the app builds
-  sessions by importing `mak.__main__` and mutating `os.environ`, and
-  `cli/runner.plan_in_thread` reads `session._planner` and
-  `session._node_store`.
-- Module-level mutable state: `cli/local.py`'s seams are reassigned through
-  `global`, and `cli/core/models.py` holds a process-wide registry.
-
-Delivers: widen both properties to `str | None`; isolate `HOME` and
-`XDG_CONFIG_HOME` before any test module is imported, make the CLI registry lazy,
-and add a guard test that no real config path is read; a host-independent rule
-for trailing `**` (it matches files and directories, like `.makignore`) and
-Python 3.13 in CI; a frozen `PlannerRoute` value replacing the four planner
-fields; a `mak/application/` package (`RunRequest`, `build_config`,
-`build_session`, the single `resolve_planner_key`) that both front ends call,
-with an explicit `env` mapping instead of `os.environ` mutation;
-`Session.propose_plan`; injected seams instead of globals; a guard around slash
-commands; and a parity test that the same settings produce the same config and
-planner key through both front ends.
-
-### Wave 27
-
-**Session decomposition.** Branch `feat/27-session-decomposition`. A
-consolidation wave: no behaviour change.
-
-Problem: `mak/session.py` is 4,617 lines, with ~180 methods and ~60 attributes
-covering lifecycle, reconciliation, planning, dispatch enrichment, the commit
-pipeline, parking, no-op and retry policy, post-wave analysis, recovery, and
-teardown. `install_plan` resets 31 per-wave attributes one by one, so a new one
-that is forgotten there leaks state into the next wave. `_validate_and_commit`
-is a hand-ordered chain of nine checks, and every new check has meant a new
-`Session` method. Tests reach 16 private members. Docstrings across `mak/` and
-`cli/` narrate past waves instead of describing the current contract.
-
-Delivers: a `WaveState` dataclass created fresh per wave; `mak/session/` as a
-package (`Session` re-exported, so imports keep working) with
-`WorkTreeReconciler`, `DispatchEnricher`, `CommitPipeline`, `CommitApplier`,
-`ParkedCommits`, `NoopPolicy`/`RetryPolicy`/`FailureLog`, `PostWaveAnalyzer`,
-`RecoveryManager`, `Finalizer`, and `LockWatchdog`; the commit pipeline as an
-ordered list of `CommitCheck` objects returning accept / reject / defer / resend
-verdicts; golden event-log tests proving behaviour is unchanged; a size-budget
-test (`Session` ≤ 600 lines); the LLM adjudicator fenced (logged as
-nondeterministic, counted, rejected in config where it can never be consulted);
-and a docstring sweep so `grep -rnE "Wave [0-9]+" mak cli` is empty.
-
-### Wave 7
-
-**Retrieval-based, graph-aware planner.** Branch `feat/7-planner-retrieval`.
-
-Problem: `Session.plan` and the app pass the **entire** node inventory to the
-planner as bare ids on every call and every retry — for MAK's own 146 files,
-1,829 ids ≈ 26 K tokens. Outline mode still lists every file and symbol. The
-prompt asks the model to *guess* callers of a changed signature from names,
-while the kernel already has the real reference graph (`DepGraph`), which it
-only uses after planning. Per-call planner token use is not logged.
-
-Delivers: a `PLANNER_CALL` event with sizes and usage per call; a hierarchical
-inventory (file tree → per-file symbol summaries with signatures and caller
-counts → node ids); an `expand` reply the planner can use to ask for detail,
-bounded by `planner.max_expansions` and `planner.inventory_token_budget`;
-`planner.strategy: auto` (flat listing when small, retrieval otherwise) with
-deterministic seeding from the task text and the dependency graph; kernel-supplied
-callers (a `missing_caller` finding and proposed caller tasks); prompt caching
-with a byte-stable prefix (Anthropic `cache_control`, OpenAI automatic caching);
-and before/after planner-token numbers in the benchmark.
-
-### Wave 28
-
-**Write sets that can grow safely.** Branch `feat/28-growable-write-sets`.
-
-Problem: `protocol.map_returned_sources` drops every returned node outside the
-task's grant. All of a file's imports live in one `module_header` node, so every
-task that needs an import must write-lock it and serialize on it — and the
-planner prompt never mentions headers, so a forgotten header means a dropped
-import and a retry. Planners respond by over-claiming whole files, which destroys
-parallelism. New nodes are always appended at the end of their file.
-
-Delivers: an `imports` field on `TaskResult`, merged into the header
-commutatively under key-level locks (`#import=<name>`) with conflicts detected
-by `import_check`; additive new functions and classes accepted next to a task's
-target under the file's intention lock (capped per task); lock escalation for
-unpredicted nodes that is immediate-or-restart — if the extra locks are free the
-grant widens, otherwise the task releases everything and is re-queued with the
-larger target set, so no task ever waits while holding locks; placed insertion
-in the node store; and metrics for merges, additions and escalations.
-
-### Wave 29
-
-**Agents that can look and test.** Branch `feat/29-agent-tools`.
-
-Problem: every agent call is a single shot (`format_task → send →
-parse_result`); the Anthropic adapter pins `tool_choice` to the result tool.
-Agents cannot read code the enrichment layers did not include, cannot run a
-test, and get feedback only through a retry note after a wasted attempt. Agent
-calls run on threads, which Python cannot interrupt.
-
-Delivers: opt-in `agents[].tools: none | read | read_test` (default `none`);
-read tools (`get_node`, `list_file`, `find_symbol`, `callers_of`, `search`)
-served from a snapshot pinned at dispatch, with **every node an agent reads
-added to its read set** so stale-read validation stays sound; `run_tests`
-against a temporary overlay of committed state plus the agent's candidate
-sources, never touching the work dir; one provider-neutral tool-loop driver;
-and `session.agent_isolation: process`, which runs each call in a child process
-that can be killed on timeout.
-
-### Wave 30
-
-**Respect the user's repository.** Branch `feat/30-repository-respect`.
-
-Problem: every file MAK writes is reformatted with `ruff format`, with no
-setting to turn it off — and the store keeps unformatted fragments while disk
-holds formatted files. Audit commits go onto whatever branch is checked out,
-which is why the README tells users to create a separate branch. A file a person
-edits during a run is overwritten without warning, because external-edit
-detection runs only at startup.
-
-Delivers: byte-faithful reconstruction (the whitespace between fragments is
-recorded at ingestion); `reconstruction.formatter: none | ruff | black |
-"<command>"` defaulting to `none`, applied only to changed fragments so store
-and disk stay identical; a write-time check in `install_files` against the
-digest MAK expects on disk, handled by `session.on_external_edit`;
-`git.branch_mode: refs | session | current` defaulting to `refs`, which records
-audit commits under `refs/mak/<session-id>` without moving the user's branch,
-plus an optional squash "land" at the end; and a clean-tree policy with clear
-warnings.
-
-### Wave R
-
-**First public release.** Branch `feat/R-release-prep`. MAK is installed from
-git today; publishing a public beta on PyPI needs the following.
-
-- **Decisions first:** the first PyPI version (keep a `bN` suffix); PyPI as the
-  canonical channel; supported Python versions and operating systems (metadata,
-  CI and README must agree); whether the SQLite store (Wave 31) lands before the
-  release, since it changes the `.mak/` format.
-- **Package metadata:** `pyproject.toml` has no authors, license, URLs,
-  classifiers or keywords (SPDX `license = "MIT"` needs `setuptools>=77`); add a
-  `MANIFEST.in` excluding `benchmark/`, `contention_study/`, `graphics/`,
-  `screenshots/`, `diagram/`, `demo/`; verify the wheel's package data; claim the
-  name on PyPI and TestPyPI.
-- **Dependencies:** move the provider SDKs to extras **in the same release** as
-  making `mak update` keep the user's extras (otherwise the next update strips
-  them); upper bounds on SDK pins and on `ruff`; a lock or constraints file; a
-  vulnerability scan.
-- **`mak update`:** it converts a PyPI install into a git install and reinstalls
-  every time (`_is_uv_tool_install` / `_installed_commit`); pre-release tags
-  compare lexically, so `b10 < b2` (`_version_key`); it has never run against a
-  real tag. The first pushed tag is a one-way door for `mak update` users.
-- **Automation and CI:** a tag-triggered `release.yml` (build → `twine check
-  --strict` → install the built wheel in a clean venv → smoke tests → Trusted
-  Publishing after a TestPyPI dry run → pre-release GitHub Release with
-  attestations); CI across every claimed Python and OS, a non-editable install,
-  pinned actions; Windows either tested (the `msvcrt` project-lease path) or
-  declared unsupported; `.pre-commit-config.yaml` checks `mak tests` / `mak`
-  while CI checks `mak cli tests` / `mak cli` — make them match.
-- **Safety and disclosure:** a finite default `session.max_total_tokens` (or a
-  first-run acknowledgement); state plainly that source code goes to the
-  configured providers and that the model catalog refreshes on the 1st and 15th
-  of each month (opt out with `models.auto_refresh: false` or
-  `MAK_NO_MODEL_REFRESH`).
-- **Docs and triage:** `SECURITY.md`; documented key handling and `.mak/`
-  contents; live README badges instead of static images; issue and PR
-  templates; a `mak doctor` diagnostics command; link the Code of Conduct from
-  the README; remove the deprecated in-package `mak/.env` key location.
-- **Deferred, tracked:** a Docker/GHCR image, Homebrew, signed tags beyond
-  attestations.
-
-### Wave 31
-
-**SQLite state store.** Branch `feat/31-sqlite-state`.
-
-Problem: `NodeStore._save_metadata` rewrites the entire `metadata.json` on every
-commit (713 KB in a store of this repository), every node version is its own
-file (4,904 files in that store), the lock table and task graph are rewritten
-on every change, and the commit transaction is hand-built around a single
-metadata save.
-
-Delivers: one `.mak/state.db` in WAL mode (nodes, content-addressed version
-blobs, file state, locks, task graph, commit-journal record, a symbol table); a
-`StoreBackend` boundary with the current file layout as the other
-implementation; the database COMMIT as the commit point; a verified one-way
-migration that keeps the old store; and benchmarks showing per-commit writes
-independent of store size.
-
-### Wave 32
-
-**Scheduler fairness and plan-review previews.** Branch
-`feat/32-scheduler-fairness`.
-
-Problem: `Scheduler.tick` dispatches the ready queue in FIFO order with no
-priority or aging, so a task needing a wide lock (a whole-file WRITE) can starve
-behind a stream of fragment writers of that file, and long dependency chains
-are not started first. The deadlock watchdog runs every 5 s although it cannot
-fire by construction. Plan review shows no contention or cost.
-
-Delivers: critical-path priority; reservation of a task after N failed ticks so
-no new conflicting grant is issued until it runs; the watchdog as a rare
-assertion; and a `PlanPreview` shown before approval in both front ends — hot
-resources, predicted rounds and concurrency, over-claim hints, and a token-cost
-range compared with the remaining `max_total_tokens`.
-
-### Wave 33
-
-**Evaluate what can actually fail.** Branch `feat/33-honest-evaluation`.
-
-Problem: the headline benchmarks give MAK an oracle plan (exact targets,
-`changes_api=False`, precomputed registry keys, the registry line applied by a
-helper), compare it with a *simulated* worktree pipeline, use one model family,
-and run only project-authored workloads. They measure the kernel, not the
-planner, write-set prediction, or agent quality.
-
-Delivers: an end-to-end arm using MAK's own planner with plan-quality metrics;
-a real baseline of agentic CLIs in real git worktrees with test loops and real
-merges; 6–10 real open-source tasks pinned to upstream commits; at least three
-model families; the non-Python share of every task; separate, labelled tables
-for oracle-plan and end-to-end results; a mandatory token cap for real runs; and
-keyless mock versions of every arm in CI. Real-model calibration points for the
-simulated sweep (`sim/calibrate.py`) come from the same campaign.
-
-### Wave 8
-
-**Language boundary and structured non-Python files.** Branch
-`feat/8-language-boundary`.
-
-Problem: Python-specific logic (the `compile()` gates, node kinds, `api_digest`,
-registrar detection, signature and import checks, `depgraph`, the planner's
-Python-only target rule) is spread across subsystems with no boundary. The
-planner is told to leave non-Python work out, yet the contention study found that
-non-Python files — build/CI config, dependency lists, changelogs, registries —
-are exactly where contention saturates first.
-
-Delivers, phase A: a `LanguageBackend` protocol with Python as its first
-implementation (pure refactor); structured, key-level-locked append merges for
-changelogs, dependency lists, and YAML/JSON/TOML maps and arrays; other text files
-as validated whole-file nodes. Phase B: a TypeScript backend on tree-sitter
-gated by the round-trip property test, parse-gate and collision checks for new
-languages, then Go and Rust.
-
-### Wave 34
-
-**The kernel as a coordination service.** Branch `feat/34-kernel-service`.
-
-Problem: the kernel's guarantees — node locks, transactional commits, stale-read
-detection, semantic checks — are reachable only through `Session` driving MAK's
-own planner and adapters. The contention study shows that "no merge conflicts"
-is a weak argument for human-style parallelism; MAK's strength is safe,
-validated fan-out of many agent edits into shared hot spots, which other agent
-frameworks could use if they could commit through MAK.
-
-Delivers: a stable `mak.kernel` facade (`open_project`, `begin_task`, `read`,
-`stage`, `request_nodes`, `commit`, `abort`, `post_wave_check`); an MCP server
-(`mak mcp serve`, optional `[mcp]` extra) exposing it to agentic CLIs, with
-locks expiring for clients that disappear; `Session` rebuilt on the same facade;
-a worked integration demo; and README positioning that leads with fan-out and
-commit-time semantic checking.
-
-### Not yet scheduled
-
-Real, but not part of any wave yet:
-
-- **Stronger semantic gates** — a differential property-test gate for behaviour
-  changes behind an unchanged signature; coverage-driven test selection for
-  `impact_tests`; an optional "revert instead of fix-up" resolution offered to
-  the reviewer (`revert_node` already supports it).
-- **Retired-node metadata sweep** — a retired node's metadata entry is kept
-  forever, even after retention prunes its last version; add a `gc` pass that
-  removes entries whose versions are all gone.
-- **Finer granularity** — splitting `module_body` by statement groups, and
-  nested functions and inner classes as nodes (revisit after Wave 28).
+All planned work lives in [`TASKS.md`](TASKS.md): a priority-ordered index of
+**waves** (each one branch, `feat/<wave>-<name>`), the rules that apply to every
+wave, and for each wave the evidence, design decisions, implementation steps,
+test matrix and acceptance criteria. Pick a wave or a step from there, and open
+an issue to coordinate before starting a large one. Ideas not yet assigned to a
+wave are listed at the end of that file.
 
 ## Known limitations
 
@@ -2628,16 +2055,16 @@ Deliberate, fail-safe tradeoffs — not bugs:
 - **Impacted-test selection is static** (import closure), so a test reaching a
   module only through late binding or dependency injection is missed.
 - **Out-of-store files** (config, SQL, docs) are not nodes; MAK neither locks nor
-  checks them. Structured text files are planned in [Wave 8](#wave-8).
+  checks them. Structured text files are planned in Wave 8 ([`TASKS.md`](TASKS.md)).
 - **The deadlock watchdog finds nothing by design** — atomic pre-allocation makes
-  the wait graph acyclic. [Wave 32](#wave-32) turns it into a rare assertion.
+  the wait graph acyclic. Wave 32 ([`TASKS.md`](TASKS.md)) turns it into a rare assertion.
 - **Abandoning a wedged agent call is cooperative.** Python cannot kill a thread
   mid-call; the per-request timeout bounds it, and non-blocking shutdown stops the
-  session waiting for it. [Wave 29](#wave-29) adds killable per-call processes.
+  session waiting for it. Wave 29 ([`TASKS.md`](TASKS.md)) adds killable per-call processes.
 - **One MAK per project.** Concurrent runs on one checkout are refused with
   `ProjectBusyError`; distinct projects run fine.
 - **The Windows project lease is weaker** than the POSIX `flock` (see §4.4 and
-  [Wave R](#wave-r)).
+  Wave R in [`TASKS.md`](TASKS.md)).
 - **Reconciliation adopts the working tree by default**, so MAK builds on edits
   it never saw made. Use `on_external_edit: conflict` to stop instead.
 
@@ -2650,9 +2077,9 @@ Deliberate, fail-safe tradeoffs — not bugs:
 - Hardening a CLI bridge wrapper (`mak/agent_runner/wrappers/`) for a specific
   `claude` / `codex` / `gh copilot` version, or extending the sandbox (host
   allowlisting).
-- Small, self-contained pieces of the waves above: the slash-command guard
-  (Wave 25), matching `.pre-commit-config.yaml` to CI, numeric pre-release tag
-  ordering, and removing the legacy `mak/.env` (Wave R).
+- Small, self-contained steps from [`TASKS.md`](TASKS.md): the slash-command
+  guard (Wave 25), matching `.pre-commit-config.yaml` to CI, numeric pre-release
+  tag ordering, and removing the legacy `mak/.env` (Wave R).
 
 ---
 
