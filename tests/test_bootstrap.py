@@ -18,9 +18,10 @@ from mak.bootstrap import (
     build_registry,
     default_agent_type,
     healthy_agent_types,
+    planner_from_spec,
     validate_config,
 )
-from mak.config import AgentConfig, MakConfig
+from mak.config import AgentConfig, MakConfig, PlannerConfig
 from mak.core.exceptions import AgentError, ConfigError
 
 
@@ -76,6 +77,68 @@ class TestAgentsFromSpecs:
     def test_roster_builds_a_registry(self) -> None:
         registry = build_registry(_config(*agents_from_specs(["anthropic", "openai"])))
         assert set(registry.list_types()) == {"anthropic_api", "openai_api"}
+
+
+class TestPlannerFromSpec:
+    """``--planner`` takes the ``--models`` grammar, with the model required."""
+
+    def test_a_hosted_spec_names_backend_and_key(self) -> None:
+        planner = planner_from_spec("anthropic:claude-opus-5", PlannerConfig())
+        assert planner.model == "claude-opus-5"
+        assert planner.backend == "anthropic"
+        assert planner.api_key_env == "ANTHROPIC_API_KEY"
+        assert planner.endpoint is None
+
+    def test_every_route_field_from_the_config_is_replaced(self) -> None:
+        stale = PlannerConfig(model="x", endpoint="nvidia", max_retries=7)
+        planner = planner_from_spec("gemini:gemini-3.5-flash", stale)
+        assert planner.endpoint is None
+        assert planner.backend == "gemini"
+        # Non-route settings are kept.
+        assert planner.max_retries == 7
+
+    def test_an_ollama_spec_keeps_its_tag_and_defaults_the_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("MAK_LOCAL_BASE_URL", raising=False)
+        planner = planner_from_spec("ollama:qwen2.5-coder:14b", PlannerConfig())
+        assert planner.model == "qwen2.5-coder:14b"
+        assert planner.backend == "ollama"
+        assert planner.base_url == "http://localhost:11434"
+
+    def test_a_local_spec_takes_its_url(self) -> None:
+        planner = planner_from_spec(
+            "local:my-model@http://localhost:8000/v1", PlannerConfig()
+        )
+        assert planner.backend == "openai"
+        assert planner.base_url == "http://localhost:8000/v1"
+        assert planner.api_key_env is None
+
+    @pytest.mark.parametrize(
+        "spec",
+        ["claude-opus-5", "anthropic", "anthropic:m@http://h/v1", "nope:model"],
+    )
+    def test_malformed_specs_are_refused(self, spec: str) -> None:
+        with pytest.raises(ConfigError):
+            planner_from_spec(spec, PlannerConfig())
+
+    def test_the_command_line_accepts_it(self) -> None:
+        from mak.__main__ import parse_args
+
+        args = parse_args(["--task", "t", "--planner", "openai:gpt-5.6-sol"])
+        assert args.planner == "openai:gpt-5.6-sol"
+
+    def test_the_planner_key_follows_the_named_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from mak.__main__ import _planner_api_key
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-oai")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
+        config = MakConfig(
+            planner=PlannerConfig(model="claude-lookalike", backend="openai")
+        )
+        assert _planner_api_key(config) == "sk-oai"
 
 
 class TestBuildRegistry:

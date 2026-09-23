@@ -206,10 +206,10 @@ def run_key_setup(
     available = providers_with_keys(state.api_keys)
     if len(available) == 1:
         rec = recommended_planner_for_provider(available[0])
-        state.planner_model = rec
+        state.set_cloud_planner(available[0], rec)
         print_ok(
             console,
-            f"Planner: [bold]{rec}[/bold] [dim](auto-selected — only "
+            f"Planner: [bold]{state.planner_spec()}[/bold] [dim](auto-selected — only "
             f"{PROVIDER_DISPLAY[available[0]]} key set)[/dim]",
         )
     else:
@@ -266,13 +266,16 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
         except (KeyboardInterrupt, EOFError):
             # Default to first recommended
             first_provider = available[0]
-            state.planner_model = recommended_planner_for_provider(first_provider)
+            state.set_cloud_planner(
+                first_provider, recommended_planner_for_provider(first_provider)
+            )
             return
         try:
             idx = int(raw.strip()) - 1
             if 0 <= idx < len(options):
                 full_spec = options[idx][0]
-                state.planner_model = full_spec.split(":")[1]
+                provider, _, model = full_spec.partition(":")
+                state.set_cloud_planner(provider, model)
                 console.print()
                 print_ok(console, f"Planner: [bold]{full_spec}[/bold]")
                 caveat = model_caveat(state.planner_model)

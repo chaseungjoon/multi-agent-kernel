@@ -431,7 +431,9 @@ class TestMode:
         handle_command("/mode cloud", state, _console())
         assert state.selected_models[0].startswith("anthropic:")
         assert state.planner_base_url == ""
-        assert state.planner_backend == ""
+        # The picked provider is recorded, not left to be inferred from the id.
+        assert state.planner_backend == "anthropic"
+        assert state.planner_spec().startswith("anthropic:")
         assert state.mode == MODE_CLOUD
 
     def test_declining_keeps_the_combination_but_sets_the_mode(
@@ -520,10 +522,19 @@ class TestLocalAwareCommands:
         assert state.planner_backend == "ollama"
         assert state.planner_base_url == _URL
 
-    def test_planner_accepts_an_installed_local_model_by_bare_name(self) -> None:
+    def test_planner_rejects_a_bare_local_model_and_names_the_spec(self) -> None:
         state = _local_state()
-        handle_command(f"/planner {_MODEL}", state, _console())
-        assert state.planner_backend == "ollama"
+        console = _console()
+        handle_command(f"/planner {_MODEL}", state, console)
+        assert state.planner_backend == ""
+        assert f"ollama:{_MODEL}" in _output(console)
+
+    def test_planner_rejects_a_prefix_that_is_not_the_runtime_kind(self) -> None:
+        state = _local_state()
+        console = _console()
+        handle_command(f"/planner local:{_MODEL}", state, console)
+        assert state.planner_backend == ""
+        assert "is ollama" in _output(console)
 
     def test_refresh_models_also_refreshes_the_local_runtime(
         self, monkeypatch: pytest.MonkeyPatch

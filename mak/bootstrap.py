@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from mak.agent_runner.adapters.anthropic_api_adapter import AnthropicApiAdapter
@@ -29,7 +30,7 @@ from mak.agent_runner.adapters.ollama_api_adapter import OllamaApiAdapter
 from mak.agent_runner.adapters.openai_api_adapter import OpenAiApiAdapter
 from mak.agent_runner.registry import AdapterRegistry
 from mak.agent_runner.sandbox import SandboxConfig
-from mak.config import AgentConfig, MakConfig, normalize_base_url
+from mak.config import AgentConfig, MakConfig, PlannerConfig, normalize_base_url
 from mak.core.exceptions import AgentError, ConfigError
 from mak.endpoints.agents import resolve_agents
 from mak.endpoints.capabilities import CapabilityCache
@@ -128,6 +129,14 @@ _SPEC_SYNTAX = (
     "ollama:qwen2.5-coder:14b, local:my-model@http://localhost:8000/v1"
 )
 
+# Hosted provider -> the planner backend ``build_planner_llm`` names it by.
+_PROVIDER_TO_PLANNER_BACKEND: dict[str, str] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "gemini": "gemini",
+    "google": "gemini",
+}
+
 # Adapter type -> conventional API-key env var, for resolving the planner's key
 # when the roster does not happen to include that provider.
 DEFAULT_KEY_ENV: dict[str, str] = {
@@ -180,6 +189,69 @@ def _local_agent(provider: str, model: str, url: str, spec: str) -> AgentConfig:
         type=_PROVIDER_TO_LOCAL[provider],
         model=model,
         base_url=normalize_base_url(base_url, where=f"--models entry {spec!r}"),
+    )
+
+
+def planner_from_spec(spec: str, planner: PlannerConfig) -> PlannerConfig:
+    """Point ``planner`` at a ``provider:model[@base_url]`` spec.
+
+    The same grammar and resolution order as ``--models``: a configured
+    endpoint id first, then the built-in hosted providers, then the local
+    ones. Unlike an agent spec the model is required — a planner has no
+    per-provider default, and the provider is named precisely so that one
+    model offered by two services (``anthropic:`` and ``openrouter:``) cannot
+    be routed to the wrong one.
+
+    Every route field is rewritten, not merged: a stale ``base_url`` or
+    ``endpoint`` from the config beside the new route would give the planner
+    two answers to "where does this go".
+    """
+    provider, model, url = _split_spec(spec)
+    if not model:
+        raise ConfigError(
+            f"--planner {spec!r} names no model; write provider:model — "
+            f"e.g. anthropic:claude-opus-5"
+        )
+    cleared = replace(
+        planner, model=model, endpoint=None, backend=None, base_url=None,
+        api_key_env=None,
+    )
+    if provider in _configured_endpoint_ids():
+        if url:
+            raise ConfigError(
+                f"--planner {spec!r} names endpoint {provider!r} and also an "
+                "'@<base_url>'; the endpoint already has an address"
+            )
+        return replace(cleared, endpoint=provider)
+    if provider in _PROVIDER_TO_LOCAL:
+        local = _local_agent(provider, model, url, spec)
+        return replace(
+            cleared,
+            backend="ollama" if provider == "ollama" else "openai",
+            base_url=local.base_url,
+        )
+    if provider in _PROVIDER_TO_API:
+        if url and provider not in _BASE_URL_PROVIDERS:
+            raise ConfigError(
+                f"provider {provider!r} does not take an '@<base_url>'; only "
+                f"{', '.join(sorted(_BASE_URL_PROVIDERS))} do"
+            )
+        backend = _PROVIDER_TO_PLANNER_BACKEND[provider]
+        if url:
+            # A gateway: the real OpenAI key is not forwarded to it unless
+            # named, the same rule an ``openai:<model>@<url>`` agent follows.
+            return replace(
+                cleared,
+                backend=backend,
+                base_url=normalize_base_url(url, where=f"--planner {spec!r}"),
+            )
+        return replace(
+            cleared, backend=backend, api_key_env=_PROVIDER_TO_API[provider][1]
+        )
+    known = ", ".join(sorted({*SUPPORTED_PROVIDERS, *_configured_endpoint_ids()}))
+    raise ConfigError(
+        f"--planner: unknown endpoint or provider {provider!r}; MAK knows "
+        f"{known} — write provider:model[@base_url]"
     )
 
 

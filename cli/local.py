@@ -290,15 +290,14 @@ def apply_local_planner(state: CliState, model: str) -> None:
         "ollama" if state.local_kind == KIND_OLLAMA else "openai"
     )
     state.planner_base_url = state.local_base_url
+    state.planner_endpoint_id = ""
     if state.mode == MODE_HYBRID:
         state.mode = MODE_LOCAL
 
 
-def apply_cloud_planner(state: CliState, model: str) -> None:
+def apply_cloud_planner(state: CliState, provider: str, model: str) -> None:
     """Keep a hosted planner beside local agents — mode ``hybrid``."""
-    state.planner_model = model
-    state.planner_backend = ""
-    state.planner_base_url = ""
+    state.set_cloud_planner(provider, model)
     state.mode = MODE_HYBRID
 
 
@@ -672,7 +671,7 @@ def run_wizard(state: CliState, console: Console) -> bool:
 
     console.print()
     console.print(f"  [dim]agents [/dim] {', '.join(state.selected_models)}")
-    console.print(f"  [dim]planner[/dim] {state.planner_model}")
+    console.print(f"  [dim]planner[/dim] {state.planner_spec()}")
     console.print(f"  [dim]mode   [/dim] {state.mode}")
     console.print()
     if _yes(console, "Save this setup to ./mak.yaml?"):
@@ -807,12 +806,14 @@ def _choose_planner(state: CliState, console: Console, agent_model: str) -> None
     options = [
         f"the same local model ({agent_model})",
         "another local model",
-        f"a cloud planner ({state.planner_model}) — hybrid mode",
+        f"a cloud planner ({state.planner_spec()}) — hybrid mode",
     ]
     default = 2 if (entry is not None and entry.is_small() and _any_key(state)) else 0
     choice = _choose(console, options, "Planner", default_index=default)
     if choice == 2 and _any_key(state):
-        apply_cloud_planner(state, state.planner_model)
+        apply_cloud_planner(
+            state, state.planner_cloud_provider(), state.planner_model
+        )
         return
     if choice == 1 and state.local_models:
         index = _choose(console, state.local_models, "Local planner model")
@@ -893,11 +894,13 @@ def _save_config(state: CliState, console: Console) -> None:
 
     agent_type = "ollama_api" if state.local_kind == KIND_OLLAMA else "local_api"
     model = state.selected_models[0].split("@")[0].partition(":")[2]
-    if state.planner_backend:
+    if state.planner_base_url:
         planner_extra = (
             f'  backend: "{state.planner_backend}"\n'
             f'  base_url: "{state.planner_base_url}"\n'
         )
+    elif state.planner_cloud_provider():
+        planner_extra = f'  backend: "{state.planner_cloud_provider()}"\n'
     else:
         planner_extra = ""
     body = _CONFIG_TEMPLATE.format(

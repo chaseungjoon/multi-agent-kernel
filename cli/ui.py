@@ -103,10 +103,8 @@ def print_status(console: Console, state: CliState) -> None:
 
 
 def _planner_display(state: CliState) -> str:
-    """Return the planner line: model, and the route when one is explicit."""
-    if state.planner_endpoint_id:
-        return f"{state.planner_endpoint_id}:{state.planner_model}"
-    return state.planner_model
+    """Return the planner line in the ``provider:model`` form ``/planner`` takes."""
+    return state.planner_spec()
 
 
 def _endpoints_display(state: CliState) -> str:

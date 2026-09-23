@@ -322,7 +322,7 @@ class MakCli:
         # money.
         item("mode", state.mode_display())
         item("model", state.models_display())
-        item("planner", state.planner_model)
+        item("planner", state.planner_spec())
         item("agents", str(state.max_agents))
         item("dir", state.work_dir_display())
         approval_style = (
@@ -360,7 +360,7 @@ class MakCli:
         if avail:
             first = avail[0]
             rec   = recommended_planner_for_provider(first)
-            state.planner_model   = rec
+            state.set_cloud_planner(first, rec)
             state.selected_models = [f"{first}:{rec}"]
         return state
 

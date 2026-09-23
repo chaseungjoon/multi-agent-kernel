@@ -14,6 +14,41 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.9.2b] — 2026-09-23
+
+### Changed
+- **`/planner` now takes `<provider>:<model>`, the same format as `/models`.**
+  Agents were chosen as `/models anthropic:claude-opus-5` but the planner as
+  `/planner claude-opus-5`. Besides the mismatch, a bare id was ambiguous once
+  one model could be served by several providers (e.g. `anthropic:` directly
+  or through an `openrouter:` endpoint). The provider is now required and
+  recorded, so the planner goes to the route, key and bill that were named.
+  `/planner` accepts `anthropic|openai|gemini:<model>`, `<endpoint>:<model>`,
+  `ollama:<model>` and `local:<model>[@url]`. A hosted model is checked against
+  that provider's catalog, and a bare id is refused with the matching specs
+  suggested (`did you mean anthropic:claude-opus-5?`).
+- The planner is shown as `provider:model` everywhere: `/status`, the bottom
+  toolbar, the `/planner` list and Tab completion, the setup wizard, and the
+  `/local` and `/mode` pickers.
+
+### Added
+- **`mak run --planner PROVIDER:MODEL[@URL]`** sets the planner from the
+  command line with the same format as `--models` (the model is required),
+  replacing the config's planner route for that run. Before this, the planner
+  could only be changed by editing the config file.
+
+### Fixed
+- A planner moved off an endpoint (e.g. from `openrouter:…` to a hosted or
+  local model) no longer keeps routing through that endpoint. The old
+  endpoint route was never cleared.
+- A cloud planner chosen in the app no longer fails validation when the config
+  file names a `planner.endpoint`. The app's choice now replaces it.
+- The "no longer offered" warning matches on provider and model, so a model
+  retired by one provider no longer flags the same id served by another.
+- `/refresh-models` no longer hangs when a saved local host is unreachable.
+  Listing a local runtime is now capped at 2 seconds (it used the 60-second
+  generation timeout), and the Gemini model-list fetch now has a timeout.
+
 ## [0.9.1b] — 2026-09-22
 
 ### Fixed

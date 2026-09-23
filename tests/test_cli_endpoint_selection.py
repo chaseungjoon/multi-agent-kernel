@@ -170,6 +170,51 @@ class TestPlannerSelection:
         assert state.planner_endpoint_id == ""
 
 
+class TestPlannerProviderSpec:
+    """``/planner`` takes ``provider:model``, the same grammar as ``/models``."""
+
+    def test_a_cloud_spec_records_the_provider(self, state: CliState) -> None:
+        state.api_keys["ANTHROPIC_API_KEY"] = "sk-ant"
+        out = _run("/planner anthropic:claude-opus-5", state)
+        assert state.planner_model == "claude-opus-5"
+        assert state.planner_backend == "anthropic"
+        assert state.planner_spec() == "anthropic:claude-opus-5"
+        assert "Planner: anthropic:claude-opus-5" in out
+
+    def test_a_bare_model_is_refused_naming_the_spec(self, state: CliState) -> None:
+        state.api_keys["ANTHROPIC_API_KEY"] = "sk-ant"
+        state.planner_model = "claude-sonnet-5"
+        out = _run("/planner claude-opus-5", state)
+        assert state.planner_model == "claude-sonnet-5"
+        assert "anthropic:claude-opus-5" in out
+
+    def test_a_model_from_another_provider_is_refused(
+        self, state: CliState
+    ) -> None:
+        state.api_keys["OPENAI_API_KEY"] = "sk-oai"
+        out = _run("/planner openai:claude-opus-5", state)
+        assert state.planner_backend == ""
+        assert "Unknown model: openai:claude-opus-5" in out
+
+    def test_the_same_model_on_two_providers_routes_where_named(
+        self, state: CliState, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        save_user_endpoints((_endpoint(),))
+        monkeypatch.setenv("NV_KEY", "sk-nv")
+        state.api_keys["ANTHROPIC_API_KEY"] = "sk-ant"
+        _run("/planner nvidia-work:claude-opus-5", state)
+        assert state.planner_spec() == "nvidia-work:claude-opus-5"
+        _run("/planner anthropic:claude-opus-5", state)
+        # The endpoint route must not survive beside the provider just chosen.
+        assert state.planner_endpoint_id == ""
+        assert state.planner_spec() == "anthropic:claude-opus-5"
+
+    def test_the_status_line_shows_the_spec(self, state: CliState) -> None:
+        state.api_keys["ANTHROPIC_API_KEY"] = "sk-ant"
+        _run("/planner anthropic:claude-opus-5", state)
+        assert "anthropic:claude-opus-5" in _run("/status", state)
+
+
 class TestPlannerKeyResolution:
     def test_the_endpoint_credential_is_authoritative(
         self, state: CliState, monkeypatch: pytest.MonkeyPatch
@@ -192,6 +237,15 @@ class TestPlannerKeyResolution:
         state.planner_endpoint_id = "vllm"
         state.api_keys = {"OPENAI_API_KEY": "sk-openai"}
         assert _resolve_planner_api_key(state) is None
+
+    def test_a_recorded_provider_beats_the_model_prefix(
+        self, state: CliState
+    ) -> None:
+        from cli.runner import _resolve_planner_api_key
+
+        state.api_keys = {"ANTHROPIC_API_KEY": "sk-ant", "OPENAI_API_KEY": "sk-oai"}
+        state.set_cloud_planner("openai", "claude-lookalike")
+        assert _resolve_planner_api_key(state) == "sk-oai"
 
     def test_without_an_endpoint_the_prefix_still_works(
         self, state: CliState

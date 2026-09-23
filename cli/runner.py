@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from cli.core.state import CliState
+from mak.models.catalog import PROVIDER_KEY_ENV
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mak.config import MakConfig
@@ -82,6 +83,9 @@ def _resolve_planner_api_key(state: CliState) -> str | None:
         return _endpoint_planner_key(state)
     if state.planner_backend == "ollama" or state.planner_base_url:
         return None
+    provider = state.planner_cloud_provider()
+    if provider:
+        return state.api_keys.get(PROVIDER_KEY_ENV[provider])
     model = state.planner_model.lower()
     if model.startswith("claude"):
         return state.api_keys.get("ANTHROPIC_API_KEY")
@@ -146,7 +150,11 @@ def build_session(task: str, state: CliState) -> Session:
             # An endpoint decides the route on its own, so the legacy pair is
             # cleared rather than merged — carrying both would leave two
             # answers to "where does the planner's request go".
-            endpoint=state.planner_endpoint_id or config.planner.endpoint,
+            # A route the user picked in-session (a backend) replaces the
+            # config's endpoint too, or the two would be rejected together.
+            endpoint=state.planner_endpoint_id or (
+                None if state.planner_backend else config.planner.endpoint
+            ),
             backend=(
                 None
                 if state.planner_endpoint_id
@@ -170,6 +178,7 @@ def build_session(task: str, state: CliState) -> Session:
         task=task,
         work_dir=state.work_dir or ".",
         models=state.selected_models or None,
+        planner=None,
         max_agents=state.max_agents,
         agent=None,
         no_review=True,

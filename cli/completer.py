@@ -287,15 +287,16 @@ class MakCompleter(Completer):
             for m in all_models():
                 if m.provider != provider:
                     continue
-                if not m.model_id.startswith(partial):
+                spec = f"{provider}:{m.model_id}"
+                if not spec.startswith(partial):
                     continue
                 warn     = " — ⚠ not recommended" if not m.planner_ok else ""
                 key_note = "" if has_key else " — no API key"
                 results.append(
                     Completion(
-                        m.model_id,
+                        spec,
                         start_position=-len(partial),
-                        display=m.model_id,
+                        display=spec,
                         display_meta=PROVIDER_DISPLAY[provider] + warn + key_note,
                     )
                 )

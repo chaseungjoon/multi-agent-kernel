@@ -443,54 +443,100 @@ def _cmd_config(args: list[str], state: CliState, console: Console) -> None:
 
 
 def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
+    """Set the planner from a ``provider:model[@url]`` spec — ``/models``' grammar.
+
+    The provider is required, never inferred from the model id: one model can
+    be offered by several providers (``anthropic:`` and an ``openrouter:``
+    endpoint), and the planner must go where the user said.
+    """
     if not args:
         _list_planner_models(state, console)
         return
 
     raw = args[0]
+    provider, _, model = raw.partition(":")
+    provider = provider.lower()
     configured = _configured_endpoints()
-    endpoint = configured.get(raw.split(":")[0].lower())
+    endpoint = configured.get(provider)
     if endpoint is not None:
         _set_endpoint_planner(raw, endpoint, state, console)
         return
     # A local model is not in the catalog by construction (mak/local's whole
     # premise is that the running server is the authority), so the catalog
     # lookup below must be skipped for one rather than rejecting it.
-    if raw.startswith(_LOCAL_SPEC_PREFIXES) or _is_installed_locally(raw, state):
+    if provider in _LOCAL_PROVIDERS:
         _set_local_planner(raw, state, console)
         return
+    if provider in _KEY_ENV:
+        _set_cloud_planner(provider, model, state, console)
+        return
+    # Not a provider. Checked against the whole argument, not the text before
+    # its first colon: an Ollama tag (``qwen2.5-coder:14b``) has one of its own.
+    candidates = _planner_specs_for_model(raw, state)
+    if candidates:
+        print_error(
+            console,
+            f"/planner takes provider:model, got '{raw}' — did you mean "
+            f"{' or '.join(candidates)}?",
+        )
+        return
+    known = ", ".join(sorted({*_KEY_ENV, *_LOCAL_PROVIDERS, *configured}))
+    print_error(
+        console,
+        f"Unknown endpoint or provider: {provider}  "
+        f"[dim]— /planner takes provider:model; known: {known}. "
+        "'/endpoint add' sets up a new one.[/dim]",
+    )
 
-    model_id = raw
-    if ":" in model_id:
-        model_id = model_id.split(":", 1)[1]
 
-    model_info = next((m for m in all_models() if m.model_id == model_id), None)
+def _planner_specs_for_model(model_id: str, state: CliState) -> list[str]:
+    """Return every ``provider:model`` spec that offers ``model_id``."""
+    specs = [
+        f"{m.provider}:{m.model_id}" for m in all_models() if m.model_id == model_id
+    ]
+    if model_id in state.local_models:
+        specs.append(f"{state.local_provider()}:{model_id}")
+    return specs
+
+
+def _set_cloud_planner(
+    provider: str, model_id: str, state: CliState, console: Console
+) -> None:
+    """Point the planner at a built-in hosted provider's model."""
+    spec = f"{provider}:{model_id}"
+    if not model_id:
+        print_error(
+            console, f"'{provider}:' names no model — write {provider}:<model>."
+        )
+        return
+    model_info = next(
+        (m for m in models_for_provider(provider) if m.model_id == model_id), None
+    )
     if model_info is None:
         print_error(
             console,
-            f"Unknown model: {model_id} — run [bold]/planner[/bold] to list models.",
+            f"Unknown model: {spec} — run [bold]/planner[/bold] to list models.",
         )
         return
 
-    if not state.api_keys.get(model_info.api_key_env, "").strip():
+    if not state.api_keys.get(_KEY_ENV[provider], "").strip():
         print_error(
             console,
-            f"No API key for {model_info.provider} — "
-            "run [bold]/apikey[/bold] to add one.",
+            f"No API key for {provider} — run [bold]/apikey[/bold] to add one.",
         )
         return
 
     if state.mode == MODE_LOCAL:
         # A hosted planner beside local agents is hybrid, by definition.
         state.mode = MODE_HYBRID
-    apply_cloud_planner(state, model_id)
+    apply_cloud_planner(state, provider, model_id)
     if not model_info.planner_ok:
         print_warn(
             console,
-            f"Planner: {model_id} — may struggle with complex task decomposition.",
+            f"Planner: {spec} — may struggle with complex task decomposition.",
         )
     else:
-        print_ok(console, f"Planner: {model_id}")
+        print_ok(console, f"Planner: {spec}")
     caveat = model_caveat(model_id)
     if caveat:
         print_warn(console, caveat)
@@ -536,21 +582,19 @@ def _set_endpoint_planner(
         print_warn(console, f"Planner quality for {model}: {note}.")
 
 
-def _is_installed_locally(model: str, state: CliState) -> bool:
-    """Whether ``model`` is one the configured local runtime reported."""
-    return state.has_local_runtime() and model in state.local_models
-
-
 def _set_local_planner(raw: str, state: CliState, console: Console) -> None:
     """Point the planner at a local model, taking the endpoint from state/spec."""
     spec, _, url = raw.partition("@")
-    is_prefixed = spec.startswith(_LOCAL_SPEC_PREFIXES)
-    model = spec.partition(":")[2] if is_prefixed else spec
+    provider, _, model = spec.partition(":")
+    provider = provider.lower()
+    if not model:
+        print_error(console, f"'{raw}' names no model — write {provider}:<model>.")
+        return
     if url:
         activate_host(
             state,
             url.rstrip("/"),
-            KIND_OLLAMA if spec.startswith("ollama:") else KIND_OPENAI_COMPATIBLE,
+            KIND_OLLAMA if provider == "ollama" else KIND_OPENAI_COMPATIBLE,
         )
     if not state.has_local_runtime():
         print_error(
@@ -559,8 +603,20 @@ def _set_local_planner(raw: str, state: CliState, console: Console) -> None:
             "run [bold]/local[/bold] first.",
         )
         return
+    if provider != state.local_provider():
+        # The prefix picks the wire protocol; honouring the runtime's kind over
+        # what the user wrote would silently plan through a different client.
+        print_error(
+            console,
+            f"{raw} names {provider}, but the runtime at {state.local_base_url} "
+            f"is {state.local_provider()} — write {state.local_provider()}:{model}.",
+        )
+        return
     apply_local_planner(state, model)
-    print_ok(console, f"Planner: {model}  [dim]at {state.local_base_url}[/dim]")
+    print_ok(
+        console,
+        f"Planner: {state.planner_spec()}  [dim]at {state.local_base_url}[/dim]",
+    )
 
 
 def _cmd_mode(args: list[str], state: CliState, console: Console) -> None:
@@ -681,7 +737,7 @@ def _reconcile_with_mode(mode: str, state: CliState, console: Console) -> None:
         f"{_where(want_agents)} agents. Currently:[/dim]"
     )
     console.print(
-        f"    [dim]planner[/dim] {state.planner_model}  "
+        f"    [dim]planner[/dim] {state.planner_spec()}  "
         f"[dim]({_where(_planner_is_local(state))})[/dim]"
     )
     console.print(
@@ -711,7 +767,7 @@ def _reconcile_with_mode(mode: str, state: CliState, console: Console) -> None:
     # apply_local_planner → local); the user asked for this one explicitly.
     state.mode = mode
     console.print(
-        f"\n  [dim]planner[/dim] {state.planner_model}   "
+        f"\n  [dim]planner[/dim] {state.planner_spec()}   "
         f"[dim]agents[/dim] {state.models_display()}"
     )
 
@@ -795,7 +851,7 @@ def _pick_planner(local: bool, state: CliState, console: Console) -> None:
     if local:
         labels = [f"{name}  [dim]{h.host_display()}[/dim]" for h, name in local_opts]
     else:
-        labels = [model for _provider, model in cloud_opts]
+        labels = [f"{provider}:{model}" for provider, model in cloud_opts]
     if not labels:
         where = (
             "No local models known — /local url or /refresh-models first."
@@ -817,7 +873,8 @@ def _pick_planner(local: bool, state: CliState, console: Console) -> None:
         activate_host(state, host.url, host.kind)
         apply_local_planner(state, name)
     else:
-        apply_cloud_planner(state, cloud_opts[picks[0]][1])
+        provider, model = cloud_opts[picks[0]]
+        apply_cloud_planner(state, provider, model)
 
 
 def _mode_requirement(mode: str) -> str:
@@ -843,7 +900,8 @@ def _mode_blocker(mode: str, state: CliState) -> str | None:
 
 def _list_planner_models(state: CliState, console: Console) -> None:
     console.print(
-        "\n  [dim]Usage: /planner <model>  —  models below claude-sonnet-4-6 capability"
+        "\n  [dim]Usage: /planner provider:model  —  models below claude-sonnet-4-6"
+        " capability"
         " are not recommended.[/dim]"
     )
     _print_local_group(
@@ -860,8 +918,10 @@ def _list_planner_models(state: CliState, console: Console) -> None:
             + ("" if has_key else " [dim]— no API key[/dim]")
         )
         for m in models_for_provider(provider):
-            is_planner = m.model_id == state.planner_model
-            active = "[green]●[/green]" if is_planner else "[dim]○[/dim]"
+            spec = f"{provider}:{m.model_id}"
+            active = (
+                "[green]●[/green]" if spec == state.planner_spec() else "[dim]○[/dim]"
+            )
             if m.retired:
                 tag = "  [yellow]⚠ no longer offered[/yellow]"
             elif m.planner_ok:
@@ -869,9 +929,9 @@ def _list_planner_models(state: CliState, console: Console) -> None:
             else:
                 tag = "  [yellow]⚠ not recommended[/yellow]"
             if has_key:
-                console.print(f"    {active} {m.model_id}{tag}")
+                console.print(f"    {active} {spec}{tag}")
             else:
-                console.print(f"    [dim]○ {m.model_id}[/dim]")
+                console.print(f"    [dim]○ {spec}[/dim]")
     _print_endpoint_model_groups(state, console, for_planner=True)
     console.print()
 
@@ -981,15 +1041,24 @@ def _refresh_local(state: CliState, console: Console) -> None:
 
 
 def _warn_retired_selections(state: CliState, console: Console) -> None:
-    retired = {m.model_id for m in all_models() if m.retired}
+    # Keyed by provider as well as model: the same id retired by one provider
+    # may still be offered by another.
+    retired = {f"{m.provider}:{m.model_id}" for m in all_models() if m.retired}
     in_use = [
         spec for spec in state.selected_models
-        if spec.partition(":")[2] in retired
+        if spec.partition("@")[0] in retired
     ]
-    if state.planner_model in retired:
+    planner = state.planner_spec()
+    if ":" not in planner:
+        # A planner with no recorded route (set before providers were recorded)
+        # can only be matched by model id.
+        planner_retired = any(spec.endswith(f":{planner}") for spec in retired)
+    else:
+        planner_retired = planner in retired
+    if planner_retired:
         print_warn(
             console,
-            f"Planner {state.planner_model} is no longer offered by its provider — "
+            f"Planner {state.planner_spec()} is no longer offered by its provider — "
             "still selected; use [bold]/planner[/bold] to change it.",
         )
     for spec in in_use:

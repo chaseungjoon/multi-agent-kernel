@@ -3640,8 +3640,8 @@ shell over the composition root, split into testable functions:
   path warns on stderr when it supplies anything (§11).
 - `parse_args(argv)` — flags: `--task` (optional; **required unless `--recover`**,
   enforced in `main`), `--config` (default: auto-discover via `discover_config_path()`,
-  §11), `--work-dir`, `--models` (roster override, see below), `--max-agents`
-  (concurrency override), `--agent` (override the default agent type), `--no-review`,
+  §11), `--work-dir`, `--models` (roster override, see below), `--planner`
+  (planner route override, see below), `--max-agents` (concurrency override), `--agent` (override the default agent type), `--no-review`,
   `--recover` (resume a crashed session from `task_graph.json`, §10), `--sandbox`,
   `-v/-vv`.
 - `build_session(args, config, sandbox)` — assembles the `Session` and all its
@@ -3651,13 +3651,13 @@ shell over the composition root, split into testable functions:
   `TestRunner`, the default agent, and the healthy `agent_pool`). It runs the startup
   **health preflight** here (§7.2).
 - `main(argv, *, session_builder=build_session)` — loads env + config, applies the CLI
-  overrides (work-dir, roster, concurrency), validates, **anchors `mak_dir` under
+  overrides (work-dir, roster, planner, concurrency), validates, **anchors `mak_dir` under
   `work_dir` and warns on stderr if a stale pre-anchor `.mak` sits next to the
   shell** (`anchor_mak_dir`/`stale_mak_dir`, Wave 17, §11), builds the session, drives
   **initialize → plan → run → cascade loop → teardown**, and maps domain errors to
   friendly messages and exit codes: `0` success, `1` for an aborted review / planner
   failure / failed-or-blocked run / failing tests, `2` for a config error (including
-  a bad `--models` provider or `--max-agents < 1`) or a missing Docker daemon under
+  a bad `--models` or `--planner` spec, or `--max-agents < 1`) or a missing Docker daemon under
   `--sandbox`. The `session_builder` seam lets tests drive `main` end-to-end with a
   fully-faked session. The end-of-run summary counts `completed / failed / skipped /
   blocked` (§10) and prints each failed task's reason and the `skipped`/`blocked`
@@ -3754,11 +3754,37 @@ required** — because `main` rewrites the loaded `MakConfig` (a frozen dataclas
   session doesn't accumulate idle processes); it does not bound live concurrency.
   `N < 1` is a `ConfigError`.
 
-- **Planner key fallback.** The planner has its own model (`planner.model`, default a
-  Claude model). `_planner_api_key` first looks for that provider's `api_key_env`
-  among the roster, then falls back to `bootstrap.DEFAULT_KEY_ENV` — so an
-  OpenAI-only `--models openai` run still resolves the Claude planner's
-  `ANTHROPIC_API_KEY` from the environment.
+- **`--planner PROVIDER:MODEL[@URL]`** overrides the config's planner route with
+  the **same grammar as `--models`**, so one spec form names every model MAK runs.
+  `bootstrap.planner_from_spec(spec, planner)` resolves the provider in the same
+  order as `agents_from_specs` — a configured endpoint id, then the hosted
+  providers, then `ollama`/`local` — and returns a new `PlannerConfig`:
+
+  | Spec | `endpoint` | `backend` | `base_url` | `api_key_env` |
+  |---|---|---|---|---|
+  | `openrouter:anthropic/claude-opus-5` (a configured endpoint) | `openrouter` | — | — | — |
+  | `anthropic:claude-opus-5` | — | `anthropic` | — | `ANTHROPIC_API_KEY` |
+  | `openai:gpt-5.6-sol@https://gw/v1` (a gateway) | — | `openai` | the URL | — |
+  | `ollama:qwen2.5-coder:14b[@url]` | — | `ollama` | the URL, else `MAK_LOCAL_BASE_URL`, else Ollama's default | — |
+  | `local:my-model@url` | — | `openai` | the URL (required) | — |
+
+  Two differences from an agent spec, both deliberate. The **model is required**:
+  a planner has no per-provider default. And **every route field is rewritten**,
+  not merged: a stale `endpoint` or `base_url` from the config beside the new
+  route would give the planner two answers to "where does this go", which
+  `PlannerConfig` validation rejects anyway. Non-route settings (`max_retries`,
+  `strategy`, …) are kept. The reason the provider is mandatory is that **one
+  model id can be served by more than one provider** — `anthropic:claude-opus-5`
+  and `openrouter:anthropic/claude-opus-5` are different routes, different keys
+  and different bills — so the planner is never routed by guessing from the id.
+- **Planner key resolution.** `_planner_api_key` reads, in order: the named
+  endpoint's credential; `planner.api_key_env`; then, when `planner.backend` names
+  a hosted provider (`anthropic`/`openai`/`gemini`) with no `base_url`, that
+  provider's conventional variable from `bootstrap.DEFAULT_KEY_ENV` (the model id
+  is not consulted). Only a config with none of these falls back to the legacy
+  model-prefix inference (`claude*`, `gemini*`, `gpt*`/`o1`/`o3`/`o4`) — first
+  among the roster's `api_key_env`s, then `DEFAULT_KEY_ENV` — so an OpenAI-only
+  `--models openai` run still resolves the Claude planner's `ANTHROPIC_API_KEY`.
 
 Examples:
 
@@ -3769,11 +3795,15 @@ python -m mak --task "..." --work-dir ./proj \
 
 # One provider, five concurrent workers:
 python -m mak --task "..." --work-dir ./proj --models anthropic --max-agents 5
+
+# Local agents, planned by a hosted model reached through OpenRouter:
+python -m mak --task "..." --work-dir ./proj \
+  --models ollama:qwen2.5-coder:14b --planner openrouter:anthropic/claude-opus-5
 ```
 
 To make a roster permanent instead, edit the `agents:` list in `mak/config.yaml`; the
 flags simply override it for a single run. Agent and planner backends are otherwise
-selected entirely by the config file.
+selected entirely by the config file (`agents:` and `planner:`).
 
 ### 12.1.1 Using a local CLI agent (`claude_code` / `codex` / `copilot`)
 
@@ -3923,7 +3953,7 @@ dumps.
 | Command | Description |
 |---|---|
 | `/models [provider:model …]` | Select agent models (same `provider:model` spec as `--models`); in local/hybrid mode, bare `/models` lists the runtime's models live instead of the cloud catalog |
-| `/planner [model]` | Switch the planner model; accepts a local model with no catalog lookup and no key check |
+| `/planner [provider:model]` | Switch the planner model, with the same `provider:model[@url]` spec as `/models` and `--planner`. A bare model id is refused, naming every spec that offers it (`did you mean anthropic:claude-opus-5 or openrouter:…?`). A local spec skips the catalog and key checks, but its prefix must match the active runtime's kind |
 | `/refresh-models` | Re-fetch the *cloud* model catalog now, ignoring the refresh schedule (§13) — says so explicitly in local mode, where `/local models` is the equivalent |
 | `/local [sub-command]` | Local-runtime setup — see below (Wave 15) |
 | `/mode [cloud\|local\|hybrid]` | Show or switch how this session gets its models (Wave 15) |
@@ -3937,6 +3967,27 @@ dumps.
 | `/help` | List commands and keyboard shortcuts |
 | `/clear` | Clear the screen and reprint the welcome box |
 | `/exit`, `/quit` | Quit MAK (Ctrl+C / Ctrl+D also work) |
+
+**How the planner's route is held.** `CliState` records the provider the user
+chose, not just the model id: `set_cloud_planner(provider, model)` stores a
+hosted provider as `planner_backend` (and clears `planner_base_url` and
+`planner_endpoint_id`), an endpoint spec sets `planner_endpoint_id`, and a local
+one sets `planner_backend` + `planner_base_url`. Each setter clears the other
+routes, so switching from `openrouter:…` to `anthropic:…` cannot leave the old
+endpoint behind. `planner_spec()` renders whichever route is set back as
+`provider:model[@url]` — the form `/planner` accepts — and it is what `/status`,
+the bottom toolbar, the `/planner` listing, the setup wizard and the retired-model
+warning all display or compare. `planner_cloud_provider()` returns the hosted
+provider (or `""`), which `cli/runner.py::_resolve_planner_api_key` uses to pick
+the key before falling back to guessing from the model id's prefix. The fallback
+only applies to a state with no recorded route, such as `CliState()`'s default
+`claude-opus-5`, which is shown bare. The retired-model warning matches on
+`provider:model` for the same reason: a model one provider has retired may
+still be offered by another.
+
+`/local planner <model>` stays a bare name, just like its sibling `/local use
+<model>`: both work on the active runtime, whose kind already names the
+provider.
 
 ### Mode, `/local`, and `/mode` (Wave 15)
 
@@ -5625,6 +5676,46 @@ built-in three, so a catalog containing third-party endpoint entries breaks
 property. It reproduces on `main` and belongs to the model-catalog surface
 rather than to capability negotiation, so it is recorded as a follow-up instead
 of being folded into this wave.
+
+## Hotfix: `/planner` takes `provider:model` (0.9.2b)
+
+**The problem.** Agents were chosen as `/models <provider>:<model>` but the
+planner as `/planner <model>`. The two surfaces had different grammars, and the
+bare form was ambiguous: once endpoints (Wave 22) meant one model could be served
+by several providers (`anthropic:` directly, or through an `openrouter:`
+endpoint), a bare id could not say which route, key and bill were meant.
+`mak run` had no planner flag at all, so the planner could only be changed by
+editing the config.
+
+**The fix.**
+
+- `/planner` now requires `provider:model[@url]`, resolved in the same order as
+  `/models`: configured endpoint, then hosted provider, then `ollama`/`local`. A
+  hosted model is checked against **that provider's** catalog, so
+  `openai:claude-opus-5` is refused rather than silently routed to Anthropic. A
+  bare id is refused with every matching spec suggested. Because Ollama tags carry
+  their own colon, "bare" is decided by whether the text before the first colon
+  is a known provider, not by whether a colon exists.
+- `CliState` records the chosen provider (`set_cloud_planner`, `planner_spec`,
+  `planner_cloud_provider`; see §12.2), and every planner setter clears the
+  routes it replaces. That also fixes a latent bug: `apply_cloud_planner` and
+  `apply_local_planner` never cleared `planner_endpoint_id`, so a planner moved
+  off an endpoint kept routing through it.
+- `mak run --planner PROVIDER:MODEL[@URL]` (`bootstrap.planner_from_spec`, §12.1).
+  `_planner_api_key` now resolves a hosted `planner.backend`'s conventional key
+  before guessing from the model id.
+- A cloud planner chosen in the app replaces a config-file `planner.endpoint`
+  in `cli/runner.py::build_session`. Before, the two were merged and failed
+  validation together. `/local`'s `mak.yaml` export writes `backend:` without an
+  empty `base_url:` for a cloud planner.
+
+**Tests.** `tests/test_cli_endpoint_selection.py::TestPlannerProviderSpec` covers
+recording the provider, refusing a bare id and a cross-provider id, and one model
+on two providers routing where it was named. `tests/test_bootstrap.py::TestPlannerFromSpec`
+covers every spec form, the refused forms, the `--planner` flag and provider-keyed
+key resolution. Two existing tests changed with the behaviour: a bare local
+planner name is now refused with the `ollama:` spec suggested, and a
+`/mode cloud` re-pick records `anthropic` as the planner backend.
 
 ---
 

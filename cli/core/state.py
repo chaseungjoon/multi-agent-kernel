@@ -20,6 +20,11 @@ _MODE_SUMMARY: dict[str, str] = {
     MODE_HYBRID: "cloud planner + local agents",
 }
 
+# Planner backends that name a built-in hosted provider. "openai" doubles as the
+# client for a local OpenAI-compatible server, which is told apart by its
+# ``planner_base_url``.
+_CLOUD_PLANNER_BACKENDS: frozenset[str] = frozenset({"anthropic", "openai", "gemini"})
+
 
 @dataclass
 class LocalHost:
@@ -90,6 +95,46 @@ class CliState:
     # /status, the toolbar and the completer can name them without re-reading
     # the store on every keystroke.
     endpoint_ids: list[str] = field(default_factory=list)
+
+    def set_cloud_planner(self, provider: str, model: str) -> None:
+        """Point the planner at a built-in hosted provider's model.
+
+        The provider is recorded as the backend rather than left to be inferred
+        from the model id, because one model can be served by more than one
+        provider (``anthropic:`` and an ``openrouter:`` endpoint), and the
+        choice the user made is the one that must be routed.
+        """
+        self.planner_model = model
+        self.planner_backend = provider
+        self.planner_base_url = ""
+        self.planner_endpoint_id = ""
+
+    def planner_cloud_provider(self) -> str:
+        """Return the built-in provider the planner routes to, or '' if none."""
+        if self.planner_endpoint_id or self.planner_base_url:
+            return ""
+        if self.planner_backend in _CLOUD_PLANNER_BACKENDS:
+            return self.planner_backend
+        return ""
+
+    def planner_spec(self) -> str:
+        """Return the planner as ``provider:model`` — the form ``/planner`` takes.
+
+        A planner on a non-active local host carries its ``@url``, exactly as
+        ``/models`` lists such a host's models. A planner with no recorded
+        route (a model id inferred by prefix) is shown bare.
+        """
+        if self.planner_endpoint_id:
+            return f"{self.planner_endpoint_id}:{self.planner_model}"
+        if self.planner_base_url:
+            provider = "ollama" if self.planner_backend == "ollama" else "local"
+            suffix = (
+                "" if self.planner_base_url == self.local_base_url
+                else f"@{self.planner_base_url}"
+            )
+            return f"{provider}:{self.planner_model}{suffix}"
+        provider = self.planner_cloud_provider()
+        return f"{provider}:{self.planner_model}" if provider else self.planner_model
 
     def planner_endpoint_display(self) -> str:
         """Return the planner's endpoint for /status ('inferred' when unset)."""

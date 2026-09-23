@@ -30,6 +30,7 @@ from mak.bootstrap import (
     build_registry,
     default_agent_id,
     healthy_agent_ids,
+    planner_from_spec,
     resolved_agents,
     validate_config,
 )
@@ -164,6 +165,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--planner",
+        default=None,
+        metavar="PROVIDER:MODEL[@URL]",
+        help=(
+            "set the planner model from the command line, overriding the "
+            "config's 'planner' route. Same grammar as --models, but the model "
+            "is required — e.g. --planner anthropic:claude-opus-5, "
+            "--planner openrouter:anthropic/claude-opus-5, "
+            "--planner ollama:qwen2.5-coder:14b"
+        ),
+    )
+    parser.add_argument(
         "--max-agents",
         type=int,
         default=None,
@@ -258,6 +271,15 @@ def planner_endpoint(config: MakConfig) -> ResolvedEndpoint | None:
     return require_endpoint(resolved, config.planner.endpoint, where="planner")
 
 
+# Planner backend naming a hosted provider -> that provider's adapter type,
+# whose conventional key variable ``DEFAULT_KEY_ENV`` holds.
+_HOSTED_BACKENDS: dict[str, str] = {
+    "anthropic": "anthropic_api",
+    "openai": "openai_api",
+    "gemini": "gemini_api",
+}
+
+
 def _planner_api_key(config: MakConfig) -> str | None:
     """Resolve the planner's API key: endpoint, explicit env var, then inference.
 
@@ -276,6 +298,10 @@ def _planner_api_key(config: MakConfig) -> str | None:
         return endpoint.api_key
     if config.planner.api_key_env:
         return os.environ.get(config.planner.api_key_env)
+    if config.planner.base_url is None and config.planner.backend in _HOSTED_BACKENDS:
+        # A named hosted provider decides the key; the model id may be one
+        # several providers serve, so it is not guessed from.
+        return os.environ.get(DEFAULT_KEY_ENV[_HOSTED_BACKENDS[config.planner.backend]])
     model = config.planner.model.lower()
     if model.startswith("claude"):
         backend = "anthropic_api"
@@ -504,6 +530,10 @@ def main(
             )
         if args.models is not None:
             config = replace(config, agents=agents_from_specs(args.models))
+        if args.planner is not None:
+            config = replace(
+                config, planner=planner_from_spec(args.planner, config.planner)
+            )
         if args.max_agents is not None:
             if args.max_agents < 1:
                 raise ConfigError("--max-agents must be at least 1")

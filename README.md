@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.9.1 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.9.2 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -148,7 +148,7 @@ mak
 * `/apikey` - Set api keys of providers
 * `/work-dir <path>` - Set working directory
 * `/models <provider-1>:<model> <provider-2>:<model> ...` - Set agent models
-* `/planner <provider>:<model>` - Set planner model
+* `/planner <provider>:<model>` - Set planner model, same `provider:model` format as `/models` (e.g. `/planner anthropic:claude-opus-5`, `/planner openrouter:anthropic/claude-opus-5`, `/planner ollama:qwen2.5-coder:14b`)
 * `/refresh-models` - Re-fetch the model list from each provider right now
 * `/local` - Overview of this machine's runtimes and connected remote hosts; `/local url <host:port>` connects (and remembers) one (see [Local Models](#local-models))
 * `/mode [cloud|local|hybrid]` - Show or switch how this session gets its models
@@ -176,6 +176,10 @@ mak run --task "your task" --work-dir /path/to/project \
 # Example with claude sonnet 5 X 5 (provider default model)
 mak run --task "your task" --work-dir /path/to/project \
   --models anthropic --max-agents 5
+
+# Example with gpt-5.6 sol agents, planned by claude opus 5
+mak run --task "your task" --work-dir /path/to/project \
+  --models openai:gpt-5.6-sol --planner anthropic:claude-opus-5
 ```
 
 **Command line arguments**
@@ -214,6 +218,11 @@ mak run --task "your task" --work-dir /path/to/project \
 # Local models — no API key needed (see Local Models below)
 --models ollama:qwen2.5-coder:14b
 --models local:my-model@http://localhost:8000/v1
+
+# Set planner model (same provider:model format as --models; model required)
+--planner anthropic:claude-opus-5
+--planner openrouter:anthropic/claude-opus-5
+--planner ollama:qwen2.5-coder:14b
 
 # Choose a custom config file (default: auto-discovered, see below)
 --config /path/to/config.yaml
@@ -291,7 +300,7 @@ mak run --task "your task" --work-dir /path/to/project \
 ```
 
 For a ready-made configuration, run `mak examples local-ollama > mak.yaml`.
-Local agents can also use a cloud planner. See [mak/examples/](mak/examples/)
+Local agents can also use a cloud planner (e.g. `--planner anthropic:claude-opus-5`). See [mak/examples/](mak/examples/)
 for more configurations.
 
 ## Benchmark
