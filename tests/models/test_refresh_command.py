@@ -11,6 +11,7 @@ from cli.completer import COMMANDS
 from cli.core.state import CliState
 from rich.console import Console
 
+from mak.application import PlannerRoute
 from mak.models.providers import ModelFetchError
 from mak.models.registry import ModelRegistry
 from tests.models.test_refresh import FakeSource
@@ -26,10 +27,8 @@ def _console() -> tuple[Console, io.StringIO]:
 def _use_registry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sources: list[FakeSource]
 ) -> ModelRegistry:
-    reg = ModelRegistry(manifest_path_=tmp_path / "models.json", sources=sources)
-    monkeypatch.setattr(commands, "registry", lambda: reg)
-    monkeypatch.setattr(commands, "all_models", reg.all_models)
-    return reg
+    """Return a registry over ``sources``; a test hands it to its ``CliState``."""
+    return ModelRegistry(manifest_path_=tmp_path / "models.json", sources=sources)
 
 
 class TestCommandRegistration:
@@ -39,9 +38,9 @@ class TestCommandRegistration:
     def test_dispatches_and_returns_none(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        _use_registry(monkeypatch, tmp_path, [FakeSource("openai", ["gpt-9"])])
+        reg = _use_registry(monkeypatch, tmp_path, [FakeSource("openai", ["gpt-9"])])
         console, _buf = _console()
-        state = CliState(api_keys=dict(KEYS))
+        state = CliState(model_registry=reg, api_keys=dict(KEYS))
         assert commands.handle_command("/refresh-models", state, console) is None
 
 
@@ -54,7 +53,9 @@ class TestOutput:
         )
         console, buf = _console()
         commands.handle_command(
-            "/refresh-models", CliState(api_keys=dict(KEYS)), console
+            "/refresh-models",
+            CliState(model_registry=reg, api_keys=dict(KEYS)),
+            console,
         )
         out = buf.getvalue()
         assert "+ claude-opus-5" in out
@@ -72,21 +73,25 @@ class TestOutput:
         source._models = ["claude-opus-5"]  # provider drops one
         console, buf = _console()
         commands.handle_command(
-            "/refresh-models", CliState(api_keys=dict(KEYS)), console
+            "/refresh-models",
+            CliState(model_registry=reg, api_keys=dict(KEYS)),
+            console,
         )
         assert "- claude-opus-4-8" in buf.getvalue()
 
     def test_provider_error_is_reported_not_raised(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        _use_registry(
+        reg = _use_registry(
             monkeypatch,
             tmp_path,
             [FakeSource("anthropic", raises=ModelFetchError("offline"))],
         )
         console, buf = _console()
         commands.handle_command(
-            "/refresh-models", CliState(api_keys=dict(KEYS)), console
+            "/refresh-models",
+            CliState(model_registry=reg, api_keys=dict(KEYS)),
+            console,
         )
         out = buf.getvalue()
         assert "keeping cached list" in out
@@ -94,9 +99,9 @@ class TestOutput:
     def test_missing_key_is_skipped(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        _use_registry(monkeypatch, tmp_path, [FakeSource("openai", ["gpt-9"])])
+        reg = _use_registry(monkeypatch, tmp_path, [FakeSource("openai", ["gpt-9"])])
         console, buf = _console()
-        state = CliState(api_keys={"OPENAI_API_KEY": ""})
+        state = CliState(model_registry=reg, api_keys={"OPENAI_API_KEY": ""})
         commands.handle_command("/refresh-models", state, console)
         assert "no API key" in buf.getvalue()
 
@@ -109,7 +114,9 @@ class TestOutput:
         reg.refresh_now(KEYS)  # first pass establishes the baseline
         console, buf = _console()
         commands.handle_command(
-            "/refresh-models", CliState(api_keys=dict(KEYS)), console
+            "/refresh-models",
+            CliState(model_registry=reg, api_keys=dict(KEYS)),
+            console,
         )
         assert "up to date" in buf.getvalue()
 
@@ -136,10 +143,10 @@ class TestOutput:
             return RefreshReport()
 
         monkeypatch.setattr(reg, "refresh_now", capture)
-        monkeypatch.setattr(commands, "registry", lambda: reg)
         console, _buf = _console()
 
-        commands.handle_command("/refresh-models", CliState(), console)
+        state = CliState(model_registry=reg)
+        commands.handle_command("/refresh-models", state, console)
 
         assert "openrouter" in seen
 
@@ -148,11 +155,15 @@ class TestRetiredSelectionWarnings:
     def test_warns_when_active_planner_retired_but_changes_nothing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        _use_registry(
+        reg = _use_registry(
             monkeypatch, tmp_path, [FakeSource("anthropic", ["claude-opus-5"])]
         )
         console, buf = _console()
-        state = CliState(api_keys=dict(KEYS), planner_model="claude-haiku-4-5")
+        state = CliState(
+            model_registry=reg,
+            api_keys=dict(KEYS),
+            planner=PlannerRoute.hosted("anthropic", "claude-haiku-4-5"),
+        )
         commands.handle_command("/refresh-models", state, console)
 
         assert "no longer offered" in buf.getvalue()
@@ -162,11 +173,11 @@ class TestRetiredSelectionWarnings:
     def test_warns_when_active_agent_model_retired(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        _use_registry(
+        reg = _use_registry(
             monkeypatch, tmp_path, [FakeSource("anthropic", ["claude-opus-5"])]
         )
         console, buf = _console()
-        state = CliState(
+        state = CliState(model_registry=reg, 
             api_keys=dict(KEYS),
             selected_models=["anthropic:claude-sonnet-4-6"],
         )
@@ -178,13 +189,13 @@ class TestRetiredSelectionWarnings:
     def test_no_warning_when_selections_are_live(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        _use_registry(
+        reg = _use_registry(
             monkeypatch, tmp_path, [FakeSource("anthropic", ["claude-opus-5"])]
         )
         console, buf = _console()
-        state = CliState(
+        state = CliState(model_registry=reg, 
             api_keys=dict(KEYS),
-            planner_model="claude-opus-5",
+            planner=PlannerRoute.hosted("anthropic", "claude-opus-5"),
             selected_models=["anthropic:claude-opus-5"],
         )
         commands.handle_command("/refresh-models", state, console)

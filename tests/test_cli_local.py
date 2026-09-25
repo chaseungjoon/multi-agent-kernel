@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +16,14 @@ import cli.local as local_mod
 import pytest
 from cli.commands import handle_command
 from cli.completer import COMMANDS
+from cli.core.local_seams import LocalSeams
 from cli.core.state import MODE_CLOUD, MODE_HYBRID, MODE_LOCAL, CliState
 from cli.local import cmd_local, run_wizard, spec_for
-from cli.runner import _apply_state_to_config, _resolve_planner_api_key
+from cli.runner import config_for, session_env
 from cli.ui import print_status
 from rich.console import Console
 
+from mak.application import PlannerRoute, resolve_planner_key
 from mak.local import LocalRuntime, OllamaError, OllamaModel, PullProgress
 from mak.local.runtime import KIND_OLLAMA, KIND_OPENAI_COMPATIBLE
 
@@ -89,20 +92,14 @@ def _ollama(models: tuple[str, ...] = (_MODEL,)) -> LocalRuntime:
     )
 
 
-@pytest.fixture(autouse=True)
-def _seams() -> Iterator[None]:
-    yield
-    local_mod.reset_seams()
-
-
 def _install(
     client: FakeClient, runtimes: list[LocalRuntime] | None = None
-) -> FakeClient:
-    local_mod.set_seams(
-        discover_fn=lambda: list(runtimes or []),
+) -> LocalSeams:
+    """Return seams that discover ``runtimes`` and hand out ``client``."""
+    return LocalSeams(
+        discover=lambda: list(runtimes or []),
         client_factory=lambda _url: client,  # type: ignore[arg-type,return-value]
     )
-    return client
 
 
 def _console() -> Console:
@@ -147,10 +144,10 @@ class TestWizard:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _install(FakeClient(), [_ollama()])
+        seams = _install(FakeClient(), [_ollama()])
         # model 1 · planner "same local model" · do not save
         _answers(monkeypatch, ["1", "1", "n"])
-        state = CliState()
+        state = CliState(local_seams=seams)
         console = _console()
 
         assert run_wizard(state, console) is True
@@ -162,18 +159,18 @@ class TestWizard:
         assert state.planner_backend == "ollama"
         assert state.planner_base_url == _URL
         # D13: nothing written without an explicit yes.
-        assert not (tmp_path / "mak.yaml").exists()
+        assert not (tmp_path / ".mak").exists()
 
     def test_saving_writes_a_config_that_loads_and_validates(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _install(FakeClient(), [_ollama()])
+        seams = _install(FakeClient(), [_ollama()])
         _answers(monkeypatch, ["1", "1", "y"])
-        state = CliState()
+        state = CliState(local_seams=seams)
 
         run_wizard(state, _console())
-        written = tmp_path / "mak.yaml"
+        written = tmp_path / ".mak" / "config.yaml"
         assert written.exists()
 
         from mak.bootstrap import validate_config
@@ -188,8 +185,8 @@ class TestWizard:
     def test_nothing_detected_prints_guidance_and_changes_nothing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _install(FakeClient(), [])
-        state = CliState()
+        seams = _install(FakeClient(), [])
+        state = CliState(local_seams=seams)
         console = _console()
 
         assert run_wizard(state, console) is False
@@ -204,10 +201,11 @@ class TestWizard:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        client = _install(FakeClient(models=()), [_ollama(models=())])
+        client = FakeClient(models=())
+        seams = _install(client, [_ollama(models=())])
         # pull suggestion 1 · planner "same" · no save
         _answers(monkeypatch, ["1", "1", "n"])
-        state = CliState()
+        state = CliState(local_seams=seams)
 
         assert run_wizard(state, _console()) is True
         assert client.pulled == ["qwen2.5-coder:7b"]
@@ -217,26 +215,25 @@ class TestWizard:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _install(FakeClient(), [_ollama()])
+        seams = _install(FakeClient(), [_ollama()])
         # model 1 · planner option 3 (cloud) · no save
         _answers(monkeypatch, ["1", "3", "n"])
-        state = CliState(api_keys={"ANTHROPIC_API_KEY": "sk-x"})
+        state = CliState(local_seams=seams, api_keys={"ANTHROPIC_API_KEY": "sk-x"})
 
         run_wizard(state, _console())
         assert state.mode == MODE_HYBRID
-        assert state.planner_model == "claude-opus-5"
-        assert state.planner_backend == ""
+        assert state.planner.spec() == "anthropic:claude-opus-5"
         assert state.planner_base_url == ""
 
     def test_the_context_window_is_reported_before_the_first_run(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        _install(FakeClient(context_length=8192), [_ollama()])
+        seams = _install(FakeClient(context_length=8192), [_ollama()])
         _answers(monkeypatch, ["1", "1", "n"])
         console = _console()
 
-        run_wizard(CliState(), console)
+        run_wizard(CliState(local_seams=seams), console)
         text = _output(console)
         assert "8,192 tokens" in text
         # D11's footgun, made visible before a bad run rather than after one.
@@ -248,47 +245,48 @@ class TestWizard:
 
 class TestSubCommands:
     def test_status_reports_endpoint_version_and_models(self) -> None:
-        _install(FakeClient(loaded=(_MODEL,)))
+        seams = _install(FakeClient(loaded=(_MODEL,)))
         console = _console()
-        cmd_local(["status"], _local_state(), console)
+        cmd_local(["status"], _local_state(local_seams=seams), console)
         text = _output(console)
         assert _URL in text
         assert "0.5.7" in text
         assert _MODEL in text
 
     def test_models_lists_live(self) -> None:
-        _install(FakeClient(models=(_MODEL, "llama3.1:8b")))
-        state = _local_state()
+        seams = _install(FakeClient(models=(_MODEL, "llama3.1:8b")))
+        state = _local_state(local_seams=seams)
         console = _console()
         cmd_local(["models"], state, console)
         assert "llama3.1:8b" in _output(console)
         assert state.local_models == [_MODEL, "llama3.1:8b"]
 
     def test_use_sets_the_agent_roster(self) -> None:
-        _install(FakeClient())
-        state = _local_state()
+        seams = _install(FakeClient())
+        state = _local_state(local_seams=seams)
         cmd_local(["use", _MODEL], state, _console())
         assert state.selected_models == [f"ollama:{_MODEL}@{_URL}"]
 
     def test_use_rejects_a_model_that_is_not_installed(self) -> None:
-        _install(FakeClient())
-        state = _local_state()
+        seams = _install(FakeClient())
+        state = _local_state(local_seams=seams)
         console = _console()
         cmd_local(["use", "nope:7b"], state, console)
         assert "/local pull nope:7b" in _output(console)
         assert state.selected_models == []
 
     def test_planner_sets_backend_and_endpoint(self) -> None:
-        _install(FakeClient())
-        state = _local_state()
+        seams = _install(FakeClient())
+        state = _local_state(local_seams=seams)
         cmd_local(["planner", _MODEL], state, _console())
         assert state.planner_model == _MODEL
         assert state.planner_backend == "ollama"
         assert state.planner_base_url == _URL
 
     def test_pull_reports_success_and_records_the_model(self) -> None:
-        client = _install(FakeClient(models=()))
-        state = _local_state()
+        client = FakeClient(models=())
+        seams = _install(client)
+        state = _local_state(local_seams=seams)
         state.local_models = []
         console = _console()
         cmd_local(["pull", "qwen2.5-coder:7b"], state, console)
@@ -296,22 +294,22 @@ class TestSubCommands:
         assert "qwen2.5-coder:7b" in state.local_models
 
     def test_pull_reports_a_failure_as_one_line(self) -> None:
-        _install(FakeClient(pull_error="model 'nope' not found"))
+        seams = _install(FakeClient(pull_error="model 'nope' not found"))
         console = _console()
-        cmd_local(["pull", "nope"], _local_state(), console)
+        cmd_local(["pull", "nope"], _local_state(local_seams=seams), console)
         assert "not found" in _output(console)
 
     def test_url_rejects_a_non_http_endpoint(self) -> None:
-        _install(FakeClient())
-        state = CliState()
+        seams = _install(FakeClient())
+        state = CliState(local_seams=seams)
         console = _console()
         cmd_local(["url", "ftp://host:1"], state, console)
         assert "http:// or https://" in _output(console)
         assert state.local_base_url == ""
 
     def test_url_accepts_and_probes_a_good_endpoint(self) -> None:
-        _install(FakeClient())
-        state = CliState()
+        seams = _install(FakeClient())
+        state = CliState(local_seams=seams)
         cmd_local(["url", f"{_URL}/"], state, _console())
         assert state.local_base_url == _URL
         assert state.mode == MODE_LOCAL
@@ -320,12 +318,15 @@ class TestSubCommands:
     def test_off_restores_cloud_mode_and_keeps_keys(self) -> None:
         state = _local_state(api_keys={"ANTHROPIC_API_KEY": "sk-x"})
         state.selected_models = [f"ollama:{_MODEL}@{_URL}"]
-        state.planner_backend = "ollama"
+        state.set_local_planner("ollama", _MODEL, _URL)
         cmd_local(["off"], state, _console())
         assert state.mode == MODE_CLOUD
         assert state.local_base_url == ""
         assert state.selected_models == []
-        assert state.planner_backend == ""
+        # A local planner has no route once the runtime is gone: it falls back
+        # to the hosted planner a fresh session picks for the keys present.
+        assert state.planner.kind == "hosted"
+        assert state.planner_backend == "anthropic"
         assert state.api_keys == {"ANTHROPIC_API_KEY": "sk-x"}
 
     @pytest.mark.parametrize(
@@ -337,8 +338,8 @@ class TestSubCommands:
     ) -> None:
         # One red line naming the endpoint, never a traceback, never a crash of
         # the prompt loop.
-        _install(FakeClient(down=True))
-        state = _local_state()
+        seams = _install(FakeClient(down=True))
+        state = _local_state(local_seams=seams)
         before = (state.selected_models[:], state.planner_model)
         console = _console()
         cmd_local(args, state, console)
@@ -424,9 +425,7 @@ class TestMode:
             api_keys={"ANTHROPIC_API_KEY": "sk-x"},
             selected_models=[f"ollama:{_MODEL}@{_URL}"],
         )
-        state.planner_model = _MODEL
-        state.planner_backend = "ollama"
-        state.planner_base_url = _URL
+        state.set_local_planner("ollama", _MODEL, _URL)
         _answers(monkeypatch, ["y", "1", "1"])
         handle_command("/mode cloud", state, _console())
         assert state.selected_models[0].startswith("anthropic:")
@@ -443,8 +442,7 @@ class TestMode:
             api_keys={"ANTHROPIC_API_KEY": "sk-x"},
             selected_models=["anthropic:claude-opus-5"],
         )
-        state.planner_model = _MODEL
-        state.planner_base_url = _URL
+        state.set_local_planner("ollama", _MODEL, _URL)
         state.mode = MODE_CLOUD
         _answers(monkeypatch, ["n"])
         console = _console()
@@ -510,9 +508,9 @@ class TestLocalAwareCommands:
         assert state.selected_models == []
 
     def test_bare_models_lists_the_live_runtime_in_local_mode(self) -> None:
-        _install(FakeClient(models=("only-local:1b",)))
+        seams = _install(FakeClient(models=("only-local:1b",)))
         console = _console()
-        handle_command("/models", _local_state(), console)
+        handle_command("/models", _local_state(local_seams=seams), console)
         assert "only-local:1b" in _output(console)
 
     def test_planner_accepts_a_local_model(self) -> None:
@@ -526,29 +524,27 @@ class TestLocalAwareCommands:
         state = _local_state()
         console = _console()
         handle_command(f"/planner {_MODEL}", state, console)
-        assert state.planner_backend == ""
+        assert state.planner.kind == "hosted"
         assert f"ollama:{_MODEL}" in _output(console)
 
     def test_planner_rejects_a_prefix_that_is_not_the_runtime_kind(self) -> None:
         state = _local_state()
         console = _console()
         handle_command(f"/planner local:{_MODEL}", state, console)
-        assert state.planner_backend == ""
+        assert state.planner.kind == "hosted"
         assert "is ollama" in _output(console)
 
     def test_refresh_models_also_refreshes_the_local_runtime(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import cli.commands as commands_mod
 
         class FakeRegistry:
             def refresh_now(self, _keys: dict[str, str]) -> Any:
                 raise RuntimeError("offline")
 
-        monkeypatch.setattr(commands_mod, "registry", FakeRegistry)
-        _install(FakeClient(models=(_MODEL, "llama3.1:8b")))
+        seams = _install(FakeClient(models=(_MODEL, "llama3.1:8b")))
         # Cloud mode: a runtime named with /local url still gets refreshed.
-        state = _local_state()
+        state = _local_state(local_seams=seams, model_registry=FakeRegistry())
         state.mode = MODE_CLOUD
         console = _console()
         handle_command("/refresh-models", state, console)
@@ -558,15 +554,13 @@ class TestLocalAwareCommands:
     def test_refresh_models_keeps_the_cached_list_when_the_runtime_is_down(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import cli.commands as commands_mod
 
         class FakeRegistry:
             def refresh_now(self, _keys: dict[str, str]) -> Any:
                 raise RuntimeError("offline")
 
-        monkeypatch.setattr(commands_mod, "registry", FakeRegistry)
-        _install(FakeClient(down=True))
-        state = _local_state()
+        seams = _install(FakeClient(down=True))
+        state = _local_state(local_seams=seams, model_registry=FakeRegistry())
         console = _console()
         handle_command("/refresh-models", state, console)
         assert state.local_models == [_MODEL]
@@ -636,48 +630,47 @@ class TestStatusAndThreading:
         assert "runtime" in text
         assert _URL in text
 
-    def test_a_local_roster_threads_into_a_local_config(self) -> None:
-        from mak.config import MakConfig
-
-        state = _local_state()
+    def test_a_local_roster_threads_into_a_local_config(self, tmp_path: Path) -> None:
+        state = _local_state(work_dir=str(tmp_path))
         state.selected_models = [f"ollama:{_MODEL}@{_URL}"]
-        config = _apply_state_to_config(MakConfig(), state)
+        config = config_for(state)
         assert [a.type for a in config.agents] == ["ollama_api"]
         assert config.agents[0].base_url == _URL
 
-    def test_a_hybrid_roster_threads_both(self) -> None:
-        from mak.config import MakConfig
-
-        state = CliState(mode=MODE_HYBRID, local_base_url=_URL)
+    def test_a_hybrid_roster_threads_both(self, tmp_path: Path) -> None:
+        state = CliState(mode=MODE_HYBRID, local_base_url=_URL, work_dir=str(tmp_path))
         state.selected_models = ["anthropic:claude-opus-5", f"ollama:{_MODEL}@{_URL}"]
-        config = _apply_state_to_config(MakConfig(), state)
+        config = config_for(state)
         assert [a.type for a in config.agents] == ["anthropic_api", "ollama_api"]
 
-    def test_a_cloud_roster_is_unchanged(self) -> None:
-        from mak.config import MakConfig
-
-        state = CliState(selected_models=["anthropic:claude-opus-5"])
-        config = _apply_state_to_config(MakConfig(), state)
+    def test_a_cloud_roster_is_unchanged(self, tmp_path: Path) -> None:
+        state = CliState(
+            selected_models=["anthropic:claude-opus-5"], work_dir=str(tmp_path)
+        )
+        config = config_for(state)
         assert [a.type for a in config.agents] == ["anthropic_api"]
         assert config.agents[0].base_url is None
 
-    def test_a_mismatched_roster_is_honored_not_refused(self) -> None:
+    def test_a_mismatched_roster_is_honored_not_refused(self, tmp_path: Path) -> None:
         # /mode offers to fix a mismatch; a user who declined chose it.
-        from mak.config import MakConfig
-
-        state = _local_state(selected_models=["anthropic:claude-opus-5"])
-        config = _apply_state_to_config(MakConfig(), state)
+        state = _local_state(
+            selected_models=["anthropic:claude-opus-5"], work_dir=str(tmp_path)
+        )
+        config = config_for(state)
         assert [a.type for a in config.agents] == ["anthropic_api"]
 
-    def test_a_local_planner_resolves_to_no_api_key(self) -> None:
-        state = _local_state(api_keys={"ANTHROPIC_API_KEY": "sk-real"})
-        state.planner_backend = "ollama"
-        state.planner_base_url = _URL
-        assert _resolve_planner_api_key(state) is None
+    def test_a_local_planner_resolves_to_no_api_key(self, tmp_path: Path) -> None:
+        state = _local_state(
+            api_keys={"ANTHROPIC_API_KEY": "sk-real"}, work_dir=str(tmp_path)
+        )
+        state.planner = PlannerRoute.local("ollama", _MODEL, _URL)
+        assert resolve_planner_key(config_for(state), session_env(state)) is None
 
-    def test_a_cloud_planner_still_resolves_its_key(self) -> None:
-        state = CliState(api_keys={"ANTHROPIC_API_KEY": "sk-real"})
-        assert _resolve_planner_api_key(state) == "sk-real"
+    def test_a_cloud_planner_still_resolves_its_key(self, tmp_path: Path) -> None:
+        state = CliState(
+            api_keys={"ANTHROPIC_API_KEY": "sk-real"}, work_dir=str(tmp_path)
+        )
+        assert resolve_planner_key(config_for(state), session_env(state)) == "sk-real"
 
 
 class TestSpecFor:
@@ -726,10 +719,10 @@ class TestFirstRunSetup:
         monkeypatch.chdir(tmp_path)
         from cli.setup import run_setup
 
-        _install(FakeClient(), [_ollama()])
+        seams = _install(FakeClient(), [_ollama()])
         calls = self._fake_menu(monkeypatch, 1)  # 0-based: Local
         _answers(monkeypatch, ["1", "1", "n"])
-        state = CliState()
+        state = CliState(local_seams=seams)
 
         assert run_setup(state, _console()) is True
         assert state.mode == MODE_LOCAL
@@ -741,12 +734,12 @@ class TestFirstRunSetup:
     ) -> None:
         from cli.setup import run_setup
 
-        _install(FakeClient(down=True), [])
+        seams = _install(FakeClient(down=True), [])
         self._fake_menu(monkeypatch, 1)
         console = _console()
 
         # Guidance, not a failure: the user still reaches the prompt.
-        assert run_setup(CliState(), console) is True
+        assert run_setup(CliState(local_seams=seams), console) is True
         assert "brew install ollama" in _output(console)
 
     def test_choosing_cloud_runs_the_unchanged_key_wizard(
@@ -754,9 +747,9 @@ class TestFirstRunSetup:
     ) -> None:
         from cli.setup import run_setup
 
-        _install(FakeClient(), [])
+        seams = _install(FakeClient(), [])
         calls = self._fake_menu(monkeypatch, 0)  # Cloud
-        state = CliState()
+        state = CliState(local_seams=seams)
 
         assert run_setup(state, _console()) is True
         assert calls["key_setup"] == 1
@@ -769,11 +762,11 @@ class TestFirstRunSetup:
         monkeypatch.chdir(tmp_path)
         from cli.setup import run_setup
 
-        _install(FakeClient(), [_ollama()])
+        seams = _install(FakeClient(), [_ollama()])
         calls = self._fake_menu(monkeypatch, 2)  # Hybrid
         # model 1 · planner option 3 (cloud) · no save
         _answers(monkeypatch, ["1", "3", "n"])
-        state = CliState()
+        state = CliState(local_seams=seams)
 
         assert run_setup(state, _console()) is True
         assert calls["planner_only"] is True
@@ -834,10 +827,10 @@ class TestRememberedHosts:
     def test_url_is_remembered_and_restored_next_session(self) -> None:
         from cli.local import restore_saved_hosts
 
-        _install(FakeClient(models=("remote-a:7b",)))
-        cmd_local(["url", _REMOTE], CliState(), _console())
+        seams = _install(FakeClient(models=("remote-a:7b",)))
+        cmd_local(["url", _REMOTE], CliState(local_seams=seams), _console())
 
-        fresh = CliState()
+        fresh = CliState(local_seams=seams)
         restore_saved_hosts(fresh)
         assert fresh.local_base_url == _REMOTE
         assert fresh.local_models == ["remote-a:7b"]
@@ -846,10 +839,9 @@ class TestRememberedHosts:
     def test_a_second_url_keeps_both_hosts(self) -> None:
         from cli.local import restore_saved_hosts
 
-        state = CliState()
-        _install(FakeClient(models=("remote-a:7b",)))
+        state = CliState(local_seams=_install(FakeClient(models=("remote-a:7b",))))
         cmd_local(["url", _REMOTE], state, _console())
-        _install(FakeClient(models=("other-b:14b",)))
+        state.local_seams = _install(FakeClient(models=("other-b:14b",)))
         cmd_local(["url", _OTHER], state, _console())
 
         fresh = CliState()
@@ -860,18 +852,18 @@ class TestRememberedHosts:
     def test_off_disconnects_but_forget_removes(self) -> None:
         from cli.local import restore_saved_hosts
 
-        state = CliState()
-        _install(FakeClient())
+        seams = _install(FakeClient())
+        state = CliState(local_seams=seams)
         cmd_local(["url", _REMOTE], state, _console())
         cmd_local(["off"], state, _console())
 
-        fresh = CliState()
+        fresh = CliState(local_seams=seams)
         restore_saved_hosts(fresh)
         assert fresh.local_base_url == ""
         assert [h.url for h in fresh.local_hosts] == [_REMOTE]
 
         cmd_local(["forget", _REMOTE], fresh, _console())
-        again = CliState()
+        again = CliState(local_seams=seams)
         restore_saved_hosts(again)
         assert again.local_hosts == []
 
@@ -891,15 +883,16 @@ class TestRememberedHosts:
     ) -> None:
         from cli.core.state import LocalHost
 
-        _install(FakeClient(), [_ollama()])
-        local_mod.set_seams(
-            probe_host_fn=lambda host: (
+        seams = replace(
+            _install(FakeClient(), [_ollama()]),
+            probe_host=lambda host: (
                 _remote_runtime(_REMOTE, ("remote-a:7b",))
                 if host.url == _REMOTE
                 else None
-            )
+            ),
         )
         state = CliState(
+            local_seams=seams,
             local_hosts=[
                 LocalHost(url=_REMOTE, models=["remote-a:7b"]),
                 LocalHost(url=_OTHER, models=["other-b:14b"]),
@@ -945,22 +938,22 @@ class TestRememberedHosts:
     def test_refresh_models_refreshes_inactive_hosts_too(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import cli.commands as commands_mod
         from cli.core.state import LocalHost
 
         class FakeRegistry:
             def refresh_now(self, _keys: dict[str, str]) -> Any:
                 raise RuntimeError("offline")
 
-        monkeypatch.setattr(commands_mod, "registry", FakeRegistry)
-        _install(FakeClient())
-        local_mod.set_seams(
-            probe_host_fn=lambda _host: _remote_runtime(
+        seams = replace(
+            _install(FakeClient()),
+            probe_host=lambda _host: _remote_runtime(
                 _REMOTE, ("remote-a:7b", "remote-new:3b")
-            )
+            ),
         )
         state = _local_state(
-            local_hosts=[LocalHost(url=_REMOTE, models=["remote-a:7b"])]
+            local_seams=seams,
+            model_registry=FakeRegistry(),
+            local_hosts=[LocalHost(url=_REMOTE, models=["remote-a:7b"])],
         )
         console = _console()
         handle_command("/refresh-models", state, console)

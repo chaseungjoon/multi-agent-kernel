@@ -8,13 +8,19 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 as well as the floor: a host-dependent difference (Path.glob's
+        # trailing '**') once stayed red locally while CI stayed green.
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install
         run: |

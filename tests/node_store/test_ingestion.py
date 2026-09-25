@@ -165,7 +165,6 @@ class TestIterSourceFiles:
             ("**/*.py", "**/*.md"),
             ("**/te[sx]t_*.py",),
             ("**/?op.py",),
-            ("src/**",),
             ("nothing/**/*.py",),
         ],
     )
@@ -180,6 +179,26 @@ class TestIterSourceFiles:
         assert iter_source_files(tmp_path, includes, excludes) == _by_glob(
             tmp_path, includes, excludes
         )
+
+    @pytest.mark.parametrize(
+        ("excludes", "expected"),
+        [
+            (
+                (),
+                ["src/deep/inner.py", "src/mod.py", "src/test_a.py", "src/text_b.py"],
+            ),
+            (("**/deep/**", "**/*_b.py"), ["src/mod.py", "src/test_a.py"]),
+        ],
+    )
+    def test_a_trailing_double_star_matches_every_file_below(
+        self, tmp_path: Path, excludes: tuple[str, ...], expected: list[str]
+    ) -> None:
+        # Not compared with Path.glob: its answer for a trailing '**' changed
+        # in Python 3.13 (directories only before, files too after). MAK's
+        # meaning is fixed and host-independent.
+        _tree(tmp_path)
+        found = iter_source_files(tmp_path, ("src/**",), excludes)
+        assert [p.relative_to(tmp_path).as_posix() for p in found] == expected
 
     def test_a_wildcard_does_not_cross_a_separator(self, tmp_path: Path) -> None:
         # The reason fnmatch.translate is unusable here: its '*' spans '/'.

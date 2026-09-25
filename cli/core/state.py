@@ -4,6 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from cli.core.local_seams import LocalSeams
+from mak.application.route import PlannerRoute
+from mak.config import discover_config_path
+from mak.models import ModelRegistry
+
 # How a session gets its models. A first-class field rather than a label,
 # because it decides which surfaces validate against API keys and which against
 # a local runtime — and because ``hybrid`` (cloud planner + local agents) is a
@@ -20,10 +25,10 @@ _MODE_SUMMARY: dict[str, str] = {
     MODE_HYBRID: "cloud planner + local agents",
 }
 
-# Planner backends that name a built-in hosted provider. "openai" doubles as the
-# client for a local OpenAI-compatible server, which is told apart by its
-# ``planner_base_url``.
-_CLOUD_PLANNER_BACKENDS: frozenset[str] = frozenset({"anthropic", "openai", "gemini"})
+
+def _default_planner() -> PlannerRoute:
+    """Return the planner a new session starts with (see ``cli.core.models``)."""
+    return PlannerRoute.hosted("anthropic", "claude-opus-5")
 
 
 @dataclass
@@ -65,15 +70,25 @@ class CliState:
     ``anthropic:claude-sonnet-5`` and a local one
     ``ollama:qwen2.5-coder:14b@http://localhost:11434``, and
     ``agents_from_specs`` parses both by the same rule.
+
+    The planner is **one** :class:`PlannerRoute`. Its four old facets
+    (``planner_model``, ``planner_backend``, ``planner_base_url``,
+    ``planner_endpoint_id``) remain as read-only properties for display code;
+    a setter assigns a whole new route, so no field can be left stale.
+
+    The state also carries the app's services — the ``/local`` seams and the
+    lazily built model registry — because it is the one object the app already
+    passes to every handler; neither lives at module level.
     """
 
     api_keys: dict[str, str] = field(default_factory=dict)
     selected_models: list[str] = field(default_factory=list)
     max_agents: int = 3
     work_dir: str = "."
-    planner_model: str = "claude-opus-5"
-    # Empty string = auto-discover (./mak.yaml → ~/.config/mak/config.yaml →
-    # the packaged default); a non-empty value is an explicit file from /config.
+    planner: PlannerRoute = field(default_factory=_default_planner)
+    # Empty string = auto-discover from the work dir (<work dir>/.mak/config.yaml
+    # → ~/.config/mak/config.yaml → the packaged default); a
+    # non-empty value is an explicit file from /config.
     config_path: str = ""
     no_review: bool = False
     # ── Local runtime (see MODES above) ──────────────────────────────────────
@@ -84,61 +99,98 @@ class CliState:
     # Every host connected to before, remembered across sessions. The active
     # one is the ``local_*`` fields above; its entry here may be stale.
     local_hosts: list[LocalHost] = field(default_factory=list)
-    planner_backend: str = ""     # "" = infer from the model id
-    planner_base_url: str = ""
     # ── Endpoints (Wave 22) ──────────────────────────────────────────────────
-    # The endpoint the planner routes through. When set it is authoritative:
-    # the planner's key comes from that endpoint's credential variable, not
-    # from guessing at the model name's prefix.
-    planner_endpoint_id: str = ""
     # Ids of endpoints this session knows about, in configured order. Held so
     # /status, the toolbar and the completer can name them without re-reading
     # the store on every keystroke.
     endpoint_ids: list[str] = field(default_factory=list)
+    # ── Services (held here, never module-level) ─────────────────────────────
+    local_seams: LocalSeams = field(
+        default_factory=LocalSeams.default, repr=False, compare=False
+    )
+    # Built on first use by ``models()``; a test may inject its own.
+    model_registry: ModelRegistry | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def models(self) -> ModelRegistry:
+        """Return the model registry, reading the catalog on first use."""
+        if self.model_registry is None:
+            self.model_registry = ModelRegistry()
+        return self.model_registry
+
+    def config_file(self) -> Path:
+        """Return the config file this session uses: explicit, or discovered."""
+        if self.config_path:
+            return Path(self.config_path)
+        return discover_config_path(self.work_dir)
+
+    # ── Planner route ────────────────────────────────────────────────────────
 
     def set_cloud_planner(self, provider: str, model: str) -> None:
         """Point the planner at a built-in hosted provider's model.
 
-        The provider is recorded as the backend rather than left to be inferred
-        from the model id, because one model can be served by more than one
-        provider (``anthropic:`` and an ``openrouter:`` endpoint), and the
-        choice the user made is the one that must be routed.
+        The provider is part of the route rather than inferred from the model
+        id, because one model can be served by more than one provider
+        (``anthropic:`` and an ``openrouter:`` endpoint), and the choice the
+        user made is the one that must be routed.
         """
-        self.planner_model = model
-        self.planner_backend = provider
-        self.planner_base_url = ""
-        self.planner_endpoint_id = ""
+        self.planner = PlannerRoute.hosted(provider, model)
+
+    def set_endpoint_planner(self, endpoint_id: str, model: str) -> None:
+        """Point the planner at ``model`` on a configured endpoint."""
+        self.planner = PlannerRoute.endpoint(endpoint_id, model)
+
+    def set_local_planner(self, backend: str, model: str, base_url: str) -> None:
+        """Point the planner at ``model`` on the local runtime at ``base_url``."""
+        self.planner = PlannerRoute.local(backend, model, base_url)
+
+    @property
+    def planner_model(self) -> str:
+        """The planner's model id (read-only; set a route instead)."""
+        return self.planner.model
+
+    @property
+    def planner_backend(self) -> str:
+        """The planner's provider or local backend; '' for an endpoint."""
+        if self.planner.kind == "hosted":
+            return self.planner.provider
+        return self.planner.backend
+
+    @property
+    def planner_base_url(self) -> str:
+        """The planner's base URL, '' when the route has none of its own."""
+        return self.planner.base_url
+
+    @property
+    def planner_endpoint_id(self) -> str:
+        """The endpoint the planner routes through, '' when it names none."""
+        return self.planner.endpoint_id
 
     def planner_cloud_provider(self) -> str:
         """Return the built-in provider the planner routes to, or '' if none."""
-        if self.planner_endpoint_id or self.planner_base_url:
-            return ""
-        if self.planner_backend in _CLOUD_PLANNER_BACKENDS:
-            return self.planner_backend
-        return ""
+        route = self.planner
+        return route.provider if route.kind == "hosted" and not route.base_url else ""
 
     def planner_spec(self) -> str:
         """Return the planner as ``provider:model`` — the form ``/planner`` takes.
 
         A planner on a non-active local host carries its ``@url``, exactly as
-        ``/models`` lists such a host's models. A planner with no recorded
-        route (a model id inferred by prefix) is shown bare.
+        ``/models`` lists such a host's models.
         """
-        if self.planner_endpoint_id:
-            return f"{self.planner_endpoint_id}:{self.planner_model}"
-        if self.planner_base_url:
-            provider = "ollama" if self.planner_backend == "ollama" else "local"
-            suffix = (
-                "" if self.planner_base_url == self.local_base_url
-                else f"@{self.planner_base_url}"
-            )
-            return f"{provider}:{self.planner_model}{suffix}"
-        provider = self.planner_cloud_provider()
-        return f"{provider}:{self.planner_model}" if provider else self.planner_model
+        route = self.planner
+        if route.kind == "local" and route.base_url == self.local_base_url:
+            return f"{route.prefix()}:{route.model}"
+        return route.spec()
 
     def planner_endpoint_display(self) -> str:
-        """Return the planner's endpoint for /status ('inferred' when unset)."""
-        return self.planner_endpoint_id or "inferred from the model id"
+        """Return the planner's route for /status."""
+        route = self.planner
+        if route.kind == "endpoint":
+            return route.endpoint_id
+        if route.kind == "local":
+            return f"local runtime at {route.base_url}"
+        return f"built-in {route.provider}"
 
     def uses_local_agents(self) -> bool:
         """Whether this session's agents run on a local runtime."""

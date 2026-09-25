@@ -337,6 +337,18 @@ class SessionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanProposal:
+    """A validated plan the user has not reviewed yet (``Session.propose_plan``).
+
+    ``subtasks`` is the plan after deterministic validation grounded and
+    augmented it; ``findings`` says what validation changed.
+    """
+
+    subtasks: list[SubTask]
+    findings: list[PlanFinding]
+
+
+@dataclass(frozen=True, slots=True)
 class _Completion:
     """One finished agent call: the bundle that was dispatched and its result."""
 
@@ -1015,18 +1027,8 @@ class Session:
         printer: Callable[[str], None] = print,
     ) -> list[SubTask]:
         """Decompose ``user_task`` with the planner, optionally review, and install."""
-        if self.state is not SessionState.INITIALIZED:
-            raise SessionError(f"cannot plan from state {self.state}")
-        if self._planner is None:
-            raise SessionError("no planner configured; use install_plan() instead")
-        self._objective = user_task
-        decomposed = self._planner.decompose(
-            user_task, self._node_store.list_nodes()
-        )
-        # Ground and augment the plan before review so the reviewer sees the
-        # corrected plan and exactly what validation changed. install_plan()
-        # re-validates (an idempotent no-op on the already-corrected plan).
-        validated, findings = self._validate_subtasks(decomposed)
+        proposal = self.propose_plan(user_task)
+        validated, findings = proposal.subtasks, proposal.findings
         reviewed = validated
         if review:
             reviewed = display_plan_for_review(
@@ -1038,6 +1040,29 @@ class Session:
             # re-validation of an already-corrected plan reports fewer).
             self.last_plan_findings = findings
         return reviewed
+
+    def propose_plan(self, user_task: str) -> PlanProposal:
+        """Decompose and validate ``user_task``; neither review nor install it.
+
+        The public planning entry point for a front end that reviews the plan
+        its own way (the interactive app) before calling :meth:`install_plan`.
+        """
+        if self.state is not SessionState.INITIALIZED:
+            raise SessionError(f"cannot plan from state {self.state}")
+        if self._planner is None:
+            raise SessionError(
+                "no planner is configured for this session; use install_plan() "
+                "instead, or set a planner model with /planner in the app"
+            )
+        self._objective = user_task
+        decomposed = self._planner.decompose(
+            user_task, self._node_store.list_nodes()
+        )
+        # Ground and augment the plan before review so the reviewer sees the
+        # corrected plan and exactly what validation changed. install_plan()
+        # re-validates (an idempotent no-op on the already-corrected plan).
+        subtasks, findings = self._validate_subtasks(decomposed)
+        return PlanProposal(subtasks=subtasks, findings=findings)
 
     def _validate_subtasks(
         self, subtasks: list[SubTask], graph: DepGraph | None = None

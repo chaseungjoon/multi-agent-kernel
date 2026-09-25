@@ -17,7 +17,11 @@ from mak.config import (
     model_caveat,
     normalize_base_url,
     packaged_config_path,
+    project_config_path,
+    seed_config_path,
+    stale_mak_dir,
     user_config_dir,
+    user_config_path,
 )
 from mak.core.exceptions import ConfigError
 
@@ -265,33 +269,73 @@ def test_frozen_dataclasses_are_immutable() -> None:
 
 
 class TestConfigDiscovery:
-    """discover_config_path: ./mak.yaml → user config dir → packaged default."""
+    """discover_config_path: project .mak → user config dir → packaged default."""
 
-    def test_project_config_wins(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "mak.yaml").write_text(_MINIMAL_YAML)
-        assert discover_config_path() == Path("mak.yaml")
-
-    def test_user_config_when_no_project_config(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
+    @pytest.fixture
+    def xdg(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-        user_cfg = tmp_path / "xdg" / "mak" / "config.yaml"
-        user_cfg.parent.mkdir(parents=True)
-        user_cfg.write_text(_MINIMAL_YAML)
-        assert discover_config_path() == user_cfg
+        return tmp_path / "xdg"
 
-    def test_falls_back_to_packaged_default(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    @staticmethod
+    def _write(path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_MINIMAL_YAML)
+        return path
+
+    def test_project_mak_config_wins(self, tmp_path: Path, xdg: Path) -> None:
+        project = tmp_path / "proj"
+        want = self._write(project / ".mak" / "config.yaml")
+        self._write(xdg / "mak" / "config.yaml")
+        assert discover_config_path(project) == want
+
+    def test_user_config_is_second(self, tmp_path: Path, xdg: Path) -> None:
+        project = tmp_path / "proj"
+        project.mkdir()
+        want = self._write(xdg / "mak" / "config.yaml")
+        assert discover_config_path(project) == want
+
+    def test_other_locations_are_not_read(
+        self, tmp_path: Path, xdg: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-xdg"))
-        found = discover_config_path()
+        # Neither a bare mak.yaml in the project nor ~/.mak/config.yaml is a
+        # config location.
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        project = tmp_path / "proj"
+        self._write(project / "mak.yaml")
+        self._write(home / ".mak" / "config.yaml")
+        assert discover_config_path(project) == packaged_config_path()
+
+    def test_defaults_to_the_current_directory(
+        self, tmp_path: Path, xdg: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project = tmp_path / "proj"
+        want = self._write(project / ".mak" / "config.yaml")
+        monkeypatch.chdir(project)
+        assert discover_config_path().resolve() == want.resolve()
+
+    def test_follows_the_work_dir_not_the_cwd(
+        self, tmp_path: Path, xdg: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._write(tmp_path / "launched" / ".mak" / "config.yaml")
+        want = self._write(tmp_path / "edited" / ".mak" / "config.yaml")
+        monkeypatch.chdir(tmp_path / "launched")
+        assert discover_config_path(tmp_path / "edited") == want
+
+    def test_falls_back_to_packaged_default(self, tmp_path: Path, xdg: Path) -> None:
+        found = discover_config_path(tmp_path)
         assert found == packaged_config_path()
         assert found.is_file()  # the packaged default must actually ship
+
+    def test_seed_prefers_the_users_config(self, tmp_path: Path, xdg: Path) -> None:
+        assert user_config_path() is None
+        assert seed_config_path() == packaged_config_path()
+        want = self._write(xdg / "mak" / "config.yaml")
+        assert user_config_path() == want
+        assert seed_config_path() == want
+
+    def test_project_config_path(self, tmp_path: Path) -> None:
+        assert project_config_path(tmp_path) == tmp_path / ".mak" / "config.yaml"
 
     def test_packaged_default_loads(self) -> None:
         cfg = load_config(packaged_config_path())
@@ -594,3 +638,32 @@ class TestNormalizeBaseUrl:
     def test_scheme_without_host_is_rejected(self) -> None:
         with pytest.raises(ConfigError, match="host"):
             normalize_base_url("http:///v1", where="test")
+
+
+class TestStaleMakDir:
+    """A CWD ``.mak`` is reported as orphaned state only if a run wrote it."""
+
+    def _config(self, work_dir: Path) -> MakConfig:
+        return MakConfig(
+            session=SessionConfig(work_dir=str(work_dir)),
+            planner=PlannerConfig(),
+            agents=(AgentConfig(type="test_agent"),),
+            git=GitConfig(),
+            node_store=NodeStoreConfig(),
+        )
+
+    def test_a_config_only_mak_dir_is_not_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "shell" / ".mak").mkdir(parents=True)
+        (tmp_path / "shell" / ".mak" / "config.yaml").write_text(_MINIMAL_YAML)
+        monkeypatch.chdir(tmp_path / "shell")
+        assert stale_mak_dir(self._config(tmp_path / "project")) is None
+
+    def test_a_node_store_is_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "shell" / ".mak" / "node_store").mkdir(parents=True)
+        monkeypatch.chdir(tmp_path / "shell")
+        found = stale_mak_dir(self._config(tmp_path / "project"))
+        assert found == (tmp_path / "shell" / ".mak").resolve()

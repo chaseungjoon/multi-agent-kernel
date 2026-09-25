@@ -1,6 +1,6 @@
 # A hosted OpenAI-compatible service, using NVIDIA Build as the worked example.
 #
-#   mak examples hosted-openai-compatible > mak.yaml
+#   mak examples hosted-openai-compatible > .mak/config.yaml
 #   export NVIDIA_API_KEY=...
 #   mak run --task "..." --work-dir /path/to/project
 #

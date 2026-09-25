@@ -1,6 +1,6 @@
 # Any OpenAI-compatible service MAK ships no profile for.
 #
-#   mak examples custom-endpoint > mak.yaml
+#   mak examples custom-endpoint > .mak/config.yaml
 #   # edit base_url and model, then:
 #   mak run --task "..." --work-dir /path/to/project
 #

@@ -842,16 +842,34 @@ def stale_mak_dir(config: MakConfig) -> Path | None:
         return None
     previous = (Path.cwd() / mak_dir).resolve()
     anchored = (Path(config.session.work_dir) / mak_dir).resolve()
-    if previous == anchored or not previous.is_dir():
+    if previous == anchored or not _holds_run_state(previous):
         return None
     return previous
+
+
+# What a run writes into its mak dir. A ``.mak/`` holding only a project
+# ``config.yaml`` is a configured project, not an orphaned store.
+_RUN_STATE_ENTRIES = ("node_store", "task_graph.json", "lock_table.json")
+
+
+def _holds_run_state(mak_dir: Path) -> bool:
+    """Return whether ``mak_dir`` contains anything a run wrote."""
+    return mak_dir.is_dir() and any(
+        (mak_dir / name).exists() for name in _RUN_STATE_ENTRIES
+    )
+
+
+# The name of a project's MAK directory, and of the config file inside it.
+MAK_DIR_NAME = ".mak"
+CONFIG_FILE_NAME = "config.yaml"
 
 
 def user_config_dir() -> Path:
     """Return MAK's per-user config directory (respects ``XDG_CONFIG_HOME``).
 
-    This is where an installed MAK looks for user-level state: a custom
-    ``config.yaml`` and the ``.env`` file holding API keys.
+    This is where an installed MAK keeps user-level state: the user's
+    ``config.yaml``, the ``.env`` file holding API keys, the endpoint store,
+    and the model catalog cache.
     """
     base = os.environ.get("XDG_CONFIG_HOME", "").strip()
     root = Path(base).expanduser() if base else Path.home() / ".config"
@@ -871,7 +889,7 @@ def examples_dir() -> Path:
 def list_examples() -> list[str]:
     """Return the names of the packaged example configs, alphabetically.
 
-    Names carry no ``.yaml`` suffix, so ``mak examples local-ollama > mak.yaml``
+    Names carry no ``.yaml`` suffix, so ``mak examples local-ollama > .mak/config.yaml``
     reads as one thought.
     """
     directory = examples_dir()
@@ -899,23 +917,51 @@ def example_path(name: str) -> Path:
     return candidate
 
 
-def discover_config_path() -> Path:
+def project_config_path(work_dir: Path | str) -> Path:
+    """Return where a project's own config lives: ``<work_dir>/.mak/config.yaml``."""
+    return Path(work_dir).expanduser() / MAK_DIR_NAME / CONFIG_FILE_NAME
+
+
+def user_config_path() -> Path | None:
+    """Return the user's own config file, or None when there is none.
+
+    ``<user config dir>/config.yaml`` — e.g. ``~/.config/mak/config.yaml``.
+    """
+    candidate = user_config_dir() / CONFIG_FILE_NAME
+    return candidate if candidate.is_file() else None
+
+
+def seed_config_path() -> Path:
+    """Return the file a new project config is copied from.
+
+    The user's own config when there is one, so a new project starts from the
+    setup they already use; otherwise the packaged default.
+    """
+    return user_config_path() or packaged_config_path()
+
+
+def discover_config_path(work_dir: Path | str | None = None) -> Path:
     """Return the config file to use when none is given explicitly.
+
+    ``work_dir`` is the project being edited (default: the current directory).
+    It is a parameter because the project and the directory MAK was launched
+    from differ whenever ``--work-dir`` or ``/work-dir`` is used, and the
+    project's config must follow the project.
 
     Discovery order:
 
-    1. ``./mak.yaml`` — a per-project config in the current directory.
-    2. ``<user config dir>/config.yaml`` — e.g. ``~/.config/mak/config.yaml``.
+    1. ``<work_dir>/.mak/config.yaml`` — the project's own config.
+    2. ``<user config dir>/config.yaml`` — the user's config, e.g.
+       ``~/.config/mak/config.yaml`` (honours ``XDG_CONFIG_HOME``).
     3. The packaged default (``mak/config.yaml`` inside the installed package;
-       in a source checkout this is the repo's ``mak/config.yaml``).
+       in a source checkout this is the repo's ``mak/config.yaml``) when
+       neither exists.
     """
-    project_config = Path("mak.yaml")
-    if project_config.is_file():
-        return project_config
-    user_config = user_config_dir() / "config.yaml"
-    if user_config.is_file():
-        return user_config
-    return packaged_config_path()
+    root = Path(work_dir).expanduser() if work_dir is not None else Path.cwd()
+    project = project_config_path(root)
+    if project.is_file():
+        return project
+    return user_config_path() or packaged_config_path()
 
 
 def load_config(path: Path | str) -> MakConfig:

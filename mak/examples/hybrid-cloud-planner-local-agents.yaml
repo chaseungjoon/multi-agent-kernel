@@ -1,7 +1,7 @@
 # Hybrid: a frontier model plans, local models edit.
 #
 #   export ANTHROPIC_API_KEY=...
-#   mak examples hybrid-cloud-planner-local-agents > mak.yaml
+#   mak examples hybrid-cloud-planner-local-agents > .mak/config.yaml
 #
 # The cost/privacy sweet spot, and the configuration to reach for when a local
 # model edits acceptably but plans badly. Planning is one call per run; editing

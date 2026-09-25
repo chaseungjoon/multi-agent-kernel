@@ -3,7 +3,7 @@
 # Multi Agent Kernel (MAK)
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.9.2 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.9.3 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -32,8 +32,9 @@ arbitrates shared memory between threads.
 - [Run](#run)
   - [CLI App](#cli-app)
   - [CLI Command](#cli-command)
-- [Cloud Models](#cloud-models)
-- [Local Models](#local-models)
+- [Configuration](#configuration)
+  - [Cloud Models](#cloud-models)
+  - [Local Models](#local-models)
 - [Benchmark](#benchmark)
   - [Real Model Benchmark](#real-model-benchmark)
   - [Simulated Scaling Benchmark](#simulated-scaling-benchmark)
@@ -153,7 +154,7 @@ mak
 * `/local` - Overview of this machine's runtimes and connected remote hosts; `/local url <host:port>` connects (and remembers) one (see [Local Models](#local-models))
 * `/mode [cloud|local|hybrid]` - Show or switch how this session gets its models
 * `/max-agents <int>` - Set number of concurrently running agents
-* `/config` - Returns to auto-discovery (see [Cloud Models](#cloud-models))
+* `/config` - Returns to auto-discovery from the work dir (see [Configuration and API keys](#configuration-and-api-keys))
 * `/config /path/to/config.yaml` - Point to a custom config
 * `/no-review true` - Omit user review of planner
 * `/clear` - clears the screen, `/exit` (or `/quit`, Ctrl+C) quits, Ctrl+J inserts a newline for multi-line tasks.
@@ -239,51 +240,61 @@ update. Run `/refresh-models` to fetch immediately instead of waiting.
 > orgs get a 400 on every request), and it can decline requests with a `refusal` stop reason
 > (which MAK treats as a failed task).
 
-## Cloud Models
+## Configuration
 
-MAK supports Anthropic, OpenAI, Google Gemini, and custom OpenAI-compatible
-services.
+Without `--config` or `/config`, MAK uses the first configuration it finds,
+looking from the **work dir** (the project being edited: `--work-dir`,
+`/work-dir`, or the directory you launched from):
 
-### Configuration and API keys
+1. `<work dir>/.mak/config.yaml` — this project's config
+2. `~/.config/mak/config.yaml` (or `$XDG_CONFIG_HOME/mak/config.yaml`) — your
+   user-level config
+
+If neither exists, the built-in [default configuration](mak/config.yaml) is
+used.
+
+> ⚠️ Set `session.max_total_tokens` in `config.yaml` to cap a run's token
+usage. ***The default is unlimited.***
+
+### Cloud Models
+
+#### Officially Supported Providers
+
+> MAK officially supports Anthropic, OpenAI, Google Gemini.
 
 Use `/apikey` during setup, or provide `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`GEMINI_API_KEY`, or a custom endpoint's key variable in the environment.
+`GEMINI_API_KEY` key variable in the environment.
+
 `~/.config/mak/.env` stores keys entered through MAK; exported variables take
 precedence.
 
-Without `--config` or `/config`, MAK uses the first available configuration:
+#### OpenAI-compatible and custom endpoints
 
-1. `./mak.yaml`
-2. `~/.config/mak/config.yaml` (or `$XDG_CONFIG_HOME/mak/config.yaml`)
-3. The built-in [default configuration](mak/config.yaml)
+Run `/endpoint add` to configure OpenRouter, NVIDIA Build, DeepSeek, Z.ai, or
+any OpenAI Chat Completions-compatible service. 
 
-Set `session.max_total_tokens` in the YAML configuration to cap a run's token
-usage. The default is unlimited.
-
-### OpenAI-compatible and custom endpoints
-
-Run `/endpoint add` to configure NVIDIA Build, OpenRouter, DeepSeek, Z.ai, or
-any OpenAI Chat Completions-compatible service. MAK stores the endpoint in
+MAK stores the endpoint in
 `~/.config/mak/endpoints.json` and references its API key by environment
 variable name, never by the key itself.
 
 ```bash
-export NVIDIA_API_KEY=...
+export OPENROUTER_API_KEY=...
 mak run --task "your task" --work-dir /path/to/project \
-  --models nvidia:meta/llama-3.3-70b-instruct
+  --models openrouter:meta/llama-3.3-70b-instruct
 ```
 
 Use `/endpoint list`, `/endpoint test <id>`, `/endpoint models <id>`, or
 `/endpoint export <id>` to manage endpoints. Templates are also available:
 
 ```bash
-mak examples hosted-openai-compatible > mak.yaml
-mak examples custom-endpoint > mak.yaml
+mkdir -p .mak
+mak examples hosted-openai-compatible > .mak/config.yaml
+mak examples custom-endpoint > .mak/config.yaml
 ```
 
 MAK automatically adapts its response format to each model's capabilities.
 
-## Local Models
+### Local Models
 
 MAK supports Ollama and OpenAI-compatible local servers such as vLLM, LM
 Studio, and llama.cpp. Choose `local` during setup or connect with
@@ -299,7 +310,8 @@ mak run --task "your task" --work-dir /path/to/project \
   --models local:my-model@http://localhost:8000/v1
 ```
 
-For a ready-made configuration, run `mak examples local-ollama > mak.yaml`.
+For a ready-made configuration, run
+`mkdir -p .mak && mak examples local-ollama > .mak/config.yaml`.
 Local agents can also use a cloud planner (e.g. `--planner anthropic:claude-opus-5`). See [mak/examples/](mak/examples/)
 for more configurations.
 

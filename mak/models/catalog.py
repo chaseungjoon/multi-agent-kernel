@@ -97,20 +97,20 @@ class ModelEntry:
             object.__setattr__(self, "endpoint_id", self.provider)
 
     @property
-    def api_key_env(self) -> str:
-        """Environment variable holding this model's provider API key."""
-        try:
-            return PROVIDER_KEY_ENV[self.provider]
-        except KeyError:
-            raise ValueError(f"unknown provider: {self.provider!r}") from None
+    def api_key_env(self) -> str | None:
+        """Environment variable holding this model's provider API key.
+
+        ``None`` for any entry outside the three built-in providers: such an
+        entry's credential is named by its *endpoint*, which this dataclass
+        does not hold. ``None`` means "ask the endpoint" — never a guessed
+        variable name, which would let a caller pass a key check it never ran.
+        """
+        return PROVIDER_KEY_ENV.get(self.provider)
 
     @property
-    def adapter_type(self) -> str:
-        """Agent adapter type that drives this model."""
-        try:
-            return PROVIDER_ADAPTER[self.provider]
-        except KeyError:
-            raise ValueError(f"unknown provider: {self.provider!r}") from None
+    def adapter_type(self) -> str | None:
+        """Agent adapter type that drives this model, or ``None`` (see above)."""
+        return PROVIDER_ADAPTER.get(self.provider)
 
     @property
     def key(self) -> tuple[str, str]:

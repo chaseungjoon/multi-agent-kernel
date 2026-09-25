@@ -7,9 +7,10 @@ A user who mistypes an endpoint id should be told which ids exist, not shown a
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.console import Console
 
-from cli.core.models import registry
 from cli.core.state import CliState
 from cli.endpoints.prompts import confirm
 from cli.endpoints.render import (
@@ -50,21 +51,21 @@ def cmd_endpoint(args: list[str], state: CliState, console: Console) -> None:
     rest = args[1:]
     try:
         if sub in ("list", "ls"):
-            _sub_list(console)
+            _sub_list(console, state)
         elif sub == "add":
             _sub_add(console, state, rest[0] if rest else "")
         elif sub == "show":
-            _sub_show(console, rest)
+            _sub_show(console, rest, state)
         elif sub == "edit":
-            _sub_edit(console, rest)
+            _sub_edit(console, rest, state)
         elif sub == "test":
-            _sub_test(console, rest)
+            _sub_test(console, rest, state)
         elif sub == "models":
-            _sub_models(console, rest)
+            _sub_models(console, rest, state)
         elif sub == "remove":
             _sub_remove(console, rest, state)
         elif sub == "export":
-            _sub_export(console, rest)
+            _sub_export(console, rest, state)
         elif sub == "help":
             print_endpoint_help(console)
         else:
@@ -92,11 +93,15 @@ def print_endpoint_help(console: Console) -> None:
     )
 
 
-def all_endpoints() -> tuple[EndpointConfig, ...]:
-    """Return every configured endpoint: project config plus the user store."""
+def all_endpoints(config_file: Path | None = None) -> tuple[EndpointConfig, ...]:
+    """Return every configured endpoint: project config plus the user store.
+
+    ``config_file`` is the session's config (``CliState.config_file()``);
+    without one, the config discovered from the current directory is read.
+    """
     saved, _diagnostic = load_user_endpoints()
     try:
-        project = load_config(discover_config_path()).endpoints
+        project = load_config(config_file or discover_config_path()).endpoints
     except ConfigError:
         # A broken project config is the project config's problem to report;
         # /endpoint must still be able to list what the user has saved.
@@ -104,12 +109,14 @@ def all_endpoints() -> tuple[EndpointConfig, ...]:
     return merge_endpoints(project, saved)
 
 
-def _require(console: Console, args: list[str], what: str) -> EndpointConfig | None:
+def _require(
+    console: Console, args: list[str], what: str, state: CliState
+) -> EndpointConfig | None:
     """Resolve ``args[0]`` to an endpoint, or report what exists and return None."""
     if not args:
         print_error(console, f"Which endpoint? Usage: /endpoint {what} <id>")
         return None
-    endpoints = all_endpoints()
+    endpoints = all_endpoints(state.config_file())
     wanted = args[0].strip().lower()
     for endpoint in endpoints:
         if endpoint.id == wanted:
@@ -119,19 +126,22 @@ def _require(console: Console, args: list[str], what: str) -> EndpointConfig | N
     return None
 
 
-def _sub_list(console: Console) -> None:
+def _sub_list(console: Console, state: CliState) -> None:
     """Show every endpoint, with its model count and any store diagnostic."""
     saved, diagnostic = load_user_endpoints()
     if diagnostic is not None:
         print_warn(console, diagnostic.message())
-    endpoints = all_endpoints()
-    counts = {e.id: len(registry().for_endpoint(e.id)) for e in endpoints}
+    endpoints = all_endpoints(state.config_file())
+    models = state.models()
+    counts = {e.id: len(models.for_endpoint(e.id)) for e in endpoints}
     print_list(console, endpoints, model_counts=counts)
 
 
 def _sub_add(console: Console, state: CliState, profile: str) -> None:
     """Run the add wizard, commit its result, and apply the user's selection."""
-    result = run_add(console, profile, existing=existing_ids())
+    result = run_add(
+        console, profile, existing=existing_ids(state.config_file())
+    )
     if result is None:
         return
     endpoint, draft = result
@@ -149,23 +159,18 @@ def _sub_add(console: Console, state: CliState, profile: str) -> None:
         state.selected_models = [spec]
         print_ok(console, f"Agents will use {spec}.")
     if draft.use_for_planner:
-        state.planner_model = draft.model
-        state.planner_endpoint_id = endpoint.id
-        # The endpoint is authoritative now, so the legacy inference fields
-        # must not linger and contradict it.
-        state.planner_backend = ""
-        state.planner_base_url = ""
+        state.set_endpoint_planner(endpoint.id, draft.model)
         print_ok(console, f"Planner will use {spec}.")
 
 
-def _sub_show(console: Console, args: list[str]) -> None:
-    endpoint = _require(console, args, "show")
+def _sub_show(console: Console, args: list[str], state: CliState) -> None:
+    endpoint = _require(console, args, "show", state)
     if endpoint is not None:
         print_show(console, endpoint)
 
 
-def _sub_edit(console: Console, args: list[str]) -> None:
-    endpoint = _require(console, args, "edit")
+def _sub_edit(console: Console, args: list[str], state: CliState) -> None:
+    endpoint = _require(console, args, "edit", state)
     if endpoint is None:
         return
     saved, _ = load_user_endpoints()
@@ -180,9 +185,9 @@ def _sub_edit(console: Console, args: list[str]) -> None:
     apply_edit(console, endpoint)
 
 
-def _sub_test(console: Console, args: list[str]) -> None:
+def _sub_test(console: Console, args: list[str], state: CliState) -> None:
     """Probe one endpoint under its configured health policy."""
-    endpoint = _require(console, args, "test")
+    endpoint = _require(console, args, "test", state)
     if endpoint is None:
         return
     model = args[1] if len(args) > 1 else ""
@@ -225,13 +230,13 @@ def _sub_test(console: Console, args: list[str]) -> None:
         print_error(console, f"{resolved.display_name}: {adapter.health_detail()}")
 
 
-def _sub_models(console: Console, args: list[str]) -> None:
+def _sub_models(console: Console, args: list[str], state: CliState) -> None:
     """Browse one endpoint's cached models, capped unless filtered."""
-    endpoint = _require(console, args, "models")
+    endpoint = _require(console, args, "models", state)
     if endpoint is None:
         return
     needle = args[1].lower() if len(args) > 1 else ""
-    entries = registry().for_endpoint(endpoint.id)
+    entries = state.models().for_endpoint(endpoint.id)
     if not entries:
         print_warn(
             console,
@@ -260,7 +265,7 @@ def _sub_models(console: Console, args: list[str]) -> None:
 
 def _sub_remove(console: Console, args: list[str], state: CliState) -> None:
     """Forget an endpoint, refusing while anything still references it."""
-    endpoint = _require(console, args, "remove")
+    endpoint = _require(console, args, "remove", state)
     if endpoint is None:
         return
     references = _references_to(endpoint.id, state)
@@ -308,7 +313,7 @@ def _references_to(endpoint_id: str, state: CliState) -> list[str]:
     if state.planner_endpoint_id == endpoint_id:
         found.append("the planner")
     try:
-        config = load_config(discover_config_path())
+        config = load_config(state.config_file())
     except ConfigError:
         return found
     if any(a.endpoint == endpoint_id for a in config.agents):
@@ -318,8 +323,8 @@ def _references_to(endpoint_id: str, state: CliState) -> list[str]:
     return found
 
 
-def _sub_export(console: Console, args: list[str]) -> None:
-    endpoint = _require(console, args, "export")
+def _sub_export(console: Console, args: list[str], state: CliState) -> None:
+    endpoint = _require(console, args, "export", state)
     if endpoint is None:
         return
     console.print()

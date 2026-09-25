@@ -38,12 +38,11 @@ class TestModelEntry:
         assert entry.api_key_env == env
         assert entry.adapter_type == adapter
 
-    def test_unknown_provider_raises(self) -> None:
-        entry = ModelEntry(provider="nope", model_id="m", display_name="M")
-        with pytest.raises(ValueError, match="unknown provider"):
-            _ = entry.api_key_env
-        with pytest.raises(ValueError, match="unknown provider"):
-            _ = entry.adapter_type
+    def test_an_unknown_provider_answers_none_never_raises(self) -> None:
+        # An endpoint's entry: its endpoint owns the credential and adapter.
+        entry = ModelEntry(provider="openrouter", model_id="m", display_name="M")
+        assert entry.api_key_env is None
+        assert entry.adapter_type is None
 
     def test_round_trip_preserves_facts(self) -> None:
         entry = ModelEntry(

@@ -1,6 +1,6 @@
 # Fully local, on Ollama's native API.
 #
-#   mak examples local-ollama > mak.yaml
+#   mak examples local-ollama > .mak/config.yaml
 #   ollama pull qwen2.5-coder:14b
 #   mak run --task "..." --work-dir /path/to/project
 #

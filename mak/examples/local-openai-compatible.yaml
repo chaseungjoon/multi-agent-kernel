@@ -1,7 +1,7 @@
 # Fully local, against any OpenAI-compatible server: vLLM, LM Studio,
 # llama.cpp's server, LocalAI.
 #
-#   mak examples local-openai-compatible > mak.yaml
+#   mak examples local-openai-compatible > .mak/config.yaml
 #   # then edit base_url and model to match your server
 #
 # Default ports: vLLM http://localhost:8000/v1, llama.cpp http://localhost:8080/v1,

@@ -68,12 +68,11 @@ def print_banner(console: Console, state: CliState) -> None:
 
 # ── Session status (printed by /status) ────────────────────────────────────────
 
-def _catalog_status() -> str:
+def _catalog_status(state: CliState) -> str:
     """Summarise the model catalog: how many models, last refreshed when."""
-    from cli.core.models import all_models, registry
-
-    count = len(all_models())
-    stamp = registry().last_refresh
+    registry = state.models()
+    count = len(registry.all_models())
+    stamp = registry.last_refresh
     when = stamp.strftime("%Y-%m-%d") if stamp else "never refreshed"
     return f"{count} models · {when}"
 
@@ -88,7 +87,7 @@ def print_status(console: Console, state: CliState) -> None:
         ("workdir", state.work_dir_display()),
         ("config", state.config_display()),
         ("approval", "off — plans run immediately" if state.no_review else "on"),
-        ("catalog", _catalog_status()),
+        ("catalog", _catalog_status(state)),
     ]
     if state.uses_local_agents():
         # A local run's endpoint is the thing most likely to be wrong, and it is
@@ -118,7 +117,7 @@ def _endpoints_display(state: CliState) -> str:
         from cli.endpoints.commands import all_endpoints
         from cli.endpoints.render import location_label
 
-        configured = {e.id: e for e in all_endpoints()}
+        configured = {e.id: e for e in all_endpoints(state.config_file())}
     except Exception:  # noqa: BLE001 - status must never fail on a broken store
         return "  ".join(state.endpoint_ids)
     parts: list[str] = []

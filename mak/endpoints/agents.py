@@ -16,6 +16,8 @@ sits one layer up.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from mak.config import AgentConfig, MakConfig
 from mak.core.exceptions import ConfigError
 from mak.endpoints.builtin import (
@@ -36,7 +38,7 @@ def resolve_agents(
     config: MakConfig,
     *,
     endpoints: dict[str, ResolvedEndpoint] | None = None,
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[ResolvedAgentConfig, ...]:
     """Resolve every configured agent, rejecting duplicate routing ids.
 
@@ -67,7 +69,7 @@ def resolve_agents(
 def _resolve_one(
     agent: AgentConfig,
     endpoints: dict[str, ResolvedEndpoint],
-    env: dict[str, str] | None,
+    env: Mapping[str, str] | None,
 ) -> ResolvedAgentConfig:
     """Resolve one agent entry, legacy or endpoint-backed."""
     if agent.endpoint:

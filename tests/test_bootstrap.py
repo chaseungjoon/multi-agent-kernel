@@ -131,14 +131,14 @@ class TestPlannerFromSpec:
     def test_the_planner_key_follows_the_named_provider(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from mak.__main__ import _planner_api_key
+        from mak.application import resolve_planner_key
 
         monkeypatch.setenv("OPENAI_API_KEY", "sk-oai")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant")
         config = MakConfig(
             planner=PlannerConfig(model="claude-lookalike", backend="openai")
         )
-        assert _planner_api_key(config) == "sk-oai"
+        assert resolve_planner_key(config) == "sk-oai"
 
 
 class TestBuildRegistry:

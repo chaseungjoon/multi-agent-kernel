@@ -53,7 +53,7 @@ def _run_first_run(state: CliState, console: Console) -> bool:
     # Detection runs while the question is being read, so the menu can be
     # honest about what is actually on this machine rather than describing
     # local mode in the abstract.
-    detected = _detect_in_background()
+    detected = _detect_in_background(state.local_seams.discover)
 
     console.print()
     console.print(Rule("[bold]Welcome to MAK[/bold]", style="dim"))
@@ -100,14 +100,14 @@ def _run_first_run(state: CliState, console: Console) -> bool:
     return True
 
 
-def _detect_in_background() -> Callable[[], list[LocalRuntime]]:
+def _detect_in_background(
+    discover: Callable[[], list[LocalRuntime]],
+) -> Callable[[], list[LocalRuntime]]:
     """Start a discovery scan now; return a function that waits for its result."""
-    from cli.local import default_discover
-
     found: list[LocalRuntime] = []
 
     def scan() -> None:
-        found.extend(default_discover())
+        found.extend(discover())
 
     thread = threading.Thread(target=scan, daemon=True)
     thread.start()
@@ -205,7 +205,7 @@ def run_key_setup(
     # ── Planner selection ────────────────────────────────────────────────────
     available = providers_with_keys(state.api_keys)
     if len(available) == 1:
-        rec = recommended_planner_for_provider(available[0])
+        rec = recommended_planner_for_provider(state.models(), available[0])
         state.set_cloud_planner(available[0], rec)
         print_ok(
             console,
@@ -218,7 +218,7 @@ def run_key_setup(
     # ── Default model roster if none chosen ──────────────────────────────────
     if not state.selected_models and available:
         first = available[0]
-        rec = recommended_planner_for_provider(first)
+        rec = recommended_planner_for_provider(state.models(), first)
         state.selected_models = [f"{first}:{rec}"]
 
     console.print()
@@ -243,7 +243,7 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
     for provider in PROVIDER_ORDER:
         if provider not in available:
             continue
-        for m in models_for_provider(provider):
+        for m in models_for_provider(state.models(), provider):
             # Planner bar: sonnet-4-6-class capability and up is recommended;
             # anything below gets an explicit warning.
             tag = (
@@ -267,7 +267,8 @@ def _select_planner(state: CliState, console: Console, available: list[str]) -> 
             # Default to first recommended
             first_provider = available[0]
             state.set_cloud_planner(
-                first_provider, recommended_planner_for_provider(first_provider)
+                first_provider,
+                recommended_planner_for_provider(state.models(), first_provider),
             )
             return
         try:

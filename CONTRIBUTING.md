@@ -219,14 +219,14 @@ The concurrency gate is `tests/test_concurrency_integration.py`.
 
 ## Current status
 
-MAK **0.9.2 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
+MAK **0.9.3 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
 endpoint support, local runtimes, and the interactive app are all implemented.
 
 | Gate | State |
 |---|---|
 | `mypy --strict mak cli` | clean |
 | `ruff check mak cli tests` | clean |
-| `pytest -q` | green in CI (Python 3.11). On a local Python 3.13, or with a third-party endpoint catalog cached in `~/.config/mak/`, **4 tests fail** — see Wave 25 in [`TASKS.md`](TASKS.md) |
+| `pytest -q` | green on Python 3.11 and 3.13, locally and in CI; hermetic (never reads the real `~/.config/mak/`) |
 
 | Area | Modules |
 |---|---|
@@ -243,6 +243,7 @@ endpoint support, local runtimes, and the interactive app are all implemented.
 | Local runtime discovery and native Ollama client | `mak/local/` |
 | Session, cascade loop, run outcome, teardown | `mak/session.py`, `mak/cascade.py`, `mak/execution_result.py`, `mak/teardown.py` |
 | Git audit log | `mak/git_integration/` |
+| Application API: run request, config, planner route and key, session assembly | `mak/application/` |
 | `mak run` / `mak` console script | `mak/__main__.py`, `cli/__main__.py` |
 | Interactive app | `cli/` |
 
@@ -469,9 +470,12 @@ The kernel's core mechanism — a structured replacement for diff/merge.
   and **prunes excluded directories before descending**, so `.venv`,
   `node_modules`, and `site-packages` cost nothing. Include patterns use a small
   glob→regex translator whose `*` never crosses `/` and whose `**/` spans zero or
-  more whole segments. Symlinked directories are not descended. Its behaviour is
-  pinned by a differential test against `Path.glob` (see
-  Wave 25 in [`TASKS.md`](TASKS.md) for its one open discrepancy).
+  more whole segments. A **trailing** `**` (`src/**`) matches every file below
+  it at any depth — decided by MAK, not by the host Python, whose
+  `Path.glob("src/**")` returns directories only before 3.13 and files too from
+  3.13; it is the meaning `.makignore` gives `a/**`. Symlinked directories are
+  not descended. A differential test pins every other shape against `Path.glob`;
+  the trailing-`**` shape has an explicit expected list.
 
 ### 3.2 `.makignore` (`makignore.py`)
 
@@ -988,12 +992,23 @@ the whole command line. They can be Docker-sandboxed (§7.7).
   - `default_agent_type(config)` — the first configured agent.
   - `validate_config(config)` — rejects unknown types and fields set on a type
     that ignores them.
-  - `agents_from_specs(specs)` / `planner_from_spec(spec, planner)` — parse
-    `provider[:model][@url]` specs (§13).
+  - `agents_from_specs(specs, *, env, endpoint_ids)` — parse
+    `provider[:model][@url]` roster specs (§13). `env` is where an
+    `ollama:`/`local:` spec without a URL reads `$MAK_LOCAL_BASE_URL`;
+    `endpoint_ids` is the set a prefix may name.
+  - `configured_endpoint_ids(config)` — the user store's endpoint ids plus
+    `config`'s own; the caller that holds the run's config passes it, so a
+    project config discovered from a work dir is honoured.
+  - `planner_from_spec(spec, planner)` — a compatibility wrapper over
+    `PlannerRoute.from_spec(...).apply(planner)` (§13); the grammar lives once.
+  - `resolved_agents(config, *, env)` — resolves the roster against the merged
+    endpoint set and the given environment.
   - `healthy_agent_types(registry, types)` — the startup health preflight. An
     unhealthy agent is dropped with a warning naming why (`health_detail`); the
     run aborts if the default agent is unusable.
   - `seed_capabilities` — seeds the capability cache from the model catalog.
+- The bootstrap builds pieces; `mak/application/` (§13) is what assembles a
+  whole `Session` from them, for both front ends.
 
 ### 7.6 The wire protocol (`protocol.py`)
 
@@ -1316,7 +1331,11 @@ decides: `adopt` (default — the working tree is the newer truth) or `conflict`
 
 ### Plan
 
-`plan()` runs the planner, validation, optional review, then `install_plan`.
+`propose_plan(user_task)` runs the planner and deterministic validation and
+returns a `PlanProposal(subtasks, findings)` without reviewing or installing it —
+the public entry point for a front end that reviews the plan its own way (the
+interactive app). `plan()` is `propose_plan` + optional review + `install_plan`.
+Nothing outside `mak/` touches a `Session` private attribute.
 **`install_plan` always re-validates** — it is the one entry point shared by
 `plan()`, the interactive app, cascade waves, and edited review plans:
 
@@ -1470,9 +1489,19 @@ drift from the schema. When you add or change a config key, document it in
 
 Rules:
 
-- **Discovery.** Without `--config`, `discover_config_path()` picks the first of
-  `./mak.yaml`, `~/.config/mak/config.yaml` (honours `$XDG_CONFIG_HOME`), and the
-  packaged `mak/config.yaml`.
+- **Discovery.** Without `--config` / `/config`,
+  `discover_config_path(work_dir)` picks the first file that exists:
+  1. `<work_dir>/.mak/config.yaml` — the project's own config
+     (`project_config_path(work_dir)`);
+  2. `~/.config/mak/config.yaml` — the user's config (`user_config_path()`;
+     honours `$XDG_CONFIG_HOME`);
+  3. the packaged `mak/config.yaml`, when neither exists.
+
+  `work_dir` is the project being edited, not the launch directory: `mak run`
+  passes `--work-dir` (else the CWD), `mak gc` its argument, and the app its
+  current work dir (`CliState.config_file()`). `seed_config_path()` is the file
+  a new project config is copied from: the user's config, else the packaged
+  default.
 - **`agents`** is required and non-empty. Optional per-agent fields default to
   `None`, meaning "the adapter decides"; an explicit value is validated at load.
   `max_tokens` must be a positive integer; `repair_attempts` may be `0`.
@@ -1485,15 +1514,18 @@ Rules:
   `AgentConfig.model` to `None`; no model name is hardcoded in the dataclasses.
   The app writes config only on an explicit model change.
 - **Keys are never stored in config.** `api_key_env` names a variable read at
-  composition time. Keys live in `~/.config/mak/.env` (created `0600`) or the
-  environment; exported variables win. The in-package `mak/.env` is deprecated —
+  composition time from an explicit `env` mapping (§13). Keys live in
+  `~/.config/mak/.env` (created `0600`) or the environment; exported variables
+  win. The in-package `mak/.env` is deprecated —
   it is still read with a warning (Wave R in [`TASKS.md`](TASKS.md)).
 - **`session.max_total_tokens`** is the only spend ceiling (§11). `0` or negative
   is a `ConfigError`.
 - **`node_store.version_retention`** must be `-1` or ≥ 2.
 - **`session.mak_dir`** is anchored to `work_dir` by `config.anchor_mak_dir`, used
   by both front ends. `config.stale_mak_dir` reports a `.mak` left at a
-  CWD-relative location; it is never adopted.
+  CWD-relative location that holds run state (`node_store/`, `task_graph.json`
+  or `lock_table.json`); it is never adopted. A `.mak/` holding only a
+  `config.yaml` is a configured project, not an orphan.
 - **`exclude_patterns`** replaces the default list when set; per-project ignores
   belong in `.makignore`, which adds to it.
 - **`semantic:`** — `stale_read` and `type_check` are validated at load;
@@ -1528,26 +1560,63 @@ the reinstall when already current (PEP 610 `direct_url.json`), and falls back t
 `main` — and says so — while the repo publishes no tags. See
 Wave R in [`TASKS.md`](TASKS.md) for its open problems.
 
+### The application API (`mak/application/`)
+
+Both front ends turn settings into a session through this package and nothing
+else, so the same settings cannot behave differently depending on which one
+launched the run. Neither front end writes `os.environ`; every credential read
+goes through an explicit `env` mapping.
+
+| Module | Contents |
+|---|---|
+| `request.py` | `RunRequest` (frozen): `config_path`, `work_dir`, `model_specs`, `planner` (a `PlannerRoute`, or a spec parsed against the loaded config's endpoints), `max_agents`, `default_agent`, `sandbox`, `verbose`, `api_keys`, `no_review` |
+| `config.py` | `build_config(request, *, env, anchor=True)` — discover or load the file, apply the overrides, validate, anchor `mak_dir`. `anchor=False` lets `mak run` look for a stale store first |
+| `route.py` | `PlannerRoute` — the planner's route as one value (below) |
+| `keys.py` | `resolve_planner_key(config, env)` — the **only** planner-key resolver; `planner_endpoint(config, *, env)` |
+| `session.py` | `build_session(config, *, env, sandbox, default_agent)` — assembles every collaborator and runs the health preflight |
+| `env.py` | `read_env_files()` — MAK's `.env` files as a mapping, nothing exported; `load_env_file()` — the same files `setdefault` into `os.environ`, for the one-shot `mak run` only |
+
+**`PlannerRoute`** is frozen and complete by construction: `kind` is `hosted`
+(`provider`, plus an optional gateway `base_url` for `openai`), `endpoint`
+(`endpoint_id`), or `local` (`backend` `ollama`/`openai` and `base_url`);
+`__post_init__` refuses a missing field or a field of another kind. Build one
+with `hosted()`, `endpoint()`, `local()` or `from_spec()`; `spec()` renders it
+back. `apply(planner_config)` rewrites **every** route field (`endpoint`,
+`backend`, `base_url`, `api_key_env`) and keeps the rest: a direct hosted route
+names its provider's key variable, a gateway names none.
+
+**Planner key resolution** (`resolve_planner_key`), in order: the endpoint's
+credential; `planner.api_key_env`; the conventional variable of a hosted
+`planner.backend` with no `base_url`. A config that names any other backend or a
+`base_url` (a local runtime, a gateway) gets `None` — never a cloud key. Only a
+config naming no route at all falls back to the model-id prefix.
+
+`tests/application/test_parity.py` builds the same logical settings (hosted,
+endpoint, local and gateway planners, a roster with an endpoint,
+`--max-agents`) through `mak run` and through the app and asserts an identical
+`MakConfig` and planner key.
+
 ### `mak run`
 
-`mak/__main__.py` is a thin shell over the composition root:
+`mak/__main__.py` keeps argparse, `main`, reporting and warnings:
 
 - `load_env_file()` loads `~/.config/mak/.env` (and the deprecated `mak/.env`)
   into `os.environ` with `setdefault`.
 - `parse_args` — `--task` (required unless `--recover`), `--config`,
   `--work-dir`, `--models`, `--planner`, `--max-agents`, `--agent`,
-  `--no-review`, `--recover`, `--sandbox`, `-v/-vv`.
-- `build_session(args, config, sandbox)` assembles every collaborator and runs
-  the health preflight.
-- `main(argv, *, session_builder=build_session)` applies overrides with
-  `dataclasses.replace`, validates, anchors `mak_dir`, then drives initialize →
-  plan → run → cascade loop → teardown. Exit codes: `0` success; `1` aborted
-  review, planner failure, unsatisfied run, failing tests; `2` config error or
-  missing Docker under `--sandbox`. The summary prints completed / failed /
-  skipped / blocked with each failure's reasons. Under `--no-review`, cascade
-  waves are skipped with a warning. `warn_model_caveats` and
-  `warn_local_planner_mismatch` (all agents local but the planner hosted) print on
-  stderr.
+  `--no-review`, `--recover`, `--sandbox`, `-v/-vv`. `request_from_args(args)`
+  turns them into a `RunRequest`.
+- `main(argv, *, session_builder=…)` builds the config with
+  `build_config(request, anchor=False)`, reports a stale store
+  (`stale_mak_dir`), anchors `mak_dir`, builds the session through
+  `application.build_session`, then drives initialize → plan → run → cascade
+  loop → teardown. `session_builder(args, config, sandbox)` is the test seam.
+  Exit codes: `0` success; `1` aborted review, planner failure, unsatisfied run,
+  failing tests; `2` config error or missing Docker under `--sandbox`. The
+  summary prints completed / failed / skipped / blocked with each failure's
+  reasons. Under `--no-review`, cascade waves are skipped with a warning.
+  `warn_model_caveats` and `warn_local_planner_mismatch` (all agents local but
+  the planner hosted) print on stderr. `mak run` never prompts.
 
 ### Spec grammar: `--models` and `--planner`
 
@@ -1571,14 +1640,11 @@ then the hosted providers, then `ollama` / `local`.
 - `--models` replaces the whole roster; the first entry is the default agent
   (`--agent` overrides). Several models on one endpoint, and several endpoints on
   one transport, coexist — uniqueness is by **agent id**.
-- `--planner` uses the same grammar through `bootstrap.planner_from_spec`, with
-  two differences: the **model is required**, and **every route field is
-  rewritten** (endpoint, backend, base_url, api_key_env), keeping non-route
-  settings. The provider is mandatory because one model id can be served by
-  several providers with different keys and bills.
-- **Planner key resolution** (`_planner_api_key`): the endpoint's credential;
-  `planner.api_key_env`; the conventional variable of a hosted `planner.backend`;
-  and only then the model-id prefix.
+- `--planner` uses the same grammar through `PlannerRoute.from_spec`, with two
+  differences: the **model is required**, and **every route field is
+  rewritten** by `PlannerRoute.apply`, keeping non-route settings. The provider
+  is mandatory because one model id can be served by several providers with
+  different keys and bills.
 - **`--max-agents N`** sets `max_concurrent_agents` (live concurrency).
   `max_instances` is a different knob: the idle CLI-subprocess pool size.
 
@@ -1610,10 +1676,11 @@ The binary must be on `PATH` (the health preflight runs the wrapper's
 
 ## 14. Interactive app (`cli/`)
 
-`cli/` is an inline REPL on `prompt_toolkit` + `rich`. It uses MAK as a library —
-`session.initialize()`, `session._planner.decompose()`, `session.install_plan()`,
-`session.run()` — and runs the same cascade loop as `mak run` (`mak.cascade`),
-honouring `/no-review`.
+`cli/` is an inline REPL on `prompt_toolkit` + `rich`. It uses MAK as a library
+through public entry points only — the application API (§13) to build the
+session, then `session.initialize()`, `session.propose_plan()`,
+`session.install_plan()`, `session.run()` — and runs the same cascade loop as
+`mak run` (`mak.cascade`), honouring `/no-review`.
 
 **UX.** One accent colour (`ACCENT` in `cli/ui.py`), flat indented lists. A
 compact welcome box; a bottom toolbar with live state (models, planner, agents,
@@ -1632,19 +1699,26 @@ of `{pre_hash}..HEAD`. The token counter reads `Session.total_tokens`.
 | `/mode [cloud\|local\|hybrid]` | show or switch how the session gets models |
 | `/endpoint [sub-command]` | manage OpenAI-compatible endpoints (below) |
 | `/max-agents N` | concurrency limit |
-| `/work-dir <path>` | working directory |
+| `/work-dir <path>` | working directory; offers a project config (below) |
 | `/apikey` | add or update API keys |
-| `/config [path]` | load a config file; bare returns to discovery |
+| `/config [path]` | use a config file; bare returns to discovery from the work dir |
 | `/no-review [true\|false]` | toggle plan approval |
 | `/status`, `/help`, `/clear`, `/exit`, `/quit` | |
 
-**Planner route state.** `CliState` records the chosen provider, not just the
-model id. `set_cloud_planner(provider, model)`, the endpoint setter, and the local
-setter each clear the other routes. `planner_spec()` renders the route as
-`provider:model[@url]` everywhere it is displayed; `planner_cloud_provider()`
-selects the key in `cli/runner.py::_resolve_planner_api_key`. The retired-model
-warning matches on `provider:model`. `/local planner <model>` takes a bare name
-because the active runtime already names the provider.
+**Planner route state.** `CliState.planner` is one `PlannerRoute` (§13),
+defaulting to `anthropic:claude-opus-5`. Every setter —
+`set_cloud_planner(provider, model)`, `set_endpoint_planner(endpoint_id, model)`,
+`set_local_planner(backend, model, base_url)` — assigns a whole new route, so
+there is nothing to clear and no stale field can misroute the planner.
+`planner_model`, `planner_backend`, `planner_base_url` and `planner_endpoint_id`
+are read-only views for display code. `planner_spec()` renders the route as
+`provider:model[@url]` everywhere it is displayed (a local planner on the active
+host omits its `@url`). `/local off` with a local planner falls back to
+`cli.core.models.default_planner_route` — the recommended planner of the first
+provider with a key. The retired-model warning matches on `provider:model`.
+`/local planner <model>` takes a bare name because the active runtime already
+names the provider. `tests/application/test_route.py` asserts that any sequence
+of setters leaves exactly one route kind.
 
 **Modes.** `CliState.mode` is `cloud`, `local`, or `hybrid`, shown in the toolbar
 and `/status`. It decides which surfaces validate against keys and which against a
@@ -1658,13 +1732,17 @@ runs the `/local` wizard with no key, **Hybrid** asks for a planner key then run
 agent model (installed models with size and quantization, or curated suggestions
 pulled with a progress bar), picks a planner (recommended from the curated
 table's `is_small()`), reports context fit against the configured context budgets,
-and confirms. It then offers `Save this setup to ./mak.yaml? [y/N]` (default no),
-rendering a packaged example and round-tripping it through `load_config` +
-`validate_config` before writing. Sub-commands: `status`, `models`,
+and confirms. It then offers `Save this setup to .mak/config.yaml? [y/N]`
+(default no), writing `<work dir>/.mak/config.yaml` with the planner's route
+(`backend`/`base_url`, or `endpoint:`) and round-tripping it through
+`load_config` + `validate_config`. Sub-commands: `status`, `models`,
 `use <model> […]`, `planner <model>`, `pull <model>` (interruptible, resumable),
 `url <base_url>`, `off`. Connected hosts persist in
 `~/.config/mak/local_hosts.json` (`cli/core/local_hosts.py`). An unreachable server
-is one red line, never a traceback.
+is one red line, never a traceback. Discovery, the Ollama client and the
+saved-host probe are a `LocalSeams` value (`cli/core/local_seams.py`) held on
+`CliState.local_seams`; a test builds a state with fake seams, and no module
+state changes.
 
 **`/mode`** refuses to switch into a mode that is not usable yet ("run `/local`",
 "run `/apikey`").
@@ -1677,19 +1755,39 @@ policy on demand (the only place `/endpoint` spends a request). Endpoints persis
 in `~/.config/mak/endpoints.json`. Credentials are asked for as **variable
 names**; `/apikey` writes values.
 
+**Project config bootstrap** (`cli/project_config.py`). On startup, and after a
+successful `/work-dir` (which returns the `"work_dir"` action to the loop), the
+app calls `offer_project_config`: if the work dir has no `.mak/` and no explicit
+`/config` is set, it asks `Create .mak/config.yaml here from <seed>? [y/N]`.
+Yes copies `seed_config_path()` (the user's `~/.config/mak/config.yaml`, else
+the packaged default) and never overwrites an existing file; no writes nothing, and
+the run creates `.mak/` for its state on demand. The question is an injectable
+`confirm` callable.
+
 **Session-only configuration.** Slash-command changes live in `CliState` and are
-never written to a config file, with two explicit exceptions: `/local`'s save
-prompt (on "y") and `/endpoint` (endpoints are reusable infrastructure).
-`cli/runner.py` enforces this: `build_session()` builds an in-memory `MakConfig`
-and passes MAK a real `argparse.Namespace` **without** the config path, and
-`_apply_state_to_config` anchors `mak_dir` with `config.anchor_mak_dir`. New CLI
-state that affects a run belongs in `_apply_state_to_config`. A cloud planner
-chosen in the app replaces a config-file `planner.endpoint`.
-`run_session_in_thread` runs `session.run()` on a thread and joins it.
+never written to a config file, with three explicit exceptions, each behind a
+yes: the project-config offer, `/local`'s save prompt, and `/endpoint`
+(endpoints are reusable infrastructure). `cli/runner.py` is the bridge:
+`request_from_state(state)` describes the run as a `RunRequest` — always an
+explicit, resolved work dir, the session's `PlannerRoute`, `selected_models` as
+the roster, `max_agents` — and `config_for(state)` / `build_session(task,
+state)` run it through `build_config` and `application.build_session`. New CLI
+state that affects a run belongs in `request_from_state`. The app's planner
+route always replaces the config file's. `plan_in_thread` calls
+`session.propose_plan`; `run_session_in_thread` runs `session.run()` on a thread
+and joins it.
+
+**Services on the state.** `CliState` is the one object the app passes to every
+handler, the completer, setup and the UI, so it also carries the app's services:
+`local_seams` and a lazily built `ModelRegistry` (`state.models()`, or an
+injected `model_registry`). `state.config_file()` is the session's config —
+explicit or discovered from the work dir — and every app-side config read
+(endpoints, context budgets, auto-refresh) goes through it.
 
 **API keys** (`cli/core/api_keys.py`): loaded from `~/.config/mak/.env`, then the
-deprecated `mak/.env`, with exported variables winning; injected into
-`os.environ` before each session. `save_keys` accepts any variable name — it
+deprecated `mak/.env`, with exported variables winning. A session never exports
+them: `cli/runner.session_env(state)` passes `read_env_files()` overlaid with
+`os.environ` and the session's keys to the application API as `env`. `save_keys` accepts any variable name — it
 parses the existing file, changes only the names it was asked to, and writes
 atomically at `0600`. `key_names_for(endpoints)` lists the names configured
 endpoints need.
@@ -1698,7 +1796,11 @@ endpoints need.
 `print_ok` / `print_warn` / `print_error` if it mutates state), register it in
 `handle_command()`, add it to `COMMANDS` in `completer.py` (drives both the menu
 and `/help`), and add argument completions to `MakCompleter`. Return `"exit"` or
-`"clear"` for commands the main loop acts on.
+`"clear"` (or `"work_dir"`) for commands the main loop acts on. The loop runs
+each command through `MakCli._dispatch_command`: an unexpected exception prints
+one `✗ /cmd failed: …` line and returns to the prompt, with the traceback logged
+at `DEBUG` on `cli.app`; `KeyboardInterrupt` and `EOFError` still end the
+session.
 
 ## 15. Model catalog
 
@@ -1734,9 +1836,14 @@ a refresh never writes `config.yaml` (an acceptance test byte-compares it).
   `cli/app.py::_init_state`, gated by `models.auto_refresh` and
   `MAK_NO_MODEL_REFRESH`, and never prints. `/refresh-models` is the synchronous
   counterpart. Listing a local runtime during a refresh is capped at 2 seconds.
+- **Credential and adapter identity.** `ModelEntry.api_key_env` /
+  `.adapter_type` answer for the three built-in providers and are `None` for any
+  endpoint's entry — its endpoint owns both. They never raise and never guess a
+  variable name.
 - **`cli/core/models.py`** is a thin adapter: `ModelInfo` is `ModelEntry`, and
-  `all_models()` reads a module-level `ModelRegistry()`. There is no import-time
-  model list.
+  every helper (`all_models`, `models_for_provider`,
+  `recommended_planner_for_provider`, `default_planner_route`) takes the registry
+  explicitly. There is no module-level registry and no import-time I/O.
 
 ## 16. Local runtimes
 
@@ -1878,7 +1985,7 @@ Rules for changing the study:
 
 ## Prerequisites
 
-- **Python ≥ 3.11** (CI runs 3.11).
+- **Python ≥ 3.11** (CI runs 3.11 and 3.13).
 - **git** on `PATH`.
 - Provider SDKs (`anthropic`, `openai`, `google-genai`) install as dependencies
   and are imported lazily; the test suite never needs a key.
@@ -1908,12 +2015,14 @@ cli/                          # interactive app (prompt_toolkit + rich) and `mak
 ├── commands.py               # slash-command handlers
 ├── completer.py              # COMMANDS list + MakCompleter
 ├── local.py                  # /local wizard and sub-commands
-├── runner.py                 # library bridge, in-memory config, token counter, git diff
+├── project_config.py         # offer to create <work dir>/.mak/config.yaml
+├── runner.py                 # CliState → RunRequest bridge, token counter, git diff
 ├── setup.py                  # first-run mode and key wizard
 ├── ui.py                     # rich rendering
 ├── core/
 │   ├── api_keys.py           # ~/.config/mak/.env parse/merge/write
 │   ├── local_hosts.py        # remembered local hosts
+│   ├── local_seams.py        # LocalSeams: discover / client / host probe
 │   ├── models.py             # thin adapter over mak/models/
 │   └── state.py              # CliState
 └── endpoints/                # /endpoint: commands, wizard, prompts, render
@@ -1921,6 +2030,7 @@ cli/                          # interactive app (prompt_toolkit + rich) and `mak
 mak/
 ├── __main__.py               # `mak run`
 ├── _version.py               # the single version source
+├── application/              # request, config, route, keys, session, env — both front ends
 ├── bootstrap.py              # composition root
 ├── config.py / config.yaml   # config schema, loading, discovery; packaged default
 ├── examples/                 # packaged example configs (`mak examples`)
@@ -1970,8 +2080,8 @@ mypy --strict mak cli      # zero errors
 ruff check mak cli tests   # zero findings
 ```
 
-CI (`.github/workflows/ci.yml`) runs all three on pushes to `main` and on pull
-requests. Focused runs while iterating: `pytest tests/node_store/ -q`,
+CI (`.github/workflows/ci.yml`) runs all three on Python 3.11 and 3.13, on
+pushes to `main` and on pull requests. Focused runs while iterating: `pytest tests/node_store/ -q`,
 `pytest tests/test_session.py -q`.
 
 - Add tests with every feature.
@@ -1981,9 +2091,15 @@ requests. Focused runs while iterating: `pytest tests/node_store/ -q`,
 - Conflict-check changes: extend `tests/conflict_detector/test_false_positive_corpus.py`.
 - Performance rewrites of subtle behaviour: write a **differential** test against
   the implementation being replaced.
-- **No test may read the real user configuration.** `tests/conftest.py` isolates
-  `.env` lookups and `XDG_CONFIG_HOME` per test; see
-  Wave 25 in [`TASKS.md`](TASKS.md) for the one module-level registry that still escapes it.
+- **No test may read the real user configuration.** `tests/conftest.py`'s
+  `pytest_configure` points `HOME` and `XDG_CONFIG_HOME` at a throwaway directory
+  before any test module is imported, and a per-test fixture isolates the `.env`
+  lookups. `tests/test_hermetic.py` fails if the manifest, endpoint store,
+  `local_hosts.json`, user `.env` or user `config.yaml` resolve outside it. Never read
+  per-user state at import time.
+- **Behaviour must not depend on the host Python.** When a standard-library
+  answer differs between versions (as `Path.glob`'s trailing `**` does), MAK
+  decides the meaning and the test states it explicitly.
 - No test touches the network — provider fetches use fake sources, local-runtime
   tests inject the client, and endpoint tests use `tests/support/fake_openai_server.py`
   on loopback.
@@ -2078,9 +2194,9 @@ Deliberate, fail-safe tradeoffs — not bugs:
 - Hardening a CLI bridge wrapper (`mak/agent_runner/wrappers/`) for a specific
   `claude` / `codex` / `gh copilot` version, or extending the sandbox (host
   allowlisting).
-- Small, self-contained steps from [`TASKS.md`](TASKS.md): the slash-command
-  guard (Wave 25), matching `.pre-commit-config.yaml` to CI, numeric pre-release
-  tag ordering, and removing the legacy `mak/.env` (Wave R).
+- Small, self-contained steps from [`TASKS.md`](TASKS.md): matching
+  `.pre-commit-config.yaml` to CI, numeric pre-release tag ordering, and removing
+  the legacy `mak/.env` (Wave R).
 
 ---
 
@@ -2143,9 +2259,13 @@ Deliberate, fail-safe tradeoffs — not bugs:
 - **Endpoint** — a configured model service; **profile** — its preset defaults;
   **transport** — its wire protocol.
 - **Adapter** — the translator between MAK's protocol and one agent backend.
-- **Composition root** — `mak/bootstrap.py`.
-- **`.mak/`** — runtime state: node store, journal, lock table, lease, task
-  graph, session log.
+- **Composition root** — `mak/bootstrap.py`; **application API** —
+  `mak/application/`, which both front ends use to build a run.
+- **PlannerRoute** — the planner's route (hosted, endpoint or local) as one
+  complete value.
+- **`.mak/`** — the project's MAK directory: its optional `config.yaml`, and
+  runtime state (node store, journal, lock table, lease, task graph, session
+  log). The user-level config is `~/.config/mak/config.yaml`.
 - **`.makignore`** — the project's gitignore-style list of paths MAK never
   ingests.
 

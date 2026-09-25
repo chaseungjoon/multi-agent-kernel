@@ -279,24 +279,25 @@ def _closing_bracket(segment: str, open_at: int) -> int | None:
 # bare ``**`` to directories only, so an include pattern ending in one ingests
 # nothing; reproducing that exactly keeps the pruning walk a pure performance
 # change rather than a quiet widening of what gets ingested.
-_MATCH_NOTHING = re.compile(r"(?!)")
-
-
 def _include_regex(pattern: str) -> re.Pattern[str]:
     """Compile a ``Path.glob`` include pattern into a matcher for relative paths.
 
     ``**`` followed by a separator matches zero or more whole path segments,
     which is what makes ``**/*.py`` match a file at the root as well as one
     nested ten deep. Every other wildcard is confined to a single segment.
+
+    A **trailing** ``**`` matches every file below it, at any depth. That is
+    decided here rather than inherited from the host: ``Path.glob("src/**")``
+    yields directories only on Python 3.11/3.12 and files too from 3.13, and a
+    project's ingested file set must not depend on which Python runs MAK. The
+    chosen meaning is 3.13's, and the one ``.makignore`` gives ``a/**``.
     """
     parts = pattern.split("/")
     out: list[str] = []
     for index, part in enumerate(parts):
         last = index == len(parts) - 1
         if part == "**":
-            if last:
-                return _MATCH_NOTHING
-            out.append("(?:[^/]+/)*")
+            out.append("(?:[^/]+/)*[^/]+" if last else "(?:[^/]+/)*")
             continue
         out.append(_segment_regex(part))
         if not last:

@@ -214,6 +214,60 @@ class TestInstallPlan:
             session.plan("do stuff", review=False)
 
 
+class _ScriptedPlanner:
+    """A planner that returns a fixed plan and records what it was shown."""
+
+    def __init__(self, plan: list[SubTask]) -> None:
+        self._plan = plan
+        self.calls: list[str] = []
+
+    def decompose(self, task: str, _nodes: object) -> list[SubTask]:
+        self.calls.append(task)
+        return list(self._plan)
+
+
+class TestProposePlan:
+    """The public planning entry point a front end reviews before installing."""
+
+    def _session(self, tmp_path: Path, planner: object) -> Session:
+        (tmp_path / "m.py").write_text("def load():\n    return 0\n")
+        store = _store(tmp_path)
+        return Session(
+            session_id="s1", config=_config(tmp_path), node_store=store,
+            lock_table=LockTable(), registry=FakeRegistry(),  # type: ignore[arg-type]
+            agent_runner=StagingRunner(store),  # type: ignore[arg-type]
+            planner=planner,  # type: ignore[arg-type]
+        )
+
+    def test_proposes_a_validated_plan_without_installing_it(
+        self, tmp_path: Path
+    ) -> None:
+        planner = _ScriptedPlanner([_task("t", ["m.py::function::lod"])])
+        session = self._session(tmp_path, planner)
+        session.initialize()
+        proposal = session.propose_plan("fix a")
+        assert planner.calls == ["fix a"]
+        # Validated: the typo'd target is grounded to the real node.
+        assert proposal.subtasks[0].target_nodes == [NodeId("m.py::function::load")]
+        assert proposal.findings
+        assert session.state is SessionState.INITIALIZED
+        session.install_plan(proposal.subtasks, objective="fix a")
+        assert session.state is SessionState.PLANNED
+
+    def test_plan_is_propose_plus_install(self, tmp_path: Path) -> None:
+        planner = _ScriptedPlanner([_task("t", ["m.py::function::load"])])
+        session = self._session(tmp_path, planner)
+        session.initialize()
+        session.plan("fix a", review=False)
+        assert session.state is SessionState.PLANNED
+
+    def test_proposing_needs_a_planner(self, tmp_path: Path) -> None:
+        session = self._session(tmp_path, None)
+        session.initialize()
+        with pytest.raises(SessionError, match="no planner"):
+            session.propose_plan("x")
+
+
 class TestPlanValidation:
     """Wave 10: install_plan grounds and augments plans against the code graph."""
 

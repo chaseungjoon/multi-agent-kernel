@@ -8,13 +8,12 @@ The planned work for MAK, in priority order.
 
 | Wave | Title | Review items | Depends on | Branch |
 |:-:|---|---|---|---|
-| [**25**](#wave-25--green-hermetic-suite-endpoint-aware-model-identity-one-front-end-api) | Green hermetic suite, endpoint-aware model identity, one front-end API | S7, S14 (tests), B7, B8, Q9 | — | `feat/25-front-end-unification` |
-| [**27**](#wave-27--session-decomposition-consolidation-wave) | Session decomposition (consolidation, no features) | S1, B1, Q7, Q10, Q11 | 25 | `feat/27-session-decomposition` |
-| [**7**](#wave-7--retrieval-based-graph-aware-planner) | Retrieval-based, graph-aware planner | S2, B2 | 25 (27 recommended) | `feat/7-planner-retrieval` |
+| [**27**](#wave-27--session-decomposition-consolidation-wave) | Session decomposition (consolidation, no features) | S1, B1, Q7, Q10, Q11 | — | `feat/27-session-decomposition` |
+| [**7**](#wave-7--retrieval-based-graph-aware-planner) | Retrieval-based, graph-aware planner | S2, B2 | 27 recommended | `feat/7-planner-retrieval` |
 | [**28**](#wave-28--write-sets-that-can-grow-safely) | Write sets that can grow safely | S3, B3, Q4 (headers) | 27 | `feat/28-growable-write-sets` |
 | [**29**](#wave-29--agents-that-can-look-and-test) | Agents that can look and test | S4, B4, Q5 | 27, 28 | `feat/29-agent-tools` |
 | [**30**](#wave-30--respect-the-users-repository) | Respect the user's repository | S5, S9, S10, S16 (clean tree), B5, B10, B11 | 27 recommended | `feat/30-repository-respect` |
-| [**R**](#wave-r--first-public-release) | First public release | S16 (spend cap), Q6 | 25, 30 | `feat/R-release-prep` |
+| [**R**](#wave-r--first-public-release) | First public release | S16 (spend cap), Q6 | 30 | `feat/R-release-prep` |
 | [**31**](#wave-31--sqlite-state-store) | SQLite state store | S6, B6 | 27 | `feat/31-sqlite-state` |
 | [**32**](#wave-32--scheduler-fairness-and-plan-review-previews) | Scheduler fairness and plan-review previews | S8, S16 (previews), B9 | 27 | `feat/32-scheduler-fairness` |
 | [**33**](#wave-33--evaluate-what-can-actually-fail) | Evaluate what can actually fail | S11, Q2 | 7, 28 (for meaningful numbers) | `feat/33-honest-evaluation` |
@@ -23,324 +22,12 @@ The planned work for MAK, in priority order.
 
 ---
 
-## Wave 25 — Green hermetic suite, endpoint-aware model identity, one front-end API
-
-### Status and branch
-
-- **Planned, not started.** Implement on **`feat/25-front-end-unification`**.
-  (The original branch name, `feat/25-endpoint-aware-model-identity`, was never
-  created; the scope grew, so the name changed with it.)
-- **Merged with review items S7, B7, B8, S14 (test hygiene) and Q9.** The
-  original Wave 25 was about how the CLI turns a model id into a credential and
-  route. S7/B7 are the same problem one level up: two front ends that each
-  resolve routes and keys. Both touch `cli/commands.py`, `cli/core/state.py`,
-  `cli/runner.py`, `mak/__main__.py` and `mak/bootstrap.py`, so they cannot be
-  done on separate branches without constant conflicts.
-- **Partly pre-empted by the 0.9.2b hotfix** (`Hotfix/planner-agent-naming-mismatch`):
-  `/planner` now requires `provider:model` and refuses a bare id with every
-  matching spec suggested, and each planner setter clears the other routes.
-  Original defect 25.c (misrouting through a stale `planner_endpoint_id`) and
-  design D25.2 (route a bare id by its entry's endpoint) are therefore
-  **superseded**; what remains of them is making the invariant structural
-  (D25.3).
-
-### Goal
-
-1. The suite is green on every supported Python and never reads the
-   developer's real configuration.
-2. No `ModelEntry` property raises for any entry any endpoint can produce.
-3. `mak run` and the interactive app build sessions, resolve planner routes and
-   resolve planner keys through **one** application API, so the same settings
-   cannot behave differently depending on the front end.
-4. An unexpected error in one slash command costs that command, not the session.
-
-### Evidence and root cause
-
-#### 25.a — `ModelEntry.api_key_env` / `.adapter_type` raise for endpoint entries
-
-`mak/models/catalog.py:99-113` resolves both through `PROVIDER_KEY_ENV` /
-`PROVIDER_ADAPTER`, which hold three names. Endpoint entries share the same
-dataclass. Measured on 2026-09-21 with OpenRouter configured:
-
-```text
-catalog size: 533
-providers:    openrouter 446 · openai 48 · gemini 28 · anthropic 11
-openrouter:prism-ml/ternary-bonsai-2-27b
-  .api_key_env  -> ValueError: unknown provider: 'openrouter'
-  .adapter_type -> ValueError: unknown provider: 'openrouter'
-```
-
-After the 0.9.2b hotfix no production path reads either property
-(`grep -rn "\.api_key_env\|\.adapter_type" cli mak` finds only
-`AgentConfig.adapter_type` in `mak/bootstrap.py` and a docstring in
-`cli/core/models.py:9`). They are now a latent trap: the documented CLI-facing
-surface of `ModelInfo`, a three-row copy of what the endpoint layer already
-knows, raising for 84% of a real catalog.
-
-#### 25.b — A test depends on `$HOME`
-
-`tests/models/test_cli_adapter.py:26-30` iterates `all_models()`, which reads
-`_REGISTRY = ModelRegistry()` built **at import** of `cli/core/models.py:39`
-from the real `~/.config/mak/models.json`. `tests/conftest.py:28` sets
-`XDG_CONFIG_HOME` per test — too late for an import-time read.
-
-```text
-XDG_CONFIG_HOME=<empty dir>  ->  12 passed
-XDG_CONFIG_HOME=<real>       ->  1 failed, 11 passed
-```
-
-#### 25.c — The planner-route invariant is maintained by hand in four places
-
-`CliState` holds four fields (`planner_model`, `planner_backend`,
-`planner_base_url`, `planner_endpoint_id`) that must describe exactly one route.
-They are cleared by hand in `cli/core/state.py:99-110` (`set_cloud_planner`),
-`cli/commands.py:569-572` (endpoint planner), `cli/local.py:288-293`
-(`apply_local_planner`) and `cli/local.py:~318`. The next setter added will
-forget one field — which is precisely how 0.9.2b's misrouting bug happened.
-
-#### 25.d — No guard around slash commands
-
-`cli/app.py:126` calls `handle_command(text, self.state, self.console)` with no
-`try`. Any uncaught exception leaves the REPL loop and discards the whole
-session — work dir, planner, roster, mode, keys — behind a raw traceback.
-
-#### 25.e — `iter_source_files` vs. `Path.glob` for a trailing `**`
-
-`tests/node_store/test_ingestion.py:157-182` compares the pruning walker with
-`Path.glob` across nine include shapes. For `("src/**",)` it fails three times
-(one per exclude set) on Python 3.13:
-
-```text
-AssertionError: assert [] == [PosixPath('.../src/test_a.py'), ...]
-```
-
-The walker compiles a trailing bare `**` to a never-matching pattern because
-`Path.glob("src/**")` returned **directories only** on 3.11/3.12. Python 3.13
-changed it to also yield files. CI runs 3.11 only (`.github/workflows/ci.yml`),
-so CI is green while every 3.13 developer sees red — the failure has been
-"tracked, not fixed" since it appeared, which is how a suite gets normalized to
-red (review Q9).
-
-#### 25.f — Two planner-key resolvers with different precedence
-
-- `mak/__main__.py:283` `_planner_api_key(config)` — **used in production** by
-  both front ends (`mak/__main__.py:474`).
-- `cli/runner.py:70` `_resolve_planner_api_key(state)` — reachable **only from
-  tests** (`tests/test_cli_endpoint_selection.py:223-257`,
-  `tests/test_cli_local.py:20`). Those tests assert behaviour of code the app
-  never runs, which is false confidence; the 0.9.2b hotfix had to change both.
-
-#### 25.g — The app builds sessions through an `__main__` module
-
-`cli/runner.py:119-190` imports `build_session` and `load_env_file` from
-`mak.__main__`, fabricates a nine-field `argparse.Namespace` to satisfy it,
-mutates `os.environ` with the user's keys (`cli/runner.py:131-136`), and
-re-derives planner-route precedence a third time (`cli/runner.py:147-176`; the
-other two are `bootstrap.planner_from_spec` and the `CliState` setters).
-
-#### 25.h — Private reach-ins and global seams
-
-- `cli/runner.py:193-217` `plan_in_thread` reads `session._planner` and
-  `session._node_store`.
-- `cli/local.py:120-146` keeps `_discover_fn`, `_client_factory`,
-  `_probe_host_fn` as module globals reassigned through `global` by
-  `set_seams`/`reset_seams`.
-- `cli/core/models.py:39` `_REGISTRY` is a process-wide singleton — the direct
-  cause of 25.b.
-
-All three contradict `AGENTS.md` ("No global mutable state").
-
-### Design decisions
-
-#### D25.1 — The endpoint owns credential and adapter identity
-
-Change `ModelEntry.api_key_env` and `.adapter_type` to return `str | None`:
-`None` for any provider outside the built-in three. `None` means "this entry
-cannot answer; ask its endpoint". Do **not** invent a value (`""`, a guessed
-`<PROVIDER>_API_KEY`) — that would let a future caller pass a key check it never
-performed. Do **not** delete the properties in this wave; widening is
-compatible, removal is not.
-
-#### D25.2 — Superseded
-
-Bare-id routing was replaced by the 0.9.2b rule "the provider is mandatory".
-Keep one regression test that a bare id matching two endpoints is refused with
-both specs listed.
-
-#### D25.3 — One planner route value
-
-Introduce a frozen `PlannerRoute` dataclass (in the new application package,
-D25.5):
-
-```python
-@dataclass(frozen=True, slots=True)
-class PlannerRoute:
-    kind: Literal["hosted", "endpoint", "local"]
-    model: str
-    provider: str = ""        # hosted: anthropic | openai | gemini
-    endpoint_id: str = ""     # endpoint
-    backend: str = ""         # local: ollama | openai
-    base_url: str = ""        # local, or hosted gateway
-```
-
-`CliState` stores **one** `planner: PlannerRoute` instead of four fields. Every
-setter builds a new route and assigns it; there is nothing to clear. The four
-old names stay as **read-only** properties for display code during this wave.
-`PlannerRoute.spec()` renders `provider:model[@url]`; `PlannerRoute.from_spec()`
-is `bootstrap.planner_from_spec`'s parser, so the grammar exists once.
-`PlannerRoute.apply(planner_config)` produces the `PlannerConfig` route fields
-(rewriting all four, as `planner_from_spec` does today).
-
-#### D25.4 — No test may read the real user configuration
-
-- Move environment isolation to `pytest_configure` in `tests/conftest.py`
-  (runs before any test module is imported): set `HOME` and `XDG_CONFIG_HOME`
-  to a session temp dir.
-- Keep the per-test fixture for `.env` isolation.
-- Make `cli/core/models.py` lazy: `registry()` builds on first call and accepts
-  an override for tests; no import-time I/O.
-- Add a guard test: during the run, `mak.models.manifest.manifest_path()`, the
-  endpoint store path, the `local_hosts.json` path and `~/.config/mak/.env` all
-  resolve under the temp dir.
-- Keep `test_every_entry_resolves_its_key_env`, rewritten against fixture data
-  that includes a third-party entry and asserting D25.1's `None`.
-
-#### D25.5 — One application API: `mak/application/`
-
-A new package, the only thing either front end calls to turn settings into a
-session:
-
-| Module | Contents |
-|---|---|
-| `request.py` | `RunRequest` (frozen): `config_path: Path \| None`, `work_dir`, `model_specs: tuple[str, ...]`, `planner: PlannerRoute \| None`, `max_agents: int \| None`, `default_agent: str \| None`, `sandbox: bool`, `verbose: int`, `api_keys: Mapping[str, str]` (session-only overlay), `no_review: bool` |
-| `config.py` | `build_config(request) -> MakConfig` — pure: load/discover, apply overrides, anchor `mak_dir`, validate. Replaces `cli/runner._apply_state_to_config` and the override block of `mak/__main__.main` |
-| `keys.py` | `resolve_planner_key(config, env) -> str \| None` — the **only** planner-key resolver; `env` is an explicit `Mapping` (default `os.environ`) |
-| `session.py` | `build_session(config, *, env, sandbox, default_agent) -> Session` — moved from `mak/__main__.py:405`, unchanged in behaviour |
-| `env.py` | `load_env_file` moved from `mak/__main__.py:97` |
-
-`mak/__main__.py` keeps only argparse, `main`, reporting and warnings. The CLI
-stops mutating `os.environ`: it passes `{**os.environ, **state.api_keys}` as
-`env`. `bootstrap.py`'s two environment reads (`:180`, `:389`) take the same
-mapping (the endpoint resolver already accepts one,
-`mak/endpoints/resolution.py:232`).
-
-#### D25.6 — A public planning entry point on `Session`
-
-Add `Session.propose_plan(user_task) -> PlanProposal(subtasks, findings)`
-(decompose + validate, no review, no install). `Session.plan()` becomes
-`propose_plan` + review + `install_plan`. `cli/runner.plan_in_thread` calls
-`propose_plan`. Nothing outside `mak/` touches `session._*`.
-
-#### D25.7 — Seams are injected, not global
-
-- `cli/local.py`: a `LocalSeams` dataclass (`discover`, `client_factory`,
-  `probe_host`) with a `default()` constructor, held on the app object and
-  passed to the `/local` handlers. Delete `set_seams`/`reset_seams`.
-- `cli/core/models.py`: the lazy registry of D25.4, held by the app and passed
-  to handlers that need it.
-
-#### D25.8 — What a trailing `**` means in `include_patterns`
-
-Decide **independently of the host Python**: a trailing `**` matches every file
-**and** directory below it — Python 3.13's behaviour, and the same meaning
-`.makignore` already gives `a/**`. The differential test keeps `Path.glob` as the
-oracle only for shapes whose behaviour is identical on 3.11–3.13; the trailing
-`**` shape gets an explicit expected list. Document the rule in CONTRIBUTING §3.1.
-
-#### D25.9 — Slash-command failures are contained
-
-Wrap the `handle_command` call: an unexpected exception prints one error line
-naming the command and returns to the prompt; the traceback goes to the log at
-`DEBUG`. `KeyboardInterrupt` and `EOFError` are not caught there (the loop
-already treats them as exit).
-
-### Implementation plan
-
-- **25.1 Freeze the defects as failing tests**, each with self-supplied data:
-  a third-party `ModelEntry` property read; the trailing-`**` walker case with an
-  explicit expected list; a slash command that raises; a parity test (25.9)
-  that currently fails because the app and `mak run` resolve different planner
-  keys for the same `CliState`.
-- **25.2 Hermetic suite (D25.4).** `pytest_configure` isolation, lazy CLI
-  registry, the guard test. Confirm `test_every_entry_resolves_its_key_env`
-  now fails for the right reason on a clean machine.
-- **25.3 Widen the properties (D25.1).** Update docstrings in
-  `mak/models/catalog.py` and `cli/core/models.py:9`.
-- **25.4 Walker semantics (D25.8).** Change `_include_regex`'s trailing-`**`
-  rule in `mak/node_store/ingestion.py`; update the test; add Python 3.13 to
-  CI (`.github/workflows/ci.yml` matrix `["3.11", "3.13"]`) so a host-dependent
-  difference cannot hide again.
-- **25.5 `PlannerRoute` (D25.3).** Add it, move `CliState` onto it, route all
-  four setters through it, and delete the hand clearing. Add the invariant test:
-  after any sequence of `/planner`, `/local planner`, `/mode`, and endpoint
-  selection, exactly one route kind is set.
-- **25.6 `mak/application/` (D25.5).** Move `build_session`, `load_env_file`
-  and `_planner_api_key`; write `build_config`. Point `mak/__main__.py` and
-  `cli/runner.py` at it. Delete `cli/runner._resolve_planner_api_key` and
-  `_endpoint_planner_key`; port their tests to `resolve_planner_key`.
-- **25.7 Stop mutating `os.environ` in the app.** Thread `env` through
-  `build_session` → `build_registry` → `bootstrap`'s key read (`:389`) and the
-  local base-URL read (`:180`).
-- **25.8 `Session.propose_plan` (D25.6)** and the `plan_in_thread` switch.
-- **25.9 Parity test.** For a table of logical settings (hosted planner,
-  endpoint planner, local planner, gateway `@url`, `--models` roster with an
-  endpoint, `--max-agents`), build the `MakConfig` and planner key through the
-  `mak run` path and through the app path; assert equality.
-- **25.10 Injected seams (D25.7).** Convert `cli/local.py` and its tests.
-- **25.11 REPL guard (D25.9).**
-- **25.12 Gates and manual check.** Full suite on 3.11 and 3.13, `ruff`,
-  `mypy --strict mak cli`. By hand in the app: `/planner` with each route kind,
-  `/endpoint remove` then `/planner <cached-model>`, a third-party → hosted
-  switch, `/local` wizard end to end, a deliberately broken command.
-- **25.13 Document.** CONTRIBUTING §12, §13, §14 (application API, key
-  resolution, `PlannerRoute`), §3.1 (walker rule), Part IV (hermetic rule);
-  remove issues 1–4 from CONTRIBUTING's open issues; CHANGELOG.
-
-### Required test matrix
-
-| Case | Setup | Expected |
-|---|---|---|
-| `api_key_env` / `adapter_type`, built-in entry | `anthropic:claude-opus-5` | `"ANTHROPIC_API_KEY"` / `"anthropic_api"` |
-| same, third-party entry | `openrouter:z-ai/glm-5.2` | `None`, never a raise |
-| suite reads real config | any | guard test fails if any config path resolves outside the temp dir |
-| walker, `src/**` | fixture tree | `src/mod.py`, `src/test_a.py`, `src/text_b.py`, `src/deep/inner.py` on every Python |
-| walker, other shapes | fixture tree | equal to `Path.glob` on 3.11 and 3.13 |
-| planner route after any transition | any setter sequence | exactly one `PlannerRoute.kind` |
-| bare id offered by two endpoints | fixture catalog | refused, both specs listed |
-| parity: same settings, both front ends | table in 25.9 | identical `MakConfig` and planner key |
-| app never mutates `os.environ` | build a session with keys in `CliState` | `os.environ` unchanged |
-| slash command raises | injected failing handler | one error line, prompt returns, traceback at DEBUG |
-| Ctrl+C / Ctrl+D in the loop | — | exit as today |
-| `/local` with injected seams | fake discover/client | no module-level state changed |
-
-### Acceptance criteria
-
-- `pytest -q` is green on Python 3.11 and 3.13, locally and in CI, with the
-  real `~/.config/mak/` untouched and unread.
-- No `ModelEntry` property raises.
-- `grep -rn "from mak.__main__" cli` returns nothing; `cli/` never touches a
-  `Session` private attribute.
-- There is exactly one planner-key resolver and one route-precedence
-  implementation, and the parity test covers both front ends.
-- `grep -n "^\s*global " cli/*.py` returns nothing.
-- A failing slash command does not end the session.
-
-### Deliberately out of scope
-
-- Removing `api_key_env` / `adapter_type` from `ModelEntry` (a breaking change).
-- Persisting the planner selection across sessions (session-only configuration
-  is a design constraint).
-- Extending the curated judgment table to third-party models.
-- Any change to capability negotiation.
-
----
-
 ## Wave 27 — Session decomposition (consolidation wave)
 
 ### Status and branch
 
-- **Planned.** Implement on **`feat/27-session-decomposition`** after Wave 25
-  (its green, hermetic suite is this wave's regression net).
+- **Planned.** Implement on **`feat/27-session-decomposition`**. The green,
+  hermetic suite that shipped in 0.9.3b is this wave's regression net.
 - **First consolidation wave under P.3.** No new behaviour, no new config keys,
   no new event types except where noted in D27.6.
 - **Merges review items S1, B1, Q7, Q10, Q11.** Waves 28, 29, 31, 32 and 34 all
@@ -569,8 +256,8 @@ current design. Acceptance: `grep -rnE "Wave [0-9]+" mak cli` returns nothing.
   items S2 and B2.** The original wave treated the problem as cost; the review
   adds that it is also quality — the planner guesses from names what the kernel
   already knows from its dependency graph.
-- Depends on Wave 25 (one planning entry point, `Session.propose_plan`). Easier
-  after Wave 27 but not blocked by it.
+- Builds on the one planning entry point, `Session.propose_plan` (shipped in
+  0.9.3b). Easier after Wave 27 but not blocked by it.
 
 ### Goal
 
@@ -1265,7 +952,7 @@ Record each answer in `CHANGELOG.md` or CONTRIBUTING before starting.
   it (R.6) or declare POSIX-only in metadata and README. **Do not ship untested
   Windows code as supported.**
 - **R.0.4 Supported Python versions.** `pyproject.toml:10` claims `>=3.11`,
-  unbounded. Wave 25 adds 3.13 to CI. Pick the matrix and make metadata, CI and
+  unbounded. CI runs 3.11 and 3.13 (since 0.9.3b). Pick the matrix and make metadata, CI and
   README agree.
 - **R.0.5 Base install and SDKs.** See R.3.1.
 - **R.0.6 Default spend cap.** See R.7.1.
@@ -1371,7 +1058,8 @@ install, ruff + mypy + pytest.
 
 ### R.6 Test matrix and platform claims
 
-- **R.6.1 Expand `ci.yml`** to every Python and OS claimed (Wave 25 adds 3.13).
+- **R.6.1 Expand `ci.yml`** to every Python and OS claimed (3.11 and 3.13 run
+  since 0.9.3b).
 - **R.6.2 Test the non-editable install path.**
 - **R.6.3 Windows: test it or drop it.** The project lease — the "one MAK per
   project" safety property — depends on the `msvcrt` branch.

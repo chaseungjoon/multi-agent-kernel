@@ -222,7 +222,7 @@ def _gc(argv: list[str]) -> int:
 
     work_dir = argv[0] if argv and not argv[0].startswith("-") else None
     try:
-        config = load_config(discover_config_path())
+        config = load_config(discover_config_path(work_dir))
         if work_dir is not None:
             config = replace(
                 config, session=replace(config.session, work_dir=work_dir)
@@ -256,7 +256,7 @@ def _gc(argv: list[str]) -> int:
 def _examples(argv: list[str]) -> int:
     """List the packaged example configs, or print one to stdout.
 
-    ``mak examples local-ollama > mak.yaml`` is the whole non-interactive
+    ``mak examples local-ollama > .mak/config.yaml`` is the whole non-interactive
     quickstart for a local run, which is why this prints the file rather than
     writing it: redirecting is the user's decision, and MAK does not create a
     config file on its own.
@@ -268,7 +268,7 @@ def _examples(argv: list[str]) -> int:
         print("Packaged example configs — mak examples <name> prints one:\n")
         for name in list_examples():
             print(f"  {name}")
-        print("\ne.g.  mak examples local-ollama > mak.yaml")
+        print("\ne.g.  mak examples local-ollama > .mak/config.yaml")
         return 0
     try:
         path = example_path(argv[0])

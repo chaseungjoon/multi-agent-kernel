@@ -14,11 +14,11 @@ Two rules govern the whole module:
   ``ollama serve`` on someone's machine is not a code editor's business, so a
   machine with nothing running gets install guidance, not a background process.
 - **Nothing is written to disk without an explicit yes.** The wizard ends by
-  *offering* to save to ``./mak.yaml``, defaulting to **no**. MAK's standing rule
-  is that it never writes a config file except when the user explicitly changes a
-  model (CONTRIBUTING §11); an interactive "Save this setup? [y/N]" is that rule,
-  not an exception to it. Declining leaves a session-only setting, which is all
-  ``CliState`` ever was.
+  *offering* to save to the project's ``.mak/config.yaml``, defaulting to
+  **no**. MAK's standing rule is that it never writes a config file except
+  when the user explicitly changes a model (CONTRIBUTING §11); an interactive
+  "Save this setup? [y/N]" is that rule, not an exception to it. Declining
+  leaves a session-only setting, which is all ``CliState`` ever was.
   The one thing remembered without asking is *which hosts* were connected
   (``~/.config/mak/local_hosts.json``, a cache like ``models.json``), so a
   ``/local url`` survives a restart; ``/local forget`` removes one.
@@ -30,12 +30,14 @@ prompt loop.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 from rich.console import Console
 
 from cli.core.local_hosts import load_hosts, save_hosts
+from cli.core.local_seams import HOST_PROBE_TIMEOUT_S, LocalSeams
+from cli.core.models import default_planner_route
 from cli.core.state import (
     MODE_CLOUD,
     MODE_HYBRID,
@@ -52,24 +54,9 @@ from mak.local import (
     OllamaClient,
     OllamaError,
     OllamaModel,
-    discover,
     recommended_for,
 )
-from mak.local.runtime import (
-    KIND_OLLAMA,
-    probe_ollama,
-    probe_openai_compatible,
-)
-
-# Injectable seams. Module-level so tests replace them once, and so the wizard
-# and every sub-command go through the same two functions.
-DiscoverFn = Callable[[], list[LocalRuntime]]
-ClientFactory = Callable[[str], OllamaClient]
-HostProbe = Callable[[LocalHost], "LocalRuntime | None"]
-
-# A saved remote host is asked whether it is up on a UI path, so the answer
-# must come back in seconds rather than after the client's generation timeout.
-_HOST_PROBE_TIMEOUT_S = 2.0
+from mak.local.runtime import KIND_OLLAMA
 
 _INSTALL_GUIDANCE = (
     "  No local runtime is listening.\n\n"
@@ -96,54 +83,6 @@ _SUBCOMMANDS = (
     ("forget <base_url>", "remove a remembered host"),
     ("off", "drop back to cloud mode (keeps your API keys)"),
 )
-
-
-def default_discover() -> list[LocalRuntime]:
-    """Scan the well-known local endpoints. Never raises."""
-    return discover()
-
-
-def default_client(base_url: str) -> OllamaClient:
-    """Build a client for ``base_url``."""
-    return OllamaClient(base_url)
-
-
-def default_probe_host(host: LocalHost) -> LocalRuntime | None:
-    """Ask a saved host whether it is up and what it has. Never raises."""
-    if host.kind == KIND_OLLAMA:
-        return probe_ollama(host.url, timeout=_HOST_PROBE_TIMEOUT_S)
-    return probe_openai_compatible(
-        host.url, timeout=_HOST_PROBE_TIMEOUT_S, name="OpenAI-compatible server"
-    )
-
-
-_discover_fn: DiscoverFn = default_discover
-_client_factory: ClientFactory = default_client
-_probe_host_fn: HostProbe = default_probe_host
-
-
-def set_seams(
-    *,
-    discover_fn: DiscoverFn | None = None,
-    client_factory: ClientFactory | None = None,
-    probe_host_fn: HostProbe | None = None,
-) -> None:
-    """Replace the discovery / client / host-probe seams (tests only)."""
-    global _discover_fn, _client_factory, _probe_host_fn
-    if discover_fn is not None:
-        _discover_fn = discover_fn
-    if client_factory is not None:
-        _client_factory = client_factory
-    if probe_host_fn is not None:
-        _probe_host_fn = probe_host_fn
-
-
-def reset_seams() -> None:
-    """Restore the real discovery, client factory, and host probe."""
-    global _discover_fn, _client_factory, _probe_host_fn
-    _discover_fn = default_discover
-    _client_factory = default_client
-    _probe_host_fn = default_probe_host
 
 
 # ── remembered hosts ──────────────────────────────────────────────────────────
@@ -203,7 +142,7 @@ def spec_for(state: CliState, model: str) -> str:
 
 
 def _client(state: CliState) -> OllamaClient:
-    return _client_factory(state.local_base_url)
+    return state.local_seams.client_factory(state.local_base_url)
 
 
 def _require_runtime(state: CliState, console: Console) -> bool:
@@ -243,7 +182,7 @@ def refresh_local_models(state: CliState) -> tuple[list[str], list[str]]:
     previous = list(state.local_models)
     # Same bound as a saved-host probe: an unreachable host (a VPN peer that is
     # offline) otherwise blocks /refresh-models for the full generation timeout.
-    listed = _client(state).list_models(timeout=_HOST_PROBE_TIMEOUT_S)
+    listed = _client(state).list_models(timeout=HOST_PROBE_TIMEOUT_S)
     current = [model.name for model in listed]
     state.local_models = current
     remember_hosts(state)
@@ -256,7 +195,7 @@ def refresh_saved_host(
     state: CliState, host: LocalHost
 ) -> tuple[list[str], list[str]] | None:
     """Re-list a remembered, inactive host; None when it did not answer."""
-    runtime = _probe_host_fn(host)
+    runtime = state.local_seams.probe_host(host)
     if runtime is None:
         return None
     current = list(runtime.models)
@@ -285,12 +224,11 @@ def apply_agent_models(state: CliState, models: Sequence[str]) -> None:
 
 def apply_local_planner(state: CliState, model: str) -> None:
     """Point the planner at a local model (so the whole run is local)."""
-    state.planner_model = model
-    state.planner_backend = (
-        "ollama" if state.local_kind == KIND_OLLAMA else "openai"
+    state.set_local_planner(
+        "ollama" if state.local_kind == KIND_OLLAMA else "openai",
+        model,
+        state.local_base_url,
     )
-    state.planner_base_url = state.local_base_url
-    state.planner_endpoint_id = ""
     if state.mode == MODE_HYBRID:
         state.mode = MODE_LOCAL
 
@@ -315,8 +253,10 @@ def go_cloud(state: CliState) -> None:
     state.local_kind = ""
     state.local_base_url = ""
     state.local_models = []
-    state.planner_backend = ""
-    state.planner_base_url = ""
+    if state.planner.kind == "local":
+        # A local planner has no route once the runtime is dropped; fall back
+        # to the hosted planner a fresh session would pick.
+        state.planner = default_planner_route(state.models(), state.api_keys)
     state.selected_models = [
         spec for spec in state.selected_models
         if not spec.startswith(("local:", "ollama:"))
@@ -496,8 +436,9 @@ def _sub_url(args: list[str], state: CliState, console: Console) -> None:
     # Validated, then *probed*: a well-formed URL nothing answers at is a
     # setting that fails at dispatch instead of here.
     try:
-        version = _client_factory(url).version()
-        models = [model.name for model in _client_factory(url).list_models()]
+        client = state.local_seams.client_factory(url)
+        version = client.version()
+        models = [model.name for model in client.list_models()]
     except OllamaError as exc:
         print_error(console, str(exc))
         return
@@ -674,7 +615,7 @@ def run_wizard(state: CliState, console: Console) -> bool:
     console.print(f"  [dim]planner[/dim] {state.planner_spec()}")
     console.print(f"  [dim]mode   [/dim] {state.mode}")
     console.print()
-    if _yes(console, "Save this setup to ./mak.yaml?"):
+    if _yes(console, "Save this setup to .mak/config.yaml?"):
         _save_config(state, console)
     else:
         print_ok(console, "Kept for this session only.")
@@ -705,10 +646,11 @@ def survey_hosts(
     Returns ``(this_machine, remotes)``; a remote whose probe failed is paired
     with None so it can still be listed as unreachable.
     """
+    seams = state.local_seams
     remote_hosts = [h for h in state.all_local_hosts() if not h.is_this_machine()]
     with ThreadPoolExecutor(max_workers=len(remote_hosts) + 1) as pool:
-        local_future = pool.submit(_discover_fn)
-        probes = [pool.submit(_safe_probe, host) for host in remote_hosts]
+        local_future = pool.submit(seams.discover)
+        probes = [pool.submit(_safe_probe, seams, host) for host in remote_hosts]
         local_runtimes = local_future.result()
         remotes = [
             (host, future.result())
@@ -729,9 +671,9 @@ def survey_hosts(
     return local_runtimes, remotes
 
 
-def _safe_probe(host: LocalHost) -> LocalRuntime | None:
+def _safe_probe(seams: LocalSeams, host: LocalHost) -> LocalRuntime | None:
     try:
-        return _probe_host_fn(host)
+        return seams.probe_host(host)
     except Exception:  # noqa: BLE001 - a probe on a UI path must not raise
         return None
 
@@ -803,17 +745,23 @@ def _choose_planner(state: CliState, console: Console, agent_model: str) -> None
             f"  [dim]{agent_model} is small; a cloud planner (hybrid) usually "
             "produces better plans.[/dim]"
         )
+    # The current planner when it is already remote; a local one has nothing
+    # to keep, so the hosted default is offered instead.
+    cloud = (
+        state.planner
+        if state.planner.kind != "local"
+        else default_planner_route(state.models(), state.api_keys)
+    )
     options = [
         f"the same local model ({agent_model})",
         "another local model",
-        f"a cloud planner ({state.planner_spec()}) — hybrid mode",
+        f"a cloud planner ({cloud.spec()}) — hybrid mode",
     ]
     default = 2 if (entry is not None and entry.is_small() and _any_key(state)) else 0
     choice = _choose(console, options, "Planner", default_index=default)
     if choice == 2 and _any_key(state):
-        apply_cloud_planner(
-            state, state.planner_cloud_provider(), state.planner_model
-        )
+        state.planner = cloud
+        state.mode = MODE_HYBRID
         return
     if choice == 1 and state.local_models:
         index = _choose(console, state.local_models, "Local planner model")
@@ -833,7 +781,7 @@ def _report_context_fit(state: CliState, console: Console, model: str) -> None:
     one: a window too small for a bundle is the failure that otherwise produces
     a confident wrong answer with nothing in the log to explain it.
     """
-    from mak.config import discover_config_path, load_config
+    from mak.config import load_config
 
     try:
         context_length = _client(state).show(model).context_length
@@ -842,7 +790,7 @@ def _report_context_fit(state: CliState, console: Console, model: str) -> None:
     if context_length is None:
         return
     try:
-        session = load_config(discover_config_path()).session
+        session = load_config(state.config_file()).session
     except ConfigError:
         return
     budget_bytes = (
@@ -885,24 +833,26 @@ agents:
 """
 
 
-def _save_config(state: CliState, console: Console) -> None:
-    """Write the chosen setup to ``./mak.yaml``, then verify it loads."""
-    from pathlib import Path
+def _planner_yaml(state: CliState) -> str:
+    """Return the ``planner:`` route lines for the saved config."""
+    route = state.planner
+    if route.kind == "endpoint":
+        return f'  endpoint: "{route.endpoint_id}"\n'
+    backend = route.backend if route.kind == "local" else route.provider
+    lines = f'  backend: "{backend}"\n'
+    if route.base_url:
+        lines += f'  base_url: "{route.base_url}"\n'
+    return lines
 
+
+def _save_config(state: CliState, console: Console) -> None:
+    """Write the chosen setup to the project's ``.mak/config.yaml``, then load it."""
     from mak.bootstrap import validate_config
-    from mak.config import load_config
+    from mak.config import load_config, project_config_path
 
     agent_type = "ollama_api" if state.local_kind == KIND_OLLAMA else "local_api"
     model = state.selected_models[0].split("@")[0].partition(":")[2]
-    if state.planner_base_url:
-        planner_extra = (
-            f'  backend: "{state.planner_backend}"\n'
-            f'  base_url: "{state.planner_base_url}"\n'
-        )
-    elif state.planner_cloud_provider():
-        planner_extra = f'  backend: "{state.planner_cloud_provider()}"\n'
-    else:
-        planner_extra = ""
+    planner_extra = _planner_yaml(state)
     body = _CONFIG_TEMPLATE.format(
         max_agents=state.max_agents,
         planner_model=state.planner_model,
@@ -911,8 +861,9 @@ def _save_config(state: CliState, console: Console) -> None:
         agent_model=model,
         base_url=state.local_base_url,
     )
-    path = Path("mak.yaml").resolve()
+    path = project_config_path(state.work_dir).resolve()
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
         validate_config(load_config(path))
     except (OSError, ConfigError) as exc:

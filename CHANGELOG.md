@@ -14,6 +14,55 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.9.3b] — 2026-09-25
+
+### Changed
+- **Config discovery follows the project, and the project's config lives in
+  `.mak/`.** Without `--config` or `/config`, MAK now uses
+  `<work dir>/.mak/config.yaml`, then your user config
+  `~/.config/mak/config.yaml` (or `$XDG_CONFIG_HOME/mak/config.yaml`), then the
+  built-in default. The work dir is `--work-dir` (or the launch directory) for `mak run`
+  and `mak gc`, and the app's current work dir — so `/work-dir` now switches the
+  config too. A `mak.yaml` in the project directory is no longer read; move it
+  to `.mak/config.yaml`.
+- The `/local` wizard's "save this setup" writes `<work dir>/.mak/config.yaml`
+  (was `./mak.yaml`), and the `mak examples` templates suggest that location.
+- `mak run` and the interactive app now build their config, planner route,
+  planner key and session through one shared application API
+  (`mak/application/`), so the same settings behave the same in both. As part
+  of that, the app always applies its own planner and work dir over the config
+  file's, and shows the validated plan (the same one `mak run` reviews).
+- `/local off` with a local planner switches the planner to the default hosted
+  model for your keys, instead of leaving a local model with no route.
+
+### Added
+- **The app offers to create a project config.** When it starts in, or
+  `/work-dir` moves to, a directory without a `.mak/` folder, it asks whether to
+  create `.mak/config.yaml`, copied from `~/.config/mak/config.yaml` (or the
+  built-in default). Answering no writes nothing; `.mak/` is created on the first run as
+  before. `mak run` never asks.
+- CI runs on Python 3.13 as well as 3.11.
+
+### Fixed
+- **A failing slash command no longer ends the session.** An unexpected error
+  prints one line and returns to the prompt, keeping the work dir, planner,
+  models, mode and keys; the traceback goes to the debug log.
+- **The same settings could route the planner's key differently in the app and
+  in `mak run`.** There is now one resolver. A local or gateway planner named
+  in a config file no longer receives a cloud key guessed from its model name.
+- The app no longer exports your API keys into its process environment when it
+  builds a session.
+- Model catalog entries from third-party endpoints (e.g. OpenRouter) no longer
+  raise when asked for their key variable or adapter type; they answer "none"
+  and the endpoint decides.
+- `include_patterns` ending in `**` (e.g. `src/**`) now match every file below
+  them on every Python version; on Python 3.11/3.12 they matched nothing.
+- A `.mak/` folder that holds only a `config.yaml` is no longer reported as a
+  leftover state directory from an older MAK.
+- A `/local` setup saved with an endpoint planner now keeps the endpoint.
+- The test suite no longer reads the developer's real configuration and is
+  green on Python 3.13.
+
 ## [0.9.2b] — 2026-09-23
 
 ### Changed

@@ -15,6 +15,7 @@ user sees the URL and credential variable they are agreeing to.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from rich.console import Console
 
@@ -453,13 +454,17 @@ def commit(
     return endpoint
 
 
-def existing_ids() -> tuple[str, ...]:
-    """Return every endpoint id already configured, from both sources."""
+def existing_ids(config_file: Path | None = None) -> tuple[str, ...]:
+    """Return every endpoint id already configured, from both sources.
+
+    ``config_file`` is the session's config; without one, the config
+    discovered from the current directory is read.
+    """
     from mak.config import discover_config_path, load_config
 
     saved, _ = load_user_endpoints()
     try:
-        project = load_config(discover_config_path()).endpoints
+        project = load_config(config_file or discover_config_path()).endpoints
     except ConfigError:
         project = ()
     try:

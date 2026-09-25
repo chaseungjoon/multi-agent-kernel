@@ -258,7 +258,7 @@ class MakCompleter(Completer):
         results: list[Completion] = []
         for provider in PROVIDER_ORDER:
             has_key = bool(self._state.api_keys.get(_KEY_ENV[provider], "").strip())
-            for m in all_models():
+            for m in all_models(self._state.models()):
                 if m.provider != provider:
                     continue
                 spec = f"{provider}:{m.model_id}"
@@ -284,7 +284,7 @@ class MakCompleter(Completer):
         results: list[Completion] = []
         for provider in PROVIDER_ORDER:
             has_key = bool(self._state.api_keys.get(_KEY_ENV[provider], "").strip())
-            for m in all_models():
+            for m in all_models(self._state.models()):
                 if m.provider != provider:
                     continue
                 spec = f"{provider}:{m.model_id}"
@@ -307,7 +307,7 @@ class MakCompleter(Completer):
         self, partial: str, *, for_planner: bool
     ) -> list[Completion]:
         """Complete cached or selected models from configured endpoints."""
-        entries = all_models()
+        entries = all_models(self._state.models())
         results: list[Completion] = []
         seen: set[str] = set()
         for endpoint_id in self._state.endpoint_ids:

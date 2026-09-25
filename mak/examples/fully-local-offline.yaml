@@ -1,6 +1,6 @@
 # Air-gapped: nothing in this configuration contacts the network.
 #
-#   mak examples fully-local-offline > mak.yaml
+#   mak examples fully-local-offline > .mak/config.yaml
 #
 # Everything runs on localhost, the model catalog is never refreshed, and git
 # never pushes. Use this for a repository that must not leave the machine.

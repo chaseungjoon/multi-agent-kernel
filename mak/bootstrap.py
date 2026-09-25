@@ -16,8 +16,7 @@ are still constructed lazily inside the adapter, so building a registry performs
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
-from dataclasses import replace
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from mak.agent_runner.adapters.anthropic_api_adapter import AnthropicApiAdapter
@@ -165,7 +164,13 @@ def _split_spec(spec: str) -> tuple[str, str, str]:
     )
 
 
-def _local_agent(provider: str, model: str, url: str, spec: str) -> AgentConfig:
+def _local_agent(
+    provider: str,
+    model: str,
+    url: str,
+    spec: str,
+    env: Mapping[str, str] | None = None,
+) -> AgentConfig:
     """Build the roster entry for a ``local:``/``ollama:`` spec.
 
     ``ollama`` gets a default endpoint because the provider name *is* the
@@ -177,7 +182,8 @@ def _local_agent(provider: str, model: str, url: str, spec: str) -> AgentConfig:
             f"{spec!r} names no model; a local runtime has no default model — "
             f"write {_SPEC_SYNTAX}"
         )
-    base_url = url or os.environ.get(LOCAL_BASE_URL_ENV, "").strip()
+    source = os.environ if env is None else env
+    base_url = url or source.get(LOCAL_BASE_URL_ENV, "").strip()
     if not base_url and provider == "ollama":
         base_url = OLLAMA_DEFAULT_BASE_URL
     if not base_url:
@@ -192,70 +198,31 @@ def _local_agent(provider: str, model: str, url: str, spec: str) -> AgentConfig:
     )
 
 
-def planner_from_spec(spec: str, planner: PlannerConfig) -> PlannerConfig:
+def planner_from_spec(
+    spec: str,
+    planner: PlannerConfig,
+    *,
+    env: Mapping[str, str] | None = None,
+    endpoint_ids: Iterable[str] | None = None,
+) -> PlannerConfig:
     """Point ``planner`` at a ``provider:model[@base_url]`` spec.
 
-    The same grammar and resolution order as ``--models``: a configured
-    endpoint id first, then the built-in hosted providers, then the local
-    ones. Unlike an agent spec the model is required — a planner has no
-    per-provider default, and the provider is named precisely so that one
-    model offered by two services (``anthropic:`` and ``openrouter:``) cannot
-    be routed to the wrong one.
-
-    Every route field is rewritten, not merged: a stale ``base_url`` or
-    ``endpoint`` from the config beside the new route would give the planner
-    two answers to "where does this go".
+    A compatibility shell over :class:`mak.application.route.PlannerRoute`,
+    which owns the grammar: parsing a spec and applying a route are one
+    implementation whichever front end asks.
     """
-    provider, model, url = _split_spec(spec)
-    if not model:
-        raise ConfigError(
-            f"--planner {spec!r} names no model; write provider:model — "
-            f"e.g. anthropic:claude-opus-5"
-        )
-    cleared = replace(
-        planner, model=model, endpoint=None, backend=None, base_url=None,
-        api_key_env=None,
-    )
-    if provider in _configured_endpoint_ids():
-        if url:
-            raise ConfigError(
-                f"--planner {spec!r} names endpoint {provider!r} and also an "
-                "'@<base_url>'; the endpoint already has an address"
-            )
-        return replace(cleared, endpoint=provider)
-    if provider in _PROVIDER_TO_LOCAL:
-        local = _local_agent(provider, model, url, spec)
-        return replace(
-            cleared,
-            backend="ollama" if provider == "ollama" else "openai",
-            base_url=local.base_url,
-        )
-    if provider in _PROVIDER_TO_API:
-        if url and provider not in _BASE_URL_PROVIDERS:
-            raise ConfigError(
-                f"provider {provider!r} does not take an '@<base_url>'; only "
-                f"{', '.join(sorted(_BASE_URL_PROVIDERS))} do"
-            )
-        backend = _PROVIDER_TO_PLANNER_BACKEND[provider]
-        if url:
-            # A gateway: the real OpenAI key is not forwarded to it unless
-            # named, the same rule an ``openai:<model>@<url>`` agent follows.
-            return replace(
-                cleared,
-                backend=backend,
-                base_url=normalize_base_url(url, where=f"--planner {spec!r}"),
-            )
-        return replace(
-            cleared, backend=backend, api_key_env=_PROVIDER_TO_API[provider][1]
-        )
-    known = ", ".join(sorted({*SUPPORTED_PROVIDERS, *_configured_endpoint_ids()}))
-    raise ConfigError(
-        f"--planner: unknown endpoint or provider {provider!r}; MAK knows "
-        f"{known} — write provider:model[@base_url]"
-    )
+    from mak.application.route import PlannerRoute
+
+    route = PlannerRoute.from_spec(spec, endpoint_ids=endpoint_ids, env=env)
+    return route.apply(planner)
 
 
-def agents_from_specs(specs: list[str]) -> tuple[AgentConfig, ...]:
+def agents_from_specs(
+    specs: list[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    endpoint_ids: Iterable[str] | None = None,
+) -> tuple[AgentConfig, ...]:
     """Build an agent roster from ``provider[:model][@base_url]`` specs.
 
     Each spec names a provider and, optionally, an explicit model after a colon
@@ -272,17 +239,26 @@ def agents_from_specs(specs: list[str]) -> tuple[AgentConfig, ...]:
 
     A **configured endpoint id** is accepted in the provider position and is
     tried first: ``--models nvidia:meta/llama-3.3-70b-instruct`` resolves
-    against the endpoints in ``mak.yaml`` and the user store. Reserved ids can
+    against the endpoints in the project config and the user store. Reserved ids can
     never be taken by a user endpoint, so a prefix has exactly one meaning.
 
     Several models on one endpoint, and several endpoints on one transport, are
     both legal — uniqueness is by **agent id**, not by provider. That is the
     restriction Wave 22 removes: the registry used to be keyed by adapter type,
     so a second OpenAI-compatible entry silently replaced the first.
+
+    ``env`` is the environment an ``ollama:``/``local:`` spec without a URL
+    reads its default endpoint from (default: the process environment);
+    ``endpoint_ids`` the endpoints a prefix may name (default: every one
+    :func:`configured_endpoint_ids` finds).
     """
     if not specs:
         raise ConfigError(f"--models needs at least one entry: {_SPEC_SYNTAX}")
-    endpoints = _configured_endpoint_ids()
+    endpoints = (
+        frozenset(endpoint_ids)
+        if endpoint_ids is not None
+        else configured_endpoint_ids()
+    )
     agents: list[AgentConfig] = []
     taken: set[str] = set()
     for spec in specs:
@@ -290,7 +266,7 @@ def agents_from_specs(specs: list[str]) -> tuple[AgentConfig, ...]:
         if provider in endpoints:
             agent = _endpoint_agent(provider, model, url, spec, taken)
         elif provider in _PROVIDER_TO_API or provider in _PROVIDER_TO_LOCAL:
-            agent = _legacy_agent(provider, model, url, spec)
+            agent = _legacy_agent(provider, model, url, spec, env)
         else:
             known = ", ".join(sorted({*SUPPORTED_PROVIDERS, *endpoints}))
             raise ConfigError(
@@ -303,15 +279,20 @@ def agents_from_specs(specs: list[str]) -> tuple[AgentConfig, ...]:
             raise ConfigError(
                 f"{spec!r} resolves to the agent id '{agent_id}', which another "
                 "entry already claims. Two models on one endpoint need distinct "
-                "ids — name them in mak.yaml with an explicit 'id'."
+                "ids — name them in your config file with an explicit 'id'."
             )
         taken.add(agent_id)
         agents.append(agent)
     return tuple(agents)
 
 
-def _configured_endpoint_ids() -> frozenset[str]:
+def configured_endpoint_ids(config: MakConfig | None = None) -> frozenset[str]:
     """Return the ids of every configured endpoint, or an empty set.
+
+    The user store's endpoints plus ``config``'s own; with no ``config``, the
+    one :func:`~mak.config.discover_config_path` finds from the current
+    directory. A caller holding the run's config passes it, so a project
+    config discovered from a work dir other than the CWD is the one consulted.
 
     Total: ``--models`` has to keep working when the endpoint store is
     unreadable, and the store's own diagnostic is surfaced by ``/endpoint``.
@@ -323,6 +304,8 @@ def _configured_endpoint_ids() -> frozenset[str]:
     except Exception:  # noqa: BLE001 - a broken store must not break the CLI
         return frozenset()
     ids = {e.id for e in saved}
+    if config is not None:
+        return frozenset(ids | {e.id for e in config.endpoints})
     try:
         from mak.config import discover_config_path, load_config
 
@@ -359,7 +342,11 @@ def _endpoint_agent(
 
 
 def _legacy_agent(
-    provider: str, model: str, url: str, spec: str
+    provider: str,
+    model: str,
+    url: str,
+    spec: str,
+    env: Mapping[str, str] | None = None,
 ) -> AgentConfig:
     """Build the roster entry for a legacy ``provider[:model][@url]`` spec."""
     if url and provider not in _BASE_URL_PROVIDERS:
@@ -368,7 +355,7 @@ def _legacy_agent(
             f"{', '.join(sorted(_BASE_URL_PROVIDERS))} do"
         )
     if provider in _PROVIDER_TO_LOCAL:
-        return _local_agent(provider, model, url, spec)
+        return _local_agent(provider, model, url, spec, env)
     agent_type, key_env = _PROVIDER_TO_API[provider]
     return AgentConfig(
         type=agent_type,
@@ -380,13 +367,6 @@ def _legacy_agent(
             else None
         ),
     )
-
-
-def _resolve_api_key(agent: AgentConfig) -> str | None:
-    """Read the API key from the configured env var, if any. Never persisted."""
-    if agent.api_key_env is None:
-        return None
-    return os.environ.get(agent.api_key_env)
 
 
 def _api_factory(
@@ -492,7 +472,7 @@ def _unimplemented_factory(agent_type: str) -> Callable[[], AgentAdapter]:
 
 
 def resolved_agents(
-    config: MakConfig, *, env: dict[str, str] | None = None
+    config: MakConfig, *, env: Mapping[str, str] | None = None
 ) -> tuple[ResolvedAgentConfig, ...]:
     """Resolve the roster, merging project endpoints with the user store.
 

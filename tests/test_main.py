@@ -411,9 +411,10 @@ class TestPlannerApiKeyResolution:
             "planner:\n  model: claude-opus-5\n  api_key_env: VLLM_TOKEN\n"
             "agents:\n  - type: anthropic_api\n",
         )
+        from mak.application import resolve_planner_key
         from mak.config import load_config
 
-        assert cli._planner_api_key(load_config(cfg)) == "sk-explicit"
+        assert resolve_planner_key(load_config(cfg)) == "sk-explicit"
 
     def test_a_local_planner_resolves_to_no_key(self, tmp_path: Path) -> None:
         # None is what lets the adapter apply its placeholder rule rather than
@@ -423,6 +424,7 @@ class TestPlannerApiKeyResolution:
             "planner:\n  model: qwen2.5-coder:14b\n  backend: ollama\n"
             f"{_LOCAL_AGENTS}",
         )
+        from mak.application import resolve_planner_key
         from mak.config import load_config
 
-        assert cli._planner_api_key(load_config(cfg)) is None
+        assert resolve_planner_key(load_config(cfg)) is None

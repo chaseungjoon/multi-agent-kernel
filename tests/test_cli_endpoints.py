@@ -207,9 +207,7 @@ class TestModels:
         """Several hundred rows would destroy the session's scrollback."""
         _save(_endpoint())
         self._with_models(MODEL_LIST_CAP + 25)
-        from cli.core.models import registry
-
-        registry().reload()
+        state.models().reload()
         out = _run(["models", "gw"], state)
         assert "and 25 more" in out
         assert "Narrow it" in out
@@ -217,9 +215,7 @@ class TestModels:
     def test_a_filter_selects_a_subset(self, state: CliState) -> None:
         _save(_endpoint())
         self._with_models(10)
-        from cli.core.models import registry
-
-        registry().reload()
+        state.models().reload()
         out = _run(["models", "gw", "model-003"], state)
         assert "model-003" in out
         assert "model-004" not in out
@@ -227,9 +223,7 @@ class TestModels:
     def test_a_filter_matching_nothing_says_so(self, state: CliState) -> None:
         _save(_endpoint())
         self._with_models(3)
-        from cli.core.models import registry
-
-        registry().reload()
+        state.models().reload()
         assert "matches" in _run(["models", "gw", "zzz"], state)
 
 
@@ -248,7 +242,7 @@ class TestRemove:
         self, state: CliState
     ) -> None:
         _save(_endpoint())
-        state.planner_endpoint_id = "gw"
+        state.set_endpoint_planner("gw", "some-model")
         out = _run(["remove", "gw"], state)
         assert "still in use" in out
         assert "the planner" in out

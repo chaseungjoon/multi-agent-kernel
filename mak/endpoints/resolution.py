@@ -21,6 +21,7 @@ truth without either drifting.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TypeVar
 
@@ -222,7 +223,7 @@ def _pick(explicit: _T | None, from_profile: _T | None, default: _T) -> _T:
 def resolve_endpoint(
     endpoint: EndpointConfig,
     *,
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
     chat_probe_allowed: bool = False,
 ) -> ResolvedEndpoint:
     """Resolve one endpoint's capabilities and credential against ``env``.
@@ -290,7 +291,7 @@ def resolve_endpoint(
 
 
 def _resolve_headers(
-    endpoint: EndpointConfig, env: dict[str, str] | os._Environ[str]
+    endpoint: EndpointConfig, env: Mapping[str, str]
 ) -> tuple[tuple[str, str], ...]:
     """Resolve configured headers to ``(name, value)`` pairs.
 
@@ -313,7 +314,7 @@ def _resolve_headers(
 def resolve_endpoints(
     endpoints: tuple[EndpointConfig, ...],
     *,
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, ResolvedEndpoint]:
     """Resolve every endpoint, returning them keyed by id."""
     return {e.id: resolve_endpoint(e, env=env) for e in endpoints}

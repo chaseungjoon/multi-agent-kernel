@@ -17,7 +17,6 @@ from cli.core.models import (
     PROVIDER_ORDER,
     all_models,
     models_for_provider,
-    registry,
 )
 from cli.core.state import (
     MODE_CLOUD,
@@ -52,7 +51,11 @@ _KEY_ENV = {
 
 
 def handle_command(text: str, state: CliState, console: Console) -> str | None:
-    """Execute a ``/command`` line and return whether the app should keep running."""
+    """Execute a ``/command`` line and return the action the main loop takes.
+
+    ``"exit"``, ``"clear"``, ``"work_dir"`` (the working directory changed), or
+    None to keep prompting.
+    """
     parts = text.strip().split()
     if not parts:
         return None
@@ -64,7 +67,8 @@ def handle_command(text: str, state: CliState, console: Console) -> str | None:
     elif cmd == "/max-agents":
         _cmd_max_agents(args, state, console)
     elif cmd == "/work-dir":
-        _cmd_work_dir(args, state, console)
+        # The app, which owns the terminal, then offers a project config.
+        return "work_dir" if _cmd_work_dir(args, state, console) else None
     elif cmd == "/apikey":
         _cmd_apikey(state, console)
     elif cmd == "/config":
@@ -139,7 +143,7 @@ def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
         _list_models(state, console)
         return
 
-    configured = _configured_endpoints()
+    configured = _configured_endpoints(state)
     valid: list[str] = []
     for spec in args:
         provider = spec.split(":")[0].lower()
@@ -199,7 +203,7 @@ def _cmd_models(args: list[str], state: CliState, console: Console) -> None:
             print_warn(console, caveat)
 
 
-def _configured_endpoints() -> dict[str, EndpointConfig]:
+def _configured_endpoints(state: CliState) -> dict[str, EndpointConfig]:
     """Return every configured endpoint by id, or an empty map if none load.
 
     Total by construction: ``/models`` must stay usable when the endpoint store
@@ -209,7 +213,7 @@ def _configured_endpoints() -> dict[str, EndpointConfig]:
     try:
         from cli.endpoints.commands import all_endpoints
 
-        return {e.id: e for e in all_endpoints()}
+        return {e.id: e for e in all_endpoints(state.config_file())}
     except Exception:  # noqa: BLE001 - a broken store must not break /models
         return {}
 
@@ -314,7 +318,7 @@ def _list_models(state: CliState, console: Console) -> None:
             f"\n  [bold]{PROVIDER_DISPLAY[provider]}[/bold]"
             + ("" if has_key else " [dim]— no API key[/dim]")
         )
-        for m in models_for_provider(provider):
+        for m in models_for_provider(state.models(), provider):
             if m.retired:
                 rec = " [yellow]⚠ no longer offered[/yellow]"
             elif m.recommended:
@@ -338,7 +342,7 @@ def _endpoint_model_rows(
     """Return cached and manually selected models for one endpoint."""
     rows = [
         (entry.model_id, entry.planner_note())
-        for entry in registry().for_endpoint(endpoint.id)
+        for entry in state.models().for_endpoint(endpoint.id)
     ]
     known = {model_id for model_id, _note in rows}
     prefix = f"{endpoint.id}:"
@@ -361,7 +365,7 @@ def _print_endpoint_model_groups(
     state: CliState, console: Console, *, for_planner: bool
 ) -> None:
     """Show configured endpoints beside the built-in model providers."""
-    for endpoint in _configured_endpoints().values():
+    for endpoint in _configured_endpoints(state).values():
         has_key = not endpoint.api_key_env or _endpoint_key_present(endpoint, state)
         identity = (
             endpoint.display_name
@@ -408,16 +412,18 @@ def _cmd_max_agents(args: list[str], state: CliState, console: Console) -> None:
     print_ok(console, f"Max agents: {n}")
 
 
-def _cmd_work_dir(args: list[str], state: CliState, console: Console) -> None:
+def _cmd_work_dir(args: list[str], state: CliState, console: Console) -> bool:
+    """Change the working directory; return whether it changed."""
     if not args:
         console.print("  [dim]Usage: /work-dir /path/to/dir[/dim]")
-        return
+        return False
     p = Path(" ".join(args)).expanduser().resolve()
     if not p.is_dir():
         print_error(console, f"Directory not found: {p}")
-        return
+        return False
     state.work_dir = str(p)
     print_ok(console, f"Working directory: {state.work_dir_display()}")
+    return True
 
 
 def _cmd_apikey(state: CliState, console: Console) -> None:
@@ -430,8 +436,8 @@ def _cmd_config(args: list[str], state: CliState, console: Console) -> None:
         state.config_path = ""
         print_ok(
             console,
-            "Config: auto  [dim]— ./mak.yaml → ~/.config/mak/config.yaml → "
-            "built-in default[/dim]",
+            "Config: auto  [dim]— <work dir>/.mak/config.yaml → "
+            "~/.config/mak/config.yaml → built-in default[/dim]",
         )
     else:
         p = Path(args[0]).expanduser().resolve()
@@ -456,7 +462,7 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
     raw = args[0]
     provider, _, model = raw.partition(":")
     provider = provider.lower()
-    configured = _configured_endpoints()
+    configured = _configured_endpoints(state)
     endpoint = configured.get(provider)
     if endpoint is not None:
         _set_endpoint_planner(raw, endpoint, state, console)
@@ -492,7 +498,9 @@ def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:
 def _planner_specs_for_model(model_id: str, state: CliState) -> list[str]:
     """Return every ``provider:model`` spec that offers ``model_id``."""
     specs = [
-        f"{m.provider}:{m.model_id}" for m in all_models() if m.model_id == model_id
+        f"{m.provider}:{m.model_id}"
+        for m in all_models(state.models())
+        if m.model_id == model_id
     ]
     if model_id in state.local_models:
         specs.append(f"{state.local_provider()}:{model_id}")
@@ -509,9 +517,8 @@ def _set_cloud_planner(
             console, f"'{provider}:' names no model — write {provider}:<model>."
         )
         return
-    model_info = next(
-        (m for m in models_for_provider(provider) if m.model_id == model_id), None
-    )
+    offered = models_for_provider(state.models(), provider)
+    model_info = next((m for m in offered if m.model_id == model_id), None)
     if model_info is None:
         print_error(
             console,
@@ -547,10 +554,9 @@ def _set_endpoint_planner(
 ) -> None:
     """Point the planner at ``endpoint:model``, making the endpoint the route.
 
-    Sets both the model *and* the route, and clears the legacy
-    ``planner_backend`` / ``planner_base_url`` pair. Leaving those set beside an
-    endpoint would give the planner two answers to "where does this go", and
-    the resolution order would silently pick one.
+    The model and the route are one ``PlannerRoute``, so no earlier backend or
+    base URL can linger beside the endpoint and give the planner two answers to
+    "where does this go".
     """
     _, _, model = raw.partition(":")
     if not model:
@@ -566,15 +572,12 @@ def _set_endpoint_planner(
             "or run [bold]/apikey[/bold].",
         )
         return
-    state.planner_model = model
-    state.planner_endpoint_id = endpoint.id
-    state.planner_backend = ""
-    state.planner_base_url = ""
+    state.set_endpoint_planner(endpoint.id, model)
     if endpoint.id not in state.endpoint_ids:
         state.endpoint_ids.append(endpoint.id)
     print_ok(console, f"Planner: {endpoint.id}:{model}")
 
-    entry = registry().find(model, endpoint.id)
+    entry = state.models().find(model, endpoint.id)
     note = entry.planner_note() if entry is not None else "not evaluated"
     if note:
         # "Not evaluated" is a third state, distinct from "fine" and from
@@ -661,16 +664,15 @@ def _where(is_local: bool) -> str:
 def _planner_is_local(state: CliState) -> bool:
     """Whether the planner's traffic stays on this machine or network.
 
-    A selected endpoint answers by its explicit ``location``. The legacy
-    ``planner_base_url`` fallback still means local, because the only thing that
-    ever set it was the ``/local`` wizard.
+    A selected endpoint answers by its explicit ``location``; a local route
+    is local by definition, and a hosted one (even through a gateway) is not.
     """
-    if state.planner_endpoint_id:
-        return _endpoint_is_local(state.planner_endpoint_id)
-    return bool(state.planner_base_url)
+    if state.planner.kind == "endpoint":
+        return _endpoint_is_local(state.planner.endpoint_id, state)
+    return state.planner.kind == "local"
 
 
-def _endpoint_is_local(endpoint_id: str) -> bool:
+def _endpoint_is_local(endpoint_id: str, state: CliState) -> bool:
     """Whether an endpoint's traffic stays off the public internet.
 
     Reads the endpoint's stated ``location``. The old test — "does it have a
@@ -681,15 +683,15 @@ def _endpoint_is_local(endpoint_id: str) -> bool:
     hosted provider) while still being reported distinctly wherever privacy is
     described, because its traffic does leave this machine.
     """
-    endpoint = _configured_endpoints().get(endpoint_id)
+    endpoint = _configured_endpoints(state).get(endpoint_id)
     return endpoint is not None and endpoint.location is not Location.HOSTED
 
 
 def _spec_is_local(spec: str, state: CliState) -> bool:
     """Whether one selected model spec runs off the public internet."""
     prefix = spec.split(":")[0].lower()
-    if prefix in _configured_endpoints():
-        return _endpoint_is_local(prefix)
+    if prefix in _configured_endpoints(state):
+        return _endpoint_is_local(prefix, state)
     return spec.startswith(_LOCAL_SPEC_PREFIXES)
 
 
@@ -800,7 +802,9 @@ def _cloud_choices(state: CliState, *, for_planner: bool) -> list[tuple[str, str
     for provider in PROVIDER_ORDER:
         if not state.api_keys.get(_KEY_ENV[provider], "").strip():
             continue
-        entries = [m for m in models_for_provider(provider) if not m.retired]
+        entries = [
+            m for m in models_for_provider(state.models(), provider) if not m.retired
+        ]
         entries.sort(
             key=lambda m: not (m.planner_ok if for_planner else m.recommended)
         )
@@ -917,7 +921,7 @@ def _list_planner_models(state: CliState, console: Console) -> None:
             f"\n  [bold]{PROVIDER_DISPLAY[provider]}[/bold]"
             + ("" if has_key else " [dim]— no API key[/dim]")
         )
-        for m in models_for_provider(provider):
+        for m in models_for_provider(state.models(), provider):
             spec = f"{provider}:{m.model_id}"
             active = (
                 "[green]●[/green]" if spec == state.planner_spec() else "[dim]○[/dim]"
@@ -984,9 +988,9 @@ def _cmd_refresh_models(state: CliState, console: Console) -> None:
 
 def _refresh_catalog(state: CliState) -> RefreshReport:
     """Refresh built-in providers plus endpoints discovered at runtime."""
-    endpoints = tuple(_configured_endpoints().values())
+    endpoints = tuple(_configured_endpoints(state).values())
     if not endpoints:
-        return registry().refresh_now(state.api_keys)
+        return state.models().refresh_now(state.api_keys)
 
     from cli.core.api_keys import key_names_for, load_keys
     from mak.endpoints.resolution import resolve_endpoints
@@ -1000,7 +1004,7 @@ def _refresh_catalog(state: CliState) -> RefreshReport:
         *sources_for_endpoints(tuple(resolved.values())),
     )
     key_envs = {endpoint.id: endpoint.api_key_env or "" for endpoint in endpoints}
-    return registry().refresh_now(keys, sources=sources, key_envs=key_envs)
+    return state.models().refresh_now(keys, sources=sources, key_envs=key_envs)
 
 
 def _refresh_local(state: CliState, console: Console) -> None:
@@ -1043,7 +1047,11 @@ def _refresh_local(state: CliState, console: Console) -> None:
 def _warn_retired_selections(state: CliState, console: Console) -> None:
     # Keyed by provider as well as model: the same id retired by one provider
     # may still be offered by another.
-    retired = {f"{m.provider}:{m.model_id}" for m in all_models() if m.retired}
+    retired = {
+        f"{m.provider}:{m.model_id}"
+        for m in all_models(state.models())
+        if m.retired
+    }
     in_use = [
         spec for spec in state.selected_models
         if spec.partition("@")[0] in retired

@@ -1,6 +1,7 @@
 """Main CLI loop — the inline, Claude Code-style entry point for MAK."""
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from collections.abc import Callable
@@ -19,13 +20,10 @@ from rich.rule import Rule
 from cli.commands import handle_command
 from cli.completer import MakCompleter
 from cli.core.api_keys import any_key_set, load_keys
-from cli.core.models import (
-    providers_with_keys,
-    recommended_planner_for_provider,
-    registry,
-)
+from cli.core.models import default_planner_route, providers_with_keys
 from cli.core.state import CliState
 from cli.local import restore_saved_hosts
+from cli.project_config import offer_project_config
 from cli.runner import (
     build_session,
     get_git_diff,
@@ -72,15 +70,18 @@ def _key_bindings() -> KeyBindings:
     return kb
 
 
-def _auto_refresh_enabled() -> bool:
-    """Read ``models.auto_refresh`` from the discovered config (default on).
+_LOG = logging.getLogger(__name__)
+
+
+def _auto_refresh_enabled(state: CliState) -> bool:
+    """Read ``models.auto_refresh`` from the session's config (default on).
 
     Any config problem falls back to enabled — the registry still applies its own
     due/cooldown/opt-out checks, so this never forces an unwanted fetch.
     """
     try:
-        from mak.config import discover_config_path, load_config
-        return bool(load_config(discover_config_path()).models.auto_refresh)
+        from mak.config import load_config
+        return bool(load_config(state.config_file()).models.auto_refresh)
     except Exception:  # noqa: BLE001 - config trouble must not block startup
         return True
 
@@ -107,6 +108,7 @@ class MakCli:
                 sys.exit(1)
 
         print_banner(self.console, self.state)
+        offer_project_config(self.state, self.console)
 
         while True:
             try:
@@ -123,15 +125,37 @@ class MakCli:
                 continue
 
             if text.startswith("/"):
-                action = handle_command(text, self.state, self.console)
+                action = self._dispatch_command(text)
                 if action == "exit":
                     self._print_session_end()
                     break
                 if action == "clear":
                     self.console.clear()
                     print_banner(self.console, self.state)
+                if action == "work_dir":
+                    offer_project_config(self.state, self.console)
             else:
                 self._execute_task(text)
+
+    def _dispatch_command(self, text: str) -> str | None:
+        """Run one slash command; an unexpected error costs the command only.
+
+        The session — work dir, planner, roster, mode, keys — lives in this
+        loop, so an exception escaping a handler used to end all of it behind
+        a raw traceback. ``KeyboardInterrupt`` and ``EOFError`` are not caught
+        here: they are how the user leaves, and the loop handles them.
+        """
+        try:
+            return handle_command(text, self.state, self.console)
+        except (KeyboardInterrupt, EOFError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - contained by design, see above
+            command = text.split(maxsplit=1)[0]
+            _LOG.debug("slash command %s failed", command, exc_info=True)
+            self.console.print(
+                f"  [red]✗[/red] {command} failed: {type(exc).__name__}: {exc}"
+            )
+            return None
 
     # ── Task execution ─────────────────────────────────────────────────────────
 
@@ -345,23 +369,22 @@ class MakCli:
 
         endpoints = all_endpoints()
         keys = load_keys(key_names_for(endpoints))
-        # Kick off a scheduled model-catalog refresh (1st/15th) in the
-        # background. Returns immediately when not due, offline, keyless, or
-        # opted out; it never prints — results show up in /models and /status.
-        registry().maybe_auto_refresh(keys, enabled=_auto_refresh_enabled())
         state = CliState(
             api_keys=keys,
             endpoint_ids=[endpoint.id for endpoint in endpoints],
         )
+        # Kick off a scheduled model-catalog refresh (1st/15th) in the
+        # background. Returns immediately when not due, offline, keyless, or
+        # opted out; it never prints — results show up in /models and /status.
+        state.models().maybe_auto_refresh(
+            keys, enabled=_auto_refresh_enabled(state)
+        )
         # Reconnect to the hosts a previous session used (``/local url``);
         # offline, from the cached model lists.
         restore_saved_hosts(state)
-        avail = providers_with_keys(keys)
-        if avail:
-            first = avail[0]
-            rec   = recommended_planner_for_provider(first)
-            state.set_cloud_planner(first, rec)
-            state.selected_models = [f"{first}:{rec}"]
+        if providers_with_keys(keys):
+            state.planner = default_planner_route(state.models(), keys)
+            state.selected_models = [state.planner.spec()]
         return state
 
     def _build_session(self) -> PromptSession[str]:

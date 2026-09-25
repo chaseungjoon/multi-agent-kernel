@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from cli.commands import handle_command
 from cli.core.state import MODE_CLOUD, MODE_LOCAL, CliState
 from rich.console import Console
 
+from mak.application import PlannerRoute, resolve_planner_key
 from mak.endpoints.store import save_user_endpoints
 from mak.endpoints.types import EndpointConfig, Location, Transport
 
@@ -34,8 +37,16 @@ def _run(line: str, state: CliState) -> str:
 
 
 @pytest.fixture
-def state() -> CliState:
-    return CliState()
+def state(tmp_path: Path) -> CliState:
+    # A work dir of its own, so config discovery never reads the checkout's.
+    return CliState(work_dir=str(tmp_path))
+
+
+def _planner_key(state: CliState) -> str | None:
+    """Resolve the planner key exactly as the app's session build does."""
+    from cli.runner import config_for, session_env
+
+    return resolve_planner_key(config_for(state), session_env(state))
 
 
 class TestModelSelection:
@@ -143,15 +154,15 @@ class TestPlannerSelection:
         assert state.planner_model == "meta/llama"
         assert state.planner_endpoint_id == "nvidia-work"
 
-    def test_the_legacy_route_fields_are_cleared(
+    def test_the_previous_route_does_not_survive(
         self, state: CliState, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Two answers to 'where does this go' is how a planner leaks."""
         save_user_endpoints((_endpoint(),))
         monkeypatch.setenv("NV_KEY", "sk-nv")
-        state.planner_backend = "ollama"
-        state.planner_base_url = "http://localhost:11434/v1"
+        state.set_local_planner("ollama", "qwen", "http://localhost:11434/v1")
         _run("/planner nvidia-work:meta/llama", state)
+        assert state.planner == PlannerRoute.endpoint("nvidia-work", "meta/llama")
         assert state.planner_backend == ""
         assert state.planner_base_url == ""
 
@@ -183,7 +194,7 @@ class TestPlannerProviderSpec:
 
     def test_a_bare_model_is_refused_naming_the_spec(self, state: CliState) -> None:
         state.api_keys["ANTHROPIC_API_KEY"] = "sk-ant"
-        state.planner_model = "claude-sonnet-5"
+        state.set_cloud_planner("anthropic", "claude-sonnet-5")
         out = _run("/planner claude-opus-5", state)
         assert state.planner_model == "claude-sonnet-5"
         assert "anthropic:claude-opus-5" in out
@@ -192,8 +203,9 @@ class TestPlannerProviderSpec:
         self, state: CliState
     ) -> None:
         state.api_keys["OPENAI_API_KEY"] = "sk-oai"
+        before = state.planner
         out = _run("/planner openai:claude-opus-5", state)
-        assert state.planner_backend == ""
+        assert state.planner == before
         assert "Unknown model: openai:claude-opus-5" in out
 
     def test_the_same_model_on_two_providers_routes_where_named(
@@ -216,45 +228,47 @@ class TestPlannerProviderSpec:
 
 
 class TestPlannerKeyResolution:
+    """The app's planner key, resolved by the one resolver ``mak run`` uses."""
+
     def test_the_endpoint_credential_is_authoritative(
         self, state: CliState, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Not the model-name prefix — that would cross-send credentials."""
-        from cli.runner import _resolve_planner_api_key
-
         save_user_endpoints((_endpoint(),))
         monkeypatch.setenv("NV_KEY", "sk-nvidia")
-        state.planner_endpoint_id = "nvidia-work"
         # A model whose name *looks* like OpenAI's, served by NVIDIA.
-        state.planner_model = "gpt-oss-120b"
+        state.set_endpoint_planner("nvidia-work", "gpt-oss-120b")
         state.api_keys = {"OPENAI_API_KEY": "sk-openai"}
-        assert _resolve_planner_api_key(state) == "sk-nvidia"
+        assert _planner_key(state) == "sk-nvidia"
+
+    def test_a_session_key_reaches_an_endpoint(
+        self, state: CliState, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        save_user_endpoints((_endpoint(),))
+        monkeypatch.delenv("NV_KEY", raising=False)
+        state.set_endpoint_planner("nvidia-work", "gpt-oss-120b")
+        state.api_keys = {"NV_KEY": "sk-session"}
+        assert _planner_key(state) == "sk-session"
 
     def test_a_keyless_endpoint_resolves_to_none(self, state: CliState) -> None:
-        from cli.runner import _resolve_planner_api_key
-
         save_user_endpoints((_endpoint("vllm", key_env=None),))
-        state.planner_endpoint_id = "vllm"
+        state.set_endpoint_planner("vllm", "m")
         state.api_keys = {"OPENAI_API_KEY": "sk-openai"}
-        assert _resolve_planner_api_key(state) is None
+        assert _planner_key(state) is None
 
     def test_a_recorded_provider_beats_the_model_prefix(
         self, state: CliState
     ) -> None:
-        from cli.runner import _resolve_planner_api_key
-
         state.api_keys = {"ANTHROPIC_API_KEY": "sk-ant", "OPENAI_API_KEY": "sk-oai"}
         state.set_cloud_planner("openai", "claude-lookalike")
-        assert _resolve_planner_api_key(state) == "sk-oai"
+        assert _planner_key(state) == "sk-oai"
 
-    def test_without_an_endpoint_the_prefix_still_works(
+    def test_the_default_planner_uses_its_providers_key(
         self, state: CliState
     ) -> None:
-        from cli.runner import _resolve_planner_api_key
-
-        state.planner_model = "claude-opus-5"
         state.api_keys = {"ANTHROPIC_API_KEY": "sk-ant"}
-        assert _resolve_planner_api_key(state) == "sk-ant"
+        assert state.planner.spec() == "anthropic:claude-opus-5"
+        assert _planner_key(state) == "sk-ant"
 
 
 class TestModeSemantics:
@@ -322,16 +336,15 @@ class TestModeSemantics:
                 _endpoint("local-gw", location=Location.LOCAL, key_env=None),
             )
         )
-        state.planner_endpoint_id = "hosted-gw"
+        state.set_endpoint_planner("hosted-gw", "m")
         assert _planner_is_local(state) is False
-        state.planner_endpoint_id = "local-gw"
+        state.set_endpoint_planner("local-gw", "m")
         assert _planner_is_local(state) is True
 
 
 class TestStatus:
     def test_status_shows_the_planner_endpoint(self, state: CliState) -> None:
-        state.planner_endpoint_id = "nvidia-work"
-        state.planner_model = "meta/llama"
+        state.set_endpoint_planner("nvidia-work", "meta/llama")
         out = _run("/status", state)
         assert "nvidia-work:meta/llama" in out
 
