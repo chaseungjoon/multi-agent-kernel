@@ -86,6 +86,13 @@ class CliState:
     max_agents: int = 3
     work_dir: str = "."
     planner: PlannerRoute = field(default_factory=_default_planner)
+    # False while ``planner`` only mirrors the config file's ``planner:``
+    # section; a run then uses that section verbatim. True once the user chose
+    # a planner this session, which then overrides the config.
+    planner_pinned: bool = False
+    # The config file's roster, for display while ``selected_models`` is empty
+    # (an empty selection means "the config's agents, as configured").
+    config_roster: list[str] = field(default_factory=list)
     # Empty string = auto-discover from the work dir (<work dir>/.mak/config.yaml
     # → ~/.config/mak/config.yaml → the packaged default); a
     # non-empty value is an explicit file from /config.
@@ -127,6 +134,11 @@ class CliState:
 
     # ── Planner route ────────────────────────────────────────────────────────
 
+    def pin_planner(self, route: PlannerRoute) -> None:
+        """Make ``route`` the session's chosen planner, overriding the config."""
+        self.planner = route
+        self.planner_pinned = True
+
     def set_cloud_planner(self, provider: str, model: str) -> None:
         """Point the planner at a built-in hosted provider's model.
 
@@ -135,15 +147,15 @@ class CliState:
         (``anthropic:`` and an ``openrouter:`` endpoint), and the choice the
         user made is the one that must be routed.
         """
-        self.planner = PlannerRoute.hosted(provider, model)
+        self.pin_planner(PlannerRoute.hosted(provider, model))
 
     def set_endpoint_planner(self, endpoint_id: str, model: str) -> None:
         """Point the planner at ``model`` on a configured endpoint."""
-        self.planner = PlannerRoute.endpoint(endpoint_id, model)
+        self.pin_planner(PlannerRoute.endpoint(endpoint_id, model))
 
     def set_local_planner(self, backend: str, model: str, base_url: str) -> None:
         """Point the planner at ``model`` on the local runtime at ``base_url``."""
-        self.planner = PlannerRoute.local(backend, model, base_url)
+        self.pin_planner(PlannerRoute.local(backend, model, base_url))
 
     @property
     def planner_model(self) -> str:
@@ -246,8 +258,9 @@ class CliState:
         return self.config_path or "auto"
 
     def models_display(self) -> str:
-        """Return the selected agent models for status displays."""
-        return "  ".join(self.selected_models) if self.selected_models else "none"
+        """Return the agent models a run uses: the selection, else the config's."""
+        roster = self.selected_models or self.config_roster
+        return "  ".join(roster) if roster else "none"
 
     def work_dir_display(self) -> str:
         """Return the working directory for status displays, abbreviating $HOME."""

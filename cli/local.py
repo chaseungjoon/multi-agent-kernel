@@ -256,7 +256,7 @@ def go_cloud(state: CliState) -> None:
     if state.planner.kind == "local":
         # A local planner has no route once the runtime is dropped; fall back
         # to the hosted planner a fresh session would pick.
-        state.planner = default_planner_route(state.models(), state.api_keys)
+        state.pin_planner(default_planner_route(state.models(), state.api_keys))
     state.selected_models = [
         spec for spec in state.selected_models
         if not spec.startswith(("local:", "ollama:"))
@@ -760,7 +760,7 @@ def _choose_planner(state: CliState, console: Console, agent_model: str) -> None
     default = 2 if (entry is not None and entry.is_small() and _any_key(state)) else 0
     choice = _choose(console, options, "Planner", default_index=default)
     if choice == 2 and _any_key(state):
-        state.planner = cloud
+        state.pin_planner(cloud)
         state.mode = MODE_HYBRID
         return
     if choice == 1 and state.local_models:

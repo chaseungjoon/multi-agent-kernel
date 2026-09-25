@@ -19,6 +19,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from cli.config_sync import sync_with_config
 from cli.core.state import CliState
 from cli.ui import print_error, print_ok
 from mak.config import (
@@ -98,6 +99,7 @@ def offer_project_config(
     except OSError as exc:
         print_error(console, f"could not create {project_config_path(work_dir)}: {exc}")
         return None
+    sync_with_config(state)
     print_ok(console, f"Created {path}")
     console.print()
     return path

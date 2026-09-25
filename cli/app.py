@@ -19,8 +19,8 @@ from rich.rule import Rule
 
 from cli.commands import handle_command
 from cli.completer import MakCompleter
+from cli.config_sync import sync_with_config
 from cli.core.api_keys import any_key_set, load_keys
-from cli.core.models import default_planner_route, providers_with_keys
 from cli.core.state import CliState
 from cli.local import restore_saved_hosts
 from cli.project_config import offer_project_config
@@ -382,9 +382,8 @@ class MakCli:
         # Reconnect to the hosts a previous session used (``/local url``);
         # offline, from the cached model lists.
         restore_saved_hosts(state)
-        if providers_with_keys(keys):
-            state.planner = default_planner_route(state.models(), keys)
-            state.selected_models = [state.planner.spec()]
+        # The config file's planner and agents, until the user picks others.
+        sync_with_config(state)
         return state
 
     def _build_session(self) -> PromptSession[str]:

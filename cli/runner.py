@@ -49,16 +49,18 @@ def session_tokens(session: Session) -> int:
 def request_from_state(state: CliState) -> RunRequest:
     """Describe the run the app's current settings ask for.
 
-    The work dir is always explicit (the one the toolbar shows), the planner is
-    the session's route, and the roster is ``selected_models`` when one was
-    chosen — honored even when it does not match the mode: ``/mode`` offers to
-    change a mismatched combination, and a user who declines has chosen it.
+    The work dir is always explicit (the one the toolbar shows). The planner
+    is the session's route only once the user pinned one; until then the
+    config's ``planner:`` section is used verbatim. The roster is
+    ``selected_models`` when one was chosen — honored even when it does not
+    match the mode: ``/mode`` offers to change a mismatched combination, and a
+    user who declines has chosen it — and the config's ``agents:`` otherwise.
     """
     return RunRequest(
         config_path=Path(state.config_path) if state.config_path else None,
         work_dir=str(Path(state.work_dir or ".").resolve()),
         model_specs=tuple(state.selected_models),
-        planner=state.planner,
+        planner=state.planner if state.planner_pinned else None,
         max_agents=state.max_agents,
         api_keys={name: value for name, value in state.api_keys.items() if value},
         no_review=state.no_review,

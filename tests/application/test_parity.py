@@ -61,8 +61,8 @@ _ROWS: dict[str, tuple[list[str], Callable[[CliState], None]]] = {
     ),
     "gateway planner": (
         [],
-        lambda s: setattr(
-            s, "planner", PlannerRoute.hosted("openai", "gpt-5", "https://gw.example/v1")
+        lambda s: s.pin_planner(
+            PlannerRoute.hosted("openai", "gpt-5", "https://gw.example/v1")
         ),
     ),
     "roster with an endpoint": (
@@ -93,10 +93,13 @@ def _run_side(
     """Build what ``mak run`` would for the same settings, keys exported."""
     for name, value in _KEYS.items():
         monkeypatch.setenv(name, value)
+    # The app passes its planner only once the user chose one; until then
+    # both front ends use the config file's ``planner:`` section.
+    planner = ["--planner", state.planner.spec()] if state.planner_pinned else []
     argv = [
         "--task", "t",
         "--work-dir", str(work_dir),
-        "--planner", state.planner.spec(),
+        *planner,
         "--max-agents", str(state.max_agents),
         *extra,
     ]

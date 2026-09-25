@@ -663,7 +663,7 @@ class TestStatusAndThreading:
         state = _local_state(
             api_keys={"ANTHROPIC_API_KEY": "sk-real"}, work_dir=str(tmp_path)
         )
-        state.planner = PlannerRoute.local("ollama", _MODEL, _URL)
+        state.pin_planner(PlannerRoute.local("ollama", _MODEL, _URL))
         assert resolve_planner_key(config_for(state), session_env(state)) is None
 
     def test_a_cloud_planner_still_resolves_its_key(self, tmp_path: Path) -> None:

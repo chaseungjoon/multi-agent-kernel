@@ -12,6 +12,7 @@ from pathlib import Path
 from rich.console import Console
 
 from cli.completer import COMMANDS
+from cli.config_sync import sync_with_config
 from cli.core.models import (
     PROVIDER_DISPLAY,
     PROVIDER_ORDER,
@@ -422,6 +423,7 @@ def _cmd_work_dir(args: list[str], state: CliState, console: Console) -> bool:
         print_error(console, f"Directory not found: {p}")
         return False
     state.work_dir = str(p)
+    sync_with_config(state)  # the new work dir may bring its own config
     print_ok(console, f"Working directory: {state.work_dir_display()}")
     return True
 
@@ -446,6 +448,7 @@ def _cmd_config(args: list[str], state: CliState, console: Console) -> None:
             return
         state.config_path = str(p)
         print_ok(console, f"Config: {p}")
+    sync_with_config(state)
 
 
 def _cmd_planner(args: list[str], state: CliState, console: Console) -> None:

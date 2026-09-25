@@ -29,9 +29,9 @@ Nothing yet.
   (was `./mak.yaml`), and the `mak examples` templates suggest that location.
 - `mak run` and the interactive app now build their config, planner route,
   planner key and session through one shared application API
-  (`mak/application/`), so the same settings behave the same in both. As part
-  of that, the app always applies its own planner and work dir over the config
-  file's, and shows the validated plan (the same one `mak run` reviews).
+  (`mak/application/`), so the same settings behave the same in both. The app
+  always runs on the work dir it shows, and shows the validated plan (the same
+  one `mak run` reviews).
 - `/local off` with a local planner switches the planner to the default hosted
   model for your keys, instead of leaving a local model with no route.
 
@@ -44,6 +44,14 @@ Nothing yet.
 - CI runs on Python 3.13 as well as 3.11.
 
 ### Fixed
+- **The app now uses the config file's planner and agents.** It used to start
+  from the catalog's recommended planner for your first API key (e.g.
+  `anthropic:claude-opus-5`) and a one-model roster built from it, and to run
+  with those even though the config named others — so a project's `planner:`
+  and `agents:` were only honoured by `mak run`. The app now shows and runs
+  exactly what the config says, with every per-agent setting intact, until you
+  pick something else with `/planner` or `/models`; it re-reads the config
+  after `/work-dir` and `/config`, keeping any planner you picked.
 - **A failing slash command no longer ends the session.** An unexpected error
   prints one line and returns to the prompt, keeping the work dir, planner,
   models, mode and keys; the traceback goes to the debug log.

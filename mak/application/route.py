@@ -166,6 +166,36 @@ class PlannerRoute:
             f"{known} — write provider:model[@base_url]"
         )
 
+    @classmethod
+    def from_planner_config(cls, planner: PlannerConfig) -> PlannerRoute | None:
+        """Return the route a config file's ``planner:`` section describes.
+
+        The inverse of :meth:`apply`, for showing what a config will do. None
+        when the section names no model, or a route this value cannot hold
+        (e.g. a ``base_url`` on a provider that takes none). A config naming
+        no route at all is read the way the key resolver reads it: by the
+        model id's prefix.
+        """
+        model = planner.model
+        if not model:
+            return None
+        try:
+            if planner.endpoint:
+                return cls.endpoint(planner.endpoint, model)
+            if planner.backend == "ollama" or (
+                planner.backend in (None, "openai") and planner.base_url
+            ):
+                backend = planner.backend or "openai"
+                return cls.local(backend, model, planner.base_url or "")
+            if planner.backend in HOSTED_PROVIDERS and not planner.base_url:
+                return cls.hosted(planner.backend, model)
+            if planner.backend is None:
+                provider = _provider_by_prefix(model)
+                return cls.hosted(provider, model) if provider else None
+        except ConfigError:
+            return None
+        return None
+
     # ── Rendering and application ───────────────────────────────────────────
 
     def prefix(self) -> str:
@@ -208,3 +238,15 @@ class PlannerRoute:
             backend=self.provider,
             api_key_env=_PROVIDER_TO_API[self.provider][1],
         )
+
+
+def _provider_by_prefix(model: str) -> str:
+    """Return the hosted provider a bare model id names by convention, or ''."""
+    lowered = model.lower()
+    if lowered.startswith("claude"):
+        return "anthropic"
+    if lowered.startswith("gemini"):
+        return "gemini"
+    if lowered.startswith(("gpt", "o1", "o3", "o4")):
+        return "openai"
+    return ""

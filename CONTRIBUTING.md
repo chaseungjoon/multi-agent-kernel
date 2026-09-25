@@ -1705,11 +1705,27 @@ of `{pre_hash}..HEAD`. The token counter reads `Session.total_tokens`.
 | `/no-review [true\|false]` | toggle plan approval |
 | `/status`, `/help`, `/clear`, `/exit`, `/quit` | |
 
-**Planner route state.** `CliState.planner` is one `PlannerRoute` (§13),
-defaulting to `anthropic:claude-opus-5`. Every setter —
-`set_cloud_planner(provider, model)`, `set_endpoint_planner(endpoint_id, model)`,
-`set_local_planner(backend, model, base_url)` — assigns a whole new route, so
-there is nothing to clear and no stale field can misroute the planner.
+**The config is the starting point** (`cli/config_sync.py`).
+`sync_with_config(state)` runs at startup and whenever the config in effect can
+change (`/work-dir`, `/config`, creating a project config). It reads
+`state.config_file()` and sets `state.planner` to
+`PlannerRoute.from_planner_config(config.planner)` — the inverse of `apply`,
+inferring the provider from the model id when the section names no route — and
+`state.config_roster` to the config's agents rendered in the `/models` grammar
+(`agent_label`). Until the user chooses, the app shows exactly what the config
+says and a run uses the config's `planner:` and `agents:` sections verbatim, with
+every per-agent setting (`max_instances`, `timeout`, …) intact. A config whose
+planner a route cannot hold pins `cli.core.models.default_planner_route`
+instead, so a run always has a planner; an unreadable config leaves the state
+unchanged for the run to report.
+
+**Planner route state.** `CliState.planner` is one `PlannerRoute` (§13).
+`planner_pinned` is false while it only mirrors the config. Every setter —
+`pin_planner(route)`, `set_cloud_planner(provider, model)`,
+`set_endpoint_planner(endpoint_id, model)`,
+`set_local_planner(backend, model, base_url)` — assigns a whole new route and
+pins it, so there is nothing to clear and no stale field can misroute the
+planner; a pinned planner survives `/work-dir` and `/config`.
 `planner_model`, `planner_backend`, `planner_base_url` and `planner_endpoint_id`
 are read-only views for display code. `planner_spec()` renders the route as
 `provider:model[@url]` everywhere it is displayed (a local planner on the active
@@ -1769,11 +1785,12 @@ never written to a config file, with three explicit exceptions, each behind a
 yes: the project-config offer, `/local`'s save prompt, and `/endpoint`
 (endpoints are reusable infrastructure). `cli/runner.py` is the bridge:
 `request_from_state(state)` describes the run as a `RunRequest` — always an
-explicit, resolved work dir, the session's `PlannerRoute`, `selected_models` as
-the roster, `max_agents` — and `config_for(state)` / `build_session(task,
+explicit, resolved work dir; the session's `PlannerRoute` only when pinned (else
+the config's planner); `selected_models` as the roster when non-empty (else the
+config's agents); `max_agents` — and `config_for(state)` / `build_session(task,
 state)` run it through `build_config` and `application.build_session`. New CLI
-state that affects a run belongs in `request_from_state`. The app's planner
-route always replaces the config file's. `plan_in_thread` calls
+state that affects a run belongs in `request_from_state`. `models_display()`
+shows the selection, else `config_roster`. `plan_in_thread` calls
 `session.propose_plan`; `run_session_in_thread` runs `session.run()` on a thread
 and joins it.
 
@@ -2015,6 +2032,7 @@ cli/                          # interactive app (prompt_toolkit + rich) and `mak
 ├── commands.py               # slash-command handlers
 ├── completer.py              # COMMANDS list + MakCompleter
 ├── local.py                  # /local wizard and sub-commands
+├── config_sync.py            # mirror the config's planner and agents into CliState
 ├── project_config.py         # offer to create <work dir>/.mak/config.yaml
 ├── runner.py                 # CliState → RunRequest bridge, token counter, git diff
 ├── setup.py                  # first-run mode and key wizard
