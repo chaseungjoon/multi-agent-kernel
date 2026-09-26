@@ -88,7 +88,7 @@ def build_prompt(bundle: TaskBundle) -> str:
         targets.append(f"### {node_id}\n{source}")
     # Every read-only context kind the kernel ships, labelled by what it is:
     # full source, an API digest (a dependency past the byte budget), or a
-    # declared contract (Wave 20). Rendering only ``read_source`` left a CLI
+    # declared contract. Rendering only ``read_source`` left a CLI
     # agent blind to the other two.
     labels = {
         "contract": "declared contract",

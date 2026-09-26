@@ -62,14 +62,14 @@ def refresh_disabled_by_env() -> bool:
 class ReportedCapabilities:
     """What each endpoint's catalog reports about its models' parameters.
 
-    The one input Wave 24 needs from the model layer at composition time, and
-    deliberately the *narrowest* one: a read-only lookup from
+    The one input capability negotiation needs from the model layer at
+    composition time, and deliberately the *narrowest* one: a read-only lookup from
     ``(endpoint id, exact model id)`` to the reported parameter set, with the
     tri-state intact. The composition root builds it and hands it to
     ``mak.bootstrap.build_registry``; no adapter and no adapter factory ever
     touches the process-wide model registry or the disk.
 
-    Keys use the **exact** model id. Wave 24 measured
+    Keys use the **exact** model id. The live catalog shows
     ``inclusionai/ling-3.0-flash-vl`` reporting full structured-output support
     and ``inclusionai/ling-3.0-flash-vl:free`` reporting none, so canonicalizing
     a variant suffix away would attribute one product's capabilities to another.

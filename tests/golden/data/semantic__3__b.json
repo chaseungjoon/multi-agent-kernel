@@ -1,0 +1,130 @@
+{
+ "calls": 1,
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 2,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 0.0,
+     "dispatches": 1.0,
+     "mean_context_bytes": 0.0,
+     "redispatches": 0.0,
+     "stale_reads": 0.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 1.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "b": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 0,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "write_targets": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 0,
+     "starved": false,
+     "targets": [
+      "svc/exists.py",
+      "tests/test_exists.py"
+     ],
+     "task_id": "b",
+     "write_sources": 0
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "svc/exists.py",
+      "tests/test_exists.py"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "svc/exists.py",
+      "tests/test_exists.py"
+     ],
+     "source_lengths": {
+      "svc/exists.py": 144,
+      "tests/test_exists.py": 108
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "b",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "b"
+    }
+   ]
+  ]
+ },
+ "files": {
+  "svc/__init__.py": "",
+  "svc/exists.py": "from svc.users import get_user\n\n\ndef user_exists(uid):\n    try:\n        get_user(uid)\n    except KeyError:\n        return False\n    return True\n",
+  "svc/users.py": "_DB = {1: 'ann'}\n\n\ndef get_user(uid):\n    return _DB[uid]\n",
+  "tests/test_exists.py": "from svc.exists import user_exists\n\n\ndef test_unknown_user_does_not_exist():\n    assert not user_exists(99)\n"
+ },
+ "fixups": 0,
+ "mechanisms": [],
+ "outcome": "clean",
+ "resolved": true
+}

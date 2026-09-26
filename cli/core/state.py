@@ -106,7 +106,7 @@ class CliState:
     # Every host connected to before, remembered across sessions. The active
     # one is the ``local_*`` fields above; its entry here may be stale.
     local_hosts: list[LocalHost] = field(default_factory=list)
-    # ── Endpoints (Wave 22) ──────────────────────────────────────────────────
+    # ── Endpoints ────────────────────────────────────────────────────────────
     # Ids of endpoints this session knows about, in configured order. Held so
     # /status, the toolbar and the completer can name them without re-reading
     # the store on every keystroke.

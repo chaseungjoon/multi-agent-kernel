@@ -1,0 +1,125 @@
+{
+ "calls": 1,
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 1,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 0.0,
+     "dispatches": 1.0,
+     "mean_context_bytes": 0.0,
+     "redispatches": 0.0,
+     "stale_reads": 0.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 1.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "b": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 0,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "write_targets": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 0,
+     "starved": false,
+     "targets": [
+      "lib/report.py"
+     ],
+     "task_id": "b",
+     "write_sources": 0
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "lib/report.py"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "lib/report.py"
+     ],
+     "source_lengths": {
+      "lib/report.py": 83
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "b",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "b"
+    }
+   ]
+  ]
+ },
+ "files": {
+  "lib/__init__.py": "",
+  "lib/helpers.py": "def slugify(text):\n    return text.lower().replace(' ', '-')\n",
+  "lib/report.py": "from lib import helpers\n\n\ndef title_slug(title):\n    return helpers.slugify(title)\n"
+ },
+ "fixups": 0,
+ "mechanisms": [],
+ "outcome": "clean",
+ "resolved": true
+}

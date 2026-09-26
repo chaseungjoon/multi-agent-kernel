@@ -75,8 +75,8 @@ def render_file(
 ) -> str:
     """Assemble, validate, and format fragments — **without touching disk**.
 
-    Split out from :func:`reconstruct_file` for Wave 19's commit transaction,
-    which has to know that *every* file of a multi-file change renders cleanly
+    Split out from :func:`reconstruct_file` for the commit transaction, which
+    has to know that *every* file of a multi-file change renders cleanly
     before it writes *any* of them. Rendering as it went is what let a task write
     its first file and then fail on its second, leaving disk ahead of a store
     that was subsequently rolled back.

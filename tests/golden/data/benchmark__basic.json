@@ -1,0 +1,1118 @@
+{
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 18,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 20311.0,
+     "dispatches": 9.0,
+     "mean_context_bytes": 2256.78,
+     "redispatches": 0.0,
+     "stale_reads": 3.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 9.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "add": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2210,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 385,
+       "count": 1,
+       "nodes": [
+        "toolkit/__init__.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1523,
+       "count": 7,
+       "nodes": [
+        "toolkit/numbers.py::module_header::__header__",
+        "toolkit/numbers.py::function::factorial",
+        "toolkit/numbers.py::function::is_prime",
+        "toolkit/registry.py::module_header::__header__",
+        "toolkit/registry.py::function::register",
+        "toolkit/registry.py::function::run",
+        "toolkit/registry.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 302,
+       "count": 2,
+       "nodes": [
+        "toolkit/numbers.py::function::add",
+        "toolkit/registry.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "toolkit/numbers.py::function::add",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "task_id": "add",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "toolkit/numbers.py::function::add",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "toolkit/numbers.py::function::add",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "toolkit/numbers.py::function::add": 49,
+      "toolkit/registry.py::function::_register_all": 146
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "add",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('add', numbers.add)"
+     ],
+     "current_version": 1,
+     "node_id": "toolkit/registry.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "add"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "add"
+    }
+   ]
+  ],
+  "count_vowels": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2107,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 385,
+       "count": 1,
+       "nodes": [
+        "toolkit/__init__.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1370,
+       "count": 7,
+       "nodes": [
+        "toolkit/strings.py::module_header::__header__",
+        "toolkit/strings.py::function::upper",
+        "toolkit/strings.py::function::reverse",
+        "toolkit/registry.py::module_header::__header__",
+        "toolkit/registry.py::function::register",
+        "toolkit/registry.py::function::run",
+        "toolkit/registry.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 352,
+       "count": 2,
+       "nodes": [
+        "toolkit/strings.py::function::count_vowels",
+        "toolkit/registry.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "toolkit/strings.py::function::count_vowels",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "task_id": "count_vowels",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "toolkit/strings.py::function::count_vowels",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "toolkit/strings.py::function::count_vowels",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "toolkit/registry.py::function::_register_all": 164,
+      "toolkit/strings.py::function::count_vowels": 86
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "count_vowels",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('count_vowels', strings.count_vowels)"
+     ],
+     "current_version": 2,
+     "node_id": "toolkit/registry.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "count_vowels"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "count_vowels"
+    }
+   ]
+  ],
+  "factorial": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2210,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 385,
+       "count": 1,
+       "nodes": [
+        "toolkit/__init__.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1463,
+       "count": 7,
+       "nodes": [
+        "toolkit/numbers.py::module_header::__header__",
+        "toolkit/numbers.py::function::add",
+        "toolkit/numbers.py::function::is_prime",
+        "toolkit/registry.py::module_header::__header__",
+        "toolkit/registry.py::function::register",
+        "toolkit/registry.py::function::run",
+        "toolkit/registry.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 362,
+       "count": 2,
+       "nodes": [
+        "toolkit/numbers.py::function::factorial",
+        "toolkit/registry.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "toolkit/numbers.py::function::factorial",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "task_id": "factorial",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "toolkit/numbers.py::function::factorial",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "toolkit/numbers.py::function::factorial",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "toolkit/numbers.py::function::factorial": 178,
+      "toolkit/registry.py::function::_register_all": 158
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "factorial",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('factorial', numbers.factorial)"
+     ],
+     "current_version": 3,
+     "node_id": "toolkit/registry.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "factorial"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "toolkit/numbers.py::function::add",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "factorial",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "factorial"
+    }
+   ]
+  ],
+  "first": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2419,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 385,
+       "count": 1,
+       "nodes": [
+        "toolkit/__init__.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1590,
+       "count": 7,
+       "nodes": [
+        "toolkit/sequences.py::module_header::__header__",
+        "toolkit/sequences.py::function::unique",
+        "toolkit/sequences.py::function::maximum",
+        "toolkit/registry.py::module_header::__header__",
+        "toolkit/registry.py::function::register",
+        "toolkit/registry.py::function::run",
+        "toolkit/registry.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 444,
+       "count": 2,
+       "nodes": [
+        "toolkit/sequences.py::function::first",
+        "toolkit/registry.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "toolkit/sequences.py::function::first",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "task_id": "first",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "toolkit/sequences.py::function::first",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "toolkit/sequences.py::function::first",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "toolkit/registry.py::function::_register_all": 281,
+      "toolkit/sequences.py::function::first": 117
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "first",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('first', sequences.first)"
+     ],
+     "current_version": 4,
+     "node_id": "toolkit/registry.py::function::_register_all",
+     "read_version": 4,
+     "task_id": "first"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "first"
+    }
+   ]
+  ],
+  "is_prime": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2158,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 385,
+       "count": 1,
+       "nodes": [
+        "toolkit/__init__.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1297,
+       "count": 7,
+       "nodes": [
+        "toolkit/numbers.py::module_header::__header__",
+        "toolkit/numbers.py::function::add",
+        "toolkit/numbers.py::function::factorial",
+        "toolkit/registry.py::module_header::__header__",
+        "toolkit/registry.py::function::register",
+        "toolkit/registry.py::function::run",
+        "toolkit/registry.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 476,
+       "count": 2,
+       "nodes": [
+        "toolkit/numbers.py::function::is_prime",
+        "toolkit/registry.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "toolkit/numbers.py::function::is_prime",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "task_id": "is_prime",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "toolkit/numbers.py::function::is_prime",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "toolkit/numbers.py::function::is_prime",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "toolkit/numbers.py::function::is_prime": 176,
+      "toolkit/registry.py::function::_register_all": 285
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "is_prime",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('is_prime', numbers.is_prime)"
+     ],
+     "current_version": 5,
+     "node_id": "toolkit/registry.py::function::_register_all",
+     "read_version": 4,
+     "task_id": "is_prime"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "is_prime"
+    }
+   ]
+  ],
+  "maximum": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2419,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 385,
+       "count": 1,
+       "nodes": [
+        "toolkit/__init__.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1584,
+       "count": 7,
+       "nodes": [
+        "toolkit/sequences.py::module_header::__header__",
+        "toolkit/sequences.py::function::unique",
+        "toolkit/sequences.py::function::first",
+        "toolkit/registry.py::module_header::__header__",
+        "toolkit/registry.py::function::register",
+        "toolkit/registry.py::function::run",
+        "toolkit/registry.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 450,
+       "count": 2,
+       "nodes": [
+        "toolkit/sequences.py::function::maximum",
+        "toolkit/registry.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "toolkit/sequences.py::function::maximum",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "task_id": "maximum",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "toolkit/sequences.py::function::maximum",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "toolkit/sequences.py::function::maximum",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "toolkit/registry.py::function::_register_all": 285,
+      "toolkit/sequences.py::function::maximum": 121
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "maximum",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('maximum', sequences.maximum)"
+     ],
+     "current_version": 6,
+     "node_id": "toolkit/registry.py::function::_register_all",
+     "read_version": 4,
+     "task_id": "maximum"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "toolkit/sequences.py::function::first",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "maximum",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "maximum"
+    }
+   ]
+  ],
+  "reverse": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2208,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 385,
+       "count": 1,
+       "nodes": [
+        "toolkit/__init__.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1304,
+       "count": 7,
+       "nodes": [
+        "toolkit/strings.py::module_header::__header__",
+        "toolkit/strings.py::function::upper",
+        "toolkit/strings.py::function::count_vowels",
+        "toolkit/registry.py::module_header::__header__",
+        "toolkit/registry.py::function::register",
+        "toolkit/registry.py::function::run",
+        "toolkit/registry.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 519,
+       "count": 2,
+       "nodes": [
+        "toolkit/strings.py::function::reverse",
+        "toolkit/registry.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "toolkit/strings.py::function::reverse",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "task_id": "reverse",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "toolkit/strings.py::function::reverse",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "toolkit/strings.py::function::reverse",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "toolkit/registry.py::function::_register_all": 408,
+      "toolkit/strings.py::function::reverse": 47
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "reverse",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('reverse', strings.reverse)"
+     ],
+     "current_version": 7,
+     "node_id": "toolkit/registry.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "reverse"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "reverse"
+    }
+   ]
+  ],
+  "unique": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2372,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 385,
+       "count": 1,
+       "nodes": [
+        "toolkit/__init__.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1392,
+       "count": 7,
+       "nodes": [
+        "toolkit/sequences.py::module_header::__header__",
+        "toolkit/sequences.py::function::maximum",
+        "toolkit/sequences.py::function::first",
+        "toolkit/registry.py::module_header::__header__",
+        "toolkit/registry.py::function::register",
+        "toolkit/registry.py::function::run",
+        "toolkit/registry.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 595,
+       "count": 2,
+       "nodes": [
+        "toolkit/sequences.py::function::unique",
+        "toolkit/registry.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "toolkit/sequences.py::function::unique",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "task_id": "unique",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "toolkit/sequences.py::function::unique",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "toolkit/sequences.py::function::unique",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "toolkit/registry.py::function::_register_all": 408,
+      "toolkit/sequences.py::function::unique": 205
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "unique",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('unique', sequences.unique)"
+     ],
+     "current_version": 8,
+     "node_id": "toolkit/registry.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "unique"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "unique"
+    }
+   ]
+  ],
+  "upper": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2208,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 385,
+       "count": 1,
+       "nodes": [
+        "toolkit/__init__.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1307,
+       "count": 7,
+       "nodes": [
+        "toolkit/strings.py::module_header::__header__",
+        "toolkit/strings.py::function::reverse",
+        "toolkit/strings.py::function::count_vowels",
+        "toolkit/registry.py::module_header::__header__",
+        "toolkit/registry.py::function::register",
+        "toolkit/registry.py::function::run",
+        "toolkit/registry.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 516,
+       "count": 2,
+       "nodes": [
+        "toolkit/strings.py::function::upper",
+        "toolkit/registry.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "toolkit/strings.py::function::upper",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "task_id": "upper",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "toolkit/strings.py::function::upper",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "toolkit/strings.py::function::upper",
+      "toolkit/registry.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "toolkit/registry.py::function::_register_all": 404,
+      "toolkit/strings.py::function::upper": 47
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "upper",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('upper', strings.upper)"
+     ],
+     "current_version": 9,
+     "node_id": "toolkit/registry.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "upper"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "toolkit/strings.py::function::reverse",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "upper",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "upper"
+    }
+   ]
+  ]
+ },
+ "result": {
+  "conflicts": 0.0,
+  "notes": [],
+  "passed": 30,
+  "registration_dropped": 0,
+  "registration_duplicates": 0,
+  "registration_expected": 9,
+  "registration_survived": 9,
+  "resolutions": 0.0,
+  "total": 30
+ }
+}

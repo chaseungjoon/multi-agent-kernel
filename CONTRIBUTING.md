@@ -219,7 +219,7 @@ The concurrency gate is `tests/test_concurrency_integration.py`.
 
 ## Current status
 
-MAK **0.9.3 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
+MAK **0.9.4 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
 endpoint support, local runtimes, and the interactive app are all implemented.
 
 | Gate | State |
@@ -241,7 +241,7 @@ endpoint support, local runtimes, and the interactive app are all implemented.
 | OpenAI-compatible endpoints and capability negotiation | `mak/endpoints/` |
 | Model catalog | `mak/models/` |
 | Local runtime discovery and native Ollama client | `mak/local/` |
-| Session, cascade loop, run outcome, teardown | `mak/session.py`, `mak/cascade.py`, `mak/execution_result.py`, `mak/teardown.py` |
+| Session state machine and its collaborators, cascade loop, run outcome, teardown | `mak/session/`, `mak/cascade.py`, `mak/execution_result.py`, `mak/teardown.py` |
 | Git audit log | `mak/git_integration/` |
 | Application API: run request, config, planner route and key, session assembly | `mak/application/` |
 | `mak run` / `mak` console script | `mak/__main__.py`, `cli/__main__.py` |
@@ -671,7 +671,7 @@ code graph.
   unkeyed list is order-dependent and keeps the plain node lock.
 
 `Scheduler` accepts an optional `lock_policy` (`use_lock_policy` rebuilds it after
-recovery), and `Session._granted` records the mode each task actually holds per
+recovery), and `WaveState.granted` records the mode each task actually holds per
 resource, so release and commit-time re-validation check the real mode.
 
 ## 5. Conflict detection
@@ -803,16 +803,43 @@ end, and resolves by re-dispatch or fix-up. The taxonomy MAK is measured against
 
 #### Detection at commit
 
-`Session._validate_and_commit` runs, in order, and any step can reject or defer:
+The commit pipeline (`mak/session/commit/`) is an **ordered list of checks**.
+Each implements `CommitCheck` — a `name` and `check(ctx) -> Verdict` — and reads
+the commit through a `CommitContext`: the task id, its staged node ids, the
+sources committed earlier in the same batch, and read access to the store, the
+lock table and the `WaveState`. `CommitPipeline.commit` stops at the first
+verdict that is not `accept` and hands it to the one handler for its kind:
 
-1. **Keyed-registrar merge** (`registrar.py`, `registry_merge.py`). Two appenders
+| Verdict | Handler |
+|---|---|
+| `accept` | continue; after the last check, `CommitApplier` commits (§11) |
+| `reject` | a conflict: count it, log `CONFLICT_DETECTED`, record the reason, roll back |
+| `defer` | park the result (below): it waits on a lock or on a contract provider |
+| `resend` | roll back and re-dispatch with the check's `retry_note` and `error_kind` |
+| `fail` | the task cannot succeed (its contract provider failed): roll back and spend its attempts |
+
+Checks never roll back, record failures, write kernel notes or park results —
+the handlers own every consequence, so a verdict means the same thing whichever
+check returned it. Two effects stay with a check because they are the question
+it asks: logging its own findings, and escalating a lock through
+`ctx.escalate` (a try-acquire *is* the test). A check that rewrites staged
+sources — the registrar merge — returns them as `Verdict.restaged`, and the
+pipeline stages them before acting on the verdict.
+
+`DEFAULT_CHECKS` (`commit/pipeline.py`), in order — a test pins the order, so
+reordering is a reviewed change:
+
+1. **`ProvidersCommitted`** — a task dispatched against a contract (soft edge)
+   is deferred until its providers commit, and fails if one of them failed.
+2. **`RegistrarMerge`** (`registrar.py`, `registry_merge.py`). Two appenders
    each return the table as they read it plus their lines. `plan_merge` extracts
    what an agent **appended** to the version it read (`appended_entries`) and
    replays exactly those entries onto the table as it is **now**
    (`merge_append`) — a textual splice that preserves formatting. Anything that
-   is not a pure keyed append takes the node's plain WRITE lock instead, or is
-   sent back with a fresh read.
-2. **Stale-read validation** (`stale.py`). Every read-set node is compared by
+   is not a pure keyed append takes the node's plain WRITE lock instead (or is
+   deferred until it can), or is sent back with a fresh read when the table
+   moved.
+3. **`ReadSetCurrent`** (`stale.py`). Every read-set node is compared by
    digest against what is committed now. A stale node is classified
    `body_only`, `api_change`, `deleted`, or `created` — where "interface" is
    binding-level (`interface.py::changed_bindings`: gaining a name breaks nobody)
@@ -831,18 +858,31 @@ end, and resolves by re-dispatch or fix-up. The taxonomy MAK is measured against
    stale read is logged (`STALE_READ`). A re-dispatch carries a bounded unified
    diff of each blocking node in `retry_note` and counts against `max_attempts`
    with `error_kind="stale_read"`.
-3. **Structural checks** (§5.1).
-4. **Contract check** (`Session._contracts_hold`).
-5. **Interface enforcement** (`resources.py`). A task that declared
-   `changes_api=False` and changed an existing binding is refused. Any other
+4. **`StructuralConflicts`** (§5.1), over this edit, the batch's earlier
+   commits, and the contract stubs the task builds against.
+5. **`ContractsHold`** — a contracted node must match its declared contract.
+6. **`InterfaceGranted`** (`resources.py`). A task that declared
+   `changes_api=False` and changed an existing binding is sent back. Any other
    undeclared interface change needs `#api` WRITE: taken on the spot if free
-   (`API_ESCALATED`), otherwise the commit is parked until concurrent readers
+   (`API_ESCALATED`), otherwise the commit is deferred until concurrent readers
    finish.
+7. **`PreviewCompiles`** — every touched file, assembled with the staged
+   fragments, must `compile()`.
+8. **`ProspectiveSemantics`** — the whole-repository checks rerun with the staged
+   files substituted; a newly introduced defect, or a repair obligation still
+   unresolved, rejects the edit before anything is durable (§11).
+9. **`LeaseStillHeld`** — the task must still hold every lease it is about to
+   commit through; a lease that lapsed during a long agent call is never
+   committed through.
+
+A new commit-time check is one more entry in `CommitPipeline.checks`
+(`default_checks(...)` builds the default tuple); it needs no `Session` change.
 
 **Parked commits.** A finished result that cannot commit *yet* — waiting on a
 registrar's exclusive lock, an `#api` reader, or a contract provider — is parked
-(`_park`, `COMMIT_DEFERRED`), not re-run: the work is fine, only the timing is
-wrong. Every batch completion retries the parked set (`_resume_parked`). If every
+(`ParkedCommits.park`, `COMMIT_DEFERRED`), not re-run: the work is fine, only the
+timing is wrong. Every batch completion retries the parked set
+(`ParkedCommits.resume`). If every
 in-flight task is parked, the run loop releases the highest-id one — re-gated on
 its dependencies if it waited on a contract provider
 (`Scheduler.wait_for_dependencies`), re-dispatched with a note otherwise.
@@ -850,7 +890,8 @@ its dependencies if it waited on a contract provider
 #### Detection at wave end
 
 `Session.detect_cascade_tasks()` assembles fix-up work from three sources, folded
-into one task per node (`_merge_fixups`):
+into one task per node (`merge_fixups`), by `PostWaveAnalyzer` and
+`FixupBuilder` (`mak/session/post_wave.py`, `fixups.py`):
 
 - **Cascade on the reference graph** (`cascade_graph.py`). The wave's changes are
   diffed as **symbols** (`symbols.py::diff_symbols` — signature change, deletion,
@@ -860,7 +901,7 @@ into one task per node (`_merge_fixups`):
   signature is left alone. A deleted symbol's fix-up names a same-bodied symbol
   the wave added as a rename hint.
 - **Cross-module defects** (§5.2). Each fix-up names the task(s) whose work met
-  in the defect and carries a bounded diff of **both sides** (`_pair_context`).
+  in the defect and carries a bounded diff of **both sides**.
 - **Optional gates** (`gates.py`), all off by default. None can fail a wave: a
   finding becomes a fix-up task, and a gate whose tool is missing or times out is
   logged (`GATE_FINDING`) and skipped.
@@ -873,14 +914,23 @@ into one task per node (`_merge_fixups`):
     attributes each **new** failure to the smallest task or task **pair** that
     reproduces it, within `semantic.impact_max_overlays`. `WaveView.subset`
     rebuilds "pre-wave plus these tasks' commits" from the per-commit fragment
-    log (`_wave_fragments_before`, `_wave_commit_log`).
+    log (`WaveState.fragments_before`, `WaveState.commit_log`).
   - **`import_smoke.py`** (`semantic.import_smoke`) imports each touched module
     in a fresh subprocess before and after the wave.
   - **`adjudicator.py`** (`semantic.adjudicator: "<backend>:<model>"`) asks a
     model whether a dependent's use still holds, for a stale read the static
-    checks could not settle. Budgeted (`adjudicator_max_calls`) and logged
-    (`ADJUDICATION`). It can only turn an uncertain re-dispatch into an accept;
-    any other answer leaves the re-dispatch standing.
+    checks could not settle. It can only turn an uncertain re-dispatch into an
+    accept; any other answer leaves the re-dispatch standing. **It is the only
+    model call on the commit path**, so it is fenced
+    (`mak/session/adjudication.py::AdjudicatorFence`): it is wired into
+    `ReadSetCurrent` only when `semantic.adjudicator` is set (an injected
+    `adjudicator_llm` replaces how that model is built, never whether it runs);
+    `validate_config` rejects it with any `stale_read` other than `revalidate`,
+    which is the only policy that consults it; it is budgeted
+    (`adjudicator_max_calls` per wave); every consultation is logged as
+    `ADJUDICATION` with `nondeterministic: true`, as is each `STALE_READ` it
+    accepted; and accepts are counted (`adjudicated_accepts` in the plan
+    metrics) and named in the run summary.
 
 `mak/semantic/sources.py` provides the repository as a lazily assembled
 file → source mapping, so commit-time checks do not pay O(repo) up front.
@@ -1303,27 +1353,73 @@ Every operation raises `GitIntegrationError` with stderr on failure.
 
 ## 11. Session lifecycle
 
-`mak/session.py` wires everything together behind a `SessionState` machine:
-`CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILED | ABORTED}`.
-All collaborators are injected behind `Protocol`s.
+`mak/session/` is a package. `Session` (`core.py`) is a thin state machine —
+`CREATED → INITIALIZED → PLANNED → RUNNING → {COMPLETED | FAILED | ABORTED}` —
+over single-purpose collaborators, each in its own module and each built once
+per session by `wiring.wire()`. A collaborator receives what it needs explicitly
+— the store or a `StoreView`, the lock table, a config section, the session's
+`EventLog`, and the current `WaveState` per call — and never the `Session`. The
+subsystems are injected behind `Protocol`s, and `mak/session/__init__.py`
+re-exports the public names (`Session`, `SessionResult`, `SessionState`,
+`SubTaskProgress`, `PlanProposal`, `TestRunner`).
+
+| Module | Collaborator | Owns |
+|---|---|---|
+| `core.py` | `Session` | lifecycle transitions, the run loop, the spend ceiling, token usage |
+| `wave.py` | `WaveState` | every per-wave field (below) |
+| `wiring.py` | `wire()` | building the collaborators |
+| `types.py` | — | `SessionState`, `SessionResult`, `SubTaskProgress`, `PlanProposal`, the injected protocols |
+| `events.py` | `EventLog`, `timed_phase` | session-stamped logging; `PHASE_SPAN` timing |
+| `store_view.py`, `workspace.py` | `StoreView`, `Workspace` | read helpers over the store; the work, mak and journal dirs and the safe output path |
+| `reconcile.py` | `WorkTreeReconciler` | `.makignore`, pruning, store ↔ tree reconciliation, the clean-tree and audit-repo preflight |
+| `planning.py` | `PlanPreparer` | unsafe-target refusal, plan validation, agent assignment |
+| `dispatch.py`, `cross_file.py`, `grants.py` | `DispatchEnricher`, `CrossFileIndex` | enrichment layers 0–5 (§3.3), read-set capture, the starvation guard, the grant each task holds |
+| `concurrency.py` | `ConcurrentRunner` | fanning agent calls out to the thread pool |
+| `batch.py` | `BatchProcessor` | the completion queue, deterministic batch order, settling a result, staging returned sources, draining in-flight work |
+| `commit/` | `CommitPipeline`, the checks, `CommitApplier` | the commit path (§5.3 "Detection at commit") and the transaction |
+| `parking.py` | `ParkedCommits` | defer, park, resume, releasing a cycle's victim |
+| `outcomes.py`, `failures.py` | `RetryPolicy`, `NoopPolicy` | retries and retry notes, no-op acceptance, empty-result diagnosis, the failure log |
+| `repair.py` | — | the whole-repository checks and repair-obligation predicates |
+| `adjudication.py` | `AdjudicatorFence` | the optional LLM adjudicator (§5.3) |
+| `post_wave.py`, `fixups.py` | `PostWaveAnalyzer`, `FixupBuilder` | wave-end defects, the cascade, the gates, fix-up tasks, state fingerprints |
+| `results.py`, `usage.py` | — | `SessionResult` and plan metrics; token totals |
+| `recovery.py` | `RecoveryManager` | journal recovery, `recover` |
+| `finalize.py` | `Finalizer` | teardown and the push gate |
+| `watchdog.py` | `LockWatchdog` | lease heartbeat, deadlock scan |
+
+**Per-wave state is created fresh.** Everything a wave accumulates — the
+scheduler and the reference graph it was planned against, the lock policy,
+progress, completions and failures, commit bookkeeping, grants, read sets,
+parked results, post-wave caches and the metric counters — lives in one
+`WaveState`. `install_plan` replaces it with `WaveState.start(...)`, and
+`recover` with the restored wave; there is no reset list, so a field added to
+`WaveState` is per-wave by construction. Session-lifetime state — the
+collaborators, the user objective, cascade history, token usage, the symbol
+index, `.makignore`, the executor, the last result — stays on `Session`.
+`session.wave` exposes the current wave, and `session.batches`,
+`session.pipeline` and `session.post_wave` the collaborators an embedder or a
+test drives directly.
+
+**Size budgets.** `tests/test_module_budgets.py` keeps `core.py` within 600
+lines, every module in `mak/session/` within 800 and every function within 80;
+an allowlist entry with a written reason is the only exception.
 
 ### Initialize
 
 Four ordered steps, then ingestion:
 
-1. **`_acquire_project()`** — take the project lease before anything reads or
-   mutates `.mak/`.
-2. **`_recover_journal()`** — resolve any commit an interrupted run left in
-   flight.
+1. **Take the project lease** before anything reads or mutates `.mak/`.
+2. **`RecoveryManager.recover_journal()`** — resolve any commit an interrupted
+   run left in flight.
 3. **`lock_table.clear()`** — sound because the lease proves the prior owner is
    gone.
-4. **`_reconcile_work_dir()`** — load `.makignore`, prune stored nodes whose file
+4. **`WorkTreeReconciler`** — load `.makignore`, prune stored nodes whose file
    is no longer ingestable (reported as `pruned_nodes`), and synchronize the store
    with the working tree via `NodeStore.sync_file`: changed fragments advance to
    their next version, unchanged ones are left alone, symbols that disappeared
    are **retired**, and a file gone from disk retires all its nodes.
 
-MAK's own `mak_dir` is skipped unconditionally (`_is_store_path`), independent
+MAK's own `mak_dir` is skipped unconditionally (`Workspace.is_store_path`), independent
 of `exclude_patterns`. A file whose content differs from the digest MAK recorded
 when it last wrote it was edited by someone else; `session.on_external_edit`
 decides: `adopt` (default — the working tree is the newer truth) or `conflict`
@@ -1339,12 +1435,12 @@ Nothing outside `mak/` touches a `Session` private attribute.
 **`install_plan` always re-validates** — it is the one entry point shared by
 `plan()`, the interactive app, cascade waves, and edited review plans:
 
-- containment check on every target (`_reject_unsafe_targets`), naming every
-  offender;
+- containment check on every target (`PlanPreparer.reject_unsafe_targets`),
+  naming every offender;
 - `validate_plan` against a freshly built dependency graph when
   `planner.validate` is on; findings go to `session.last_plan_findings` and one
   `PLAN_VALIDATED` event;
-- `agent_type` normalization (`_apply_default_agent`): unassigned tasks are
+- `agent_type` normalization (`PlanPreparer.assign_agents`): unassigned tasks are
   distributed **round-robin across the healthy agent pool**; an unconfigured type
   is remapped to the pool's first agent (`AGENT_REMAPPED`);
 - an optional `objective=` keyword carries the user's request for repair
@@ -1353,9 +1449,10 @@ Nothing outside `mak/` touches a `Session` private attribute.
 ### Run
 
 Dispatch lock-satisfiable ready tasks onto the thread pool, enriching each bundle
-(§3.3) and capturing its read set. As results arrive, stage returned sources
-(within the grant), batch concurrent completions, run the commit pipeline (§5.3,
-§5.1), and commit transactionally.
+(§3.3) and capturing its read set. As results arrive, `BatchProcessor` stages
+returned sources (within the grant), orders each batch of concurrent completions
+topologically, runs the commit pipeline (§5.3) and commits transactionally
+(`CommitApplier`).
 
 **Transactional commit.** The prospective file is reconstructed and `compile()`d
 before any `commit_node`. `NodeStore.transaction()` defers destructive effects;
@@ -1373,26 +1470,27 @@ narrowed task (`SubTaskProgress`, bounded by `max_attempts`).
 
 **No-op acceptance.** A no-op is accepted only when the agent **set**
 `no_changes_required` — a truncated reply never contains it — and the targets
-exist and the assembled file compiles (`_is_asserted_noop`). `_noop_refusal`
+exist and the assembled file compiles (`NoopPolicy.is_asserted`). `NoopPolicy`
 additionally refuses the assertion when it cannot be true: for a target absent
 when the wave was installed, if a task this one directly depends on targets the
 same file, or if it is a whole-file grant on the first attempt. An accepted no-op
 logs `ACCEPTED_NOOP` and counts in `tasks_noop`, never inflating
 `tasks_completed`. A live repair obligation also blocks the no-op path.
 
-**Retries differ from the attempt they follow.** `Session._retry_note` chooses a
+**Retries differ from the attempt they follow.** `RetryPolicy` chooses a
 note by `error_kind`: a truncation asks for the same work in less output; a
 protocol slip restates the schema in full; a stale read carries the diff; anything
 else names the reason and asks not to repeat it. A result with `retryable=False`
 fails the task immediately rather than spending the remaining attempts.
 
-**Empty results are explained.** `_describe_empty_result` names the actual cause:
+**Empty results are explained.** `NoopPolicy.describe_empty_result` names the
+actual cause:
 a truncation stop reason, ids outside the grant, ids with no source, a missing
 target, a file still invalid after "no changes", or an unasserted empty success.
 
 **The spend ceiling.** `session.max_total_tokens` is checked between run-loop
-iterations (`_budget_breach`). On a breach MAK stops dispatching, lets in-flight
-work finish and commit (`_finish_in_flight`), and reports
+iterations. On a breach MAK stops dispatching, lets in-flight work finish and
+commit (`BatchProcessor.drain`), and reports
 `SessionResult.stopped_reason`. It never interrupts a commit.
 
 **Token accounting** is the session's own: `Session.token_usage` /
@@ -1410,12 +1508,12 @@ the order first seen.
 `max_concurrency`, `mean_concurrency`, `conflict_rejections`, `redispatches`,
 `tasks_completed`, `tasks_failed`, `tasks_noop`, `dispatches`,
 `context_bytes_total`, `mean_context_bytes`, `starved_dispatches`, `stale_reads`,
-`stale_redispatches`.
+`stale_redispatches`, `adjudicated_accepts`.
 
-**Wave bookkeeping** for post-wave analysis: `_wave_committed` (old/new source
-per node, `None` for a superseded fragment), `_wave_file_before`,
-`_wave_file_writers`, `_wave_node_writer`, `_wave_fragments_before`,
-`_wave_commit_log`.
+**Wave bookkeeping** for post-wave analysis, written only past a commit point:
+`WaveState.committed` (old/new source per node, `None` for a superseded
+fragment), `file_before`, `file_writers`, `node_writer`, `fragments_before`,
+`commit_log`.
 
 ### Cascade waves and repair obligations
 
@@ -1427,10 +1525,10 @@ Every cross-module fix-up carries kernel-generated **`RepairObligation`s**. Each
 records the finding's exact identity and a stable *family* identity for its
 syntactic site (so swapping one nonexistent name for another at the same site is
 not progress). Obligations are persisted with the task graph, rendered in review
-(`must resolve=`), preserved by `_merge_fixups`, and reattached after an edited
+(`must resolve=`), preserved by `merge_fixups`, and reattached after an edited
 review plan; an edited plan that keeps neither the caller nor the provider is
-rejected as unrepairable. Before a repair commits,
-`_prospective_semantic_reasons` substitutes the staged sources into a
+rejected as unrepairable. Before a repair commits, the
+`ProspectiveSemantics` check substitutes the staged sources into a
 whole-repository view and reruns the deterministic checks; an unresolved
 obligation, or a newly introduced defect, rolls the edit back **before** the
 node-store transaction and audit commit. When the provider of an unresolved
@@ -1443,7 +1541,7 @@ repair scope, and obligation families (`cascade_state_fingerprint`). An immediat
 repeat stops as `stalled`; a non-adjacent repeat (A → B → A) stops as
 `oscillating`. Fingerprints are persisted, so a recovered session cannot restart
 the same loop. Fix-up task ids are a sanitized slug plus a digest of the
-unsanitized subject (`_fixup_task_id`), so two files that sanitize alike cannot
+unsanitized subject (`fixup_task_id`), so two files that sanitize alike cannot
 collide.
 
 `CascadeOutcome` carries every wave plus `declined`, `limit_reached`, `stalled`,
@@ -1456,7 +1554,7 @@ by wave index.
 
 ### Teardown and recovery
 
-`teardown()` runs `session.test_command` through the `TestRunner`
+`teardown()` (`Finalizer`) runs `session.test_command` through the `TestRunner`
 (`mak/test_runner.py`) and returns a `TeardownResult` (`mak/teardown.py`) with
 outcome `passed`, `failed`, `skipped`, or `error`. The push gate requires
 `git.auto_push`, a git helper, a **satisfied aggregate outcome**, and
@@ -1464,7 +1562,8 @@ outcome `passed`, `failed`, `skipped`, or `error`. The push gate requires
 `push_skipped_reason` names whichever gate refused.
 
 `recover()` takes the lease, resolves the journal, expires stale leases, and
-rebuilds the scheduler from `task_graph.json`. `mak run --recover` calls it instead
+rebuilds the scheduler — and a fresh `WaveState` around it — from
+`task_graph.json` (`RecoveryManager`). `mak run --recover` calls it instead
 of `initialize()`/`plan()`. A missing or corrupt graph logs
 `SESSION_ENDED(recover_failed=True)` and reports "nothing to resume" rather than
 raising.
@@ -2052,7 +2151,17 @@ mak/
 ├── bootstrap.py              # composition root
 ├── config.py / config.yaml   # config schema, loading, discovery; packaged default
 ├── examples/                 # packaged example configs (`mak examples`)
-├── session.py                # session lifecycle
+├── session/                  # the Session state machine and its collaborators (§11)
+│   ├── core.py               #   Session: lifecycle, run loop, spend ceiling
+│   ├── wave.py, wiring.py    #   WaveState (per-wave state); wire() (collaborators)
+│   ├── types.py, events.py   #   result types and protocols; EventLog, timed_phase
+│   ├── store_view.py, workspace.py
+│   ├── reconcile.py, planning.py, recovery.py, finalize.py, watchdog.py
+│   ├── dispatch.py, cross_file.py, grants.py, concurrency.py, batch.py
+│   ├── parking.py, outcomes.py, failures.py, repair.py, adjudication.py
+│   ├── post_wave.py, fixups.py, results.py, usage.py
+│   └── commit/               #   verdict, pipeline, checks, registrar, reads,
+│                             #     interface, prospective, apply
 ├── cascade.py                # post-wave fix-up loop, CascadeOutcome
 ├── execution_result.py       # whole-run outcome
 ├── teardown.py               # suite outcome, push policy
@@ -2080,7 +2189,8 @@ mak/
 ├── local/                    # ollama_client, runtime, discovery, recommended
 └── git_integration/git.py
 
-tests/                        # mirrors mak/ and cli/; tests/support/ holds a fake OpenAI server
+tests/                        # mirrors mak/ and cli/; tests/support/ holds a fake OpenAI server;
+│                             #   tests/golden/ records and replays golden event logs
 benchmark/                    # Part III
 research/
 └── contention_study/         # Part III (own venv, tests, and gates)
@@ -2100,9 +2210,22 @@ ruff check mak cli tests   # zero findings
 
 CI (`.github/workflows/ci.yml`) runs all three on Python 3.11 and 3.13, on
 pushes to `main` and on pull requests. Focused runs while iterating: `pytest tests/node_store/ -q`,
-`pytest tests/test_session.py -q`.
+`pytest tests/test_session.py tests/session -q`.
+
+**Golden event logs** are the behaviour-preservation net for kernel refactors.
+`python -m tests.golden.golden compare` replays 34 recorded scenarios — the
+concurrency corpus, every semantic-corpus shape through each MAK arm, and the MAK
+arm of all four benchmark templates in mock mode — and fails when any task's
+ordered `(event, payload)` sequence or any run result differs from
+`tests/golden/data/`. Timings, and in the deliberately racy overlap corpus the
+thread-schedule-dependent fields, are excluded. The non-benchmark scenarios also
+run in the suite (`tests/golden/test_goldens.py`). After an *intended* behaviour
+change, re-record with `python -m tests.golden.golden record` and review the data
+diff like code.
 
 - Add tests with every feature.
+- Session changes: a new per-wave field goes on `WaveState`, a new commit-time
+  rule is a new `CommitCheck`, and `tests/test_module_budgets.py` must stay green.
 - Ingestion or reconstruction changes: `tests/node_store/test_roundtrip.py` is
   mandatory.
 - Locking changes: keep `tests/lock_manager/test_concurrency.py` green.

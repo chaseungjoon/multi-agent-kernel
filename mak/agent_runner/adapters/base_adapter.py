@@ -18,7 +18,7 @@ from mak.core.types import TaskBundle, TaskResult
 class AgentAdapter(ABC):
     """Transport-agnostic adapter between MAK's protocol and an agent backend.
 
-    The two identifiers are **not** interchangeable (Wave 22):
+    The two identifiers are **not** interchangeable:
 
     * ``agent_id`` is the configured routing key. The registry, the scheduler's
       pool caps, the planner's choice of agent, the session log and the git

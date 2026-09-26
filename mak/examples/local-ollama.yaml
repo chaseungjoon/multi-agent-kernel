@@ -49,8 +49,8 @@ agents:
     # The server's own default is tuned for chat, not for code.
     temperature: 0.1
     max_instances: 1
-    # Local generation is measured in minutes, and since Wave 17 the per-agent
-    # timeout is what bounds the call.
+    # Local generation is measured in minutes, and the per-agent timeout is
+    # what bounds the call.
     timeout: 1800
 
 models:

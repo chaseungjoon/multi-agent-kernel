@@ -12,7 +12,7 @@ dependencies complete) and have not been handed out before. Calling
 (tasks with no dependencies), so the scheduler has a single, uniform entry point
 for populating its ready queue.
 
-**Soft edges (Wave 20, P3).** A dependency whose provider declared a *contract*
+**Soft edges.** A dependency whose provider declared a *contract*
 for everything the dependent needs can be marked soft: it still orders the two
 (topological order, batch commit order) and still counts for reporting, but it
 no longer gates *dispatch* — the dependent is built against the contract while

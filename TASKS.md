@@ -8,7 +8,6 @@ The planned work for MAK, in priority order.
 
 | Wave | Title | Review items | Depends on | Branch |
 |:-:|---|---|---|---|
-| [**27**](#wave-27--session-decomposition-consolidation-wave) | Session decomposition (consolidation, no features) | S1, B1, Q7, Q10, Q11 | — | `feat/27-session-decomposition` |
 | [**7**](#wave-7--retrieval-based-graph-aware-planner) | Retrieval-based, graph-aware planner | S2, B2 | 27 recommended | `feat/7-planner-retrieval` |
 | [**28**](#wave-28--write-sets-that-can-grow-safely) | Write sets that can grow safely | S3, B3, Q4 (headers) | 27 | `feat/28-growable-write-sets` |
 | [**29**](#wave-29--agents-that-can-look-and-test) | Agents that can look and test | S4, B4, Q5 | 27, 28 | `feat/29-agent-tools` |
@@ -20,230 +19,6 @@ The planned work for MAK, in priority order.
 | [**8**](#wave-8--language-boundary-and-structured-non-python-resources) | Language boundary and structured non-Python resources | S12, Q3, Q12 | 27, 30 | `feat/8-language-boundary` |
 | [**34**](#wave-34--the-kernel-as-a-coordination-service-library--mcp) | The kernel as a coordination service (library + MCP) | S15, Q1 | 27, 28 | `feat/34-kernel-service` |
 
----
-
-## Wave 27 — Session decomposition (consolidation wave)
-
-### Status and branch
-
-- **Planned.** Implement on **`feat/27-session-decomposition`**. The green,
-  hermetic suite that shipped in 0.9.3b is this wave's regression net.
-- **First consolidation wave under P.3.** No new behaviour, no new config keys,
-  no new event types except where noted in D27.6.
-- **Merges review items S1, B1, Q7, Q10, Q11.** Waves 28, 29, 31, 32 and 34 all
-  assume the commit pipeline and dispatch enrichment are separable objects.
-
-### Goal
-
-Turn `mak/session.py` from one class that owns everything into a thin state
-machine over single-purpose collaborators, so that (a) per-wave state is created
-fresh instead of reset by hand, (b) a new commit-time check is a plug-in rather
-than a new `Session` method, and (c) each piece can be read and tested alone.
-
-### Evidence and root cause
-
-- **Size.** `mak/session.py` is **4,617 lines**; `Session` has ~180 methods and
-  ~60 instance attributes (constructor `session.py:441-615`). `AGENTS.md` asks
-  for one responsibility per module and ~40-line functions.
-- **Responsibilities in one class** (by line range at `2d89f69`):
-
-  | Responsibility | Methods (approx. lines) |
-  |---|---|
-  | lifecycle, lease, journal recovery | `initialize`, `_acquire_project`, `_recover_journal`, `_reaudit` (692–804) |
-  | work-tree reconciliation, prune | `_reconcile_work_dir` … `_is_excluded_node` (820–1008) |
-  | planning, install, agent assignment | `plan` … `_known_agent_types` (1009–1246) |
-  | run loop, budget, finalize, metrics | `run` … `_failed_descendants` (1247–1531) |
-  | batch processing, settle, parking | `_collect_batch` … `_release_parked_victim` (1532–1761) |
-  | no-op policy | `_is_asserted_noop` … `_dependency_creating` (1762–1923) |
-  | result logging, empty-result diagnosis | `_log_agent_result` … `_target_exists` (1924–2050) |
-  | **commit pipeline** | `_validate_and_commit` … `_audit_commit` (2051–2994) |
-  | retry and failure policy | `_finish_task` … `_submit_partials` (2995–3155) |
-  | **dispatch enrichment** | `_enrich_bundle` … `_add_dependency_outputs`, `_gate_dispatch`, `_stage_returned_sources` (3156–3665) |
-  | locks, heartbeat, deadlock watchdog | `_release_lock` … `_check_deadlocks` (3680–3755) |
-  | teardown and push | `teardown`, `_run_tests`, `_maybe_push` (3756–3835) |
-  | recovery | `recover`, `_restore_progress` (3836–3920) |
-  | **post-wave analysis** | `cascade_state_fingerprint` … `_pair_context` (3921–4390) |
-
-- **The implicit reset contract.** `install_plan` (`session.py:1090-1121`)
-  resets **31** per-wave attributes one by one. A new per-wave attribute that is
-  not added to that list silently carries state from wave N into wave N+1 —
-  undetectable by type checking and only sometimes by tests.
-- **The commit pipeline is control flow, not data.** `_validate_and_commit`
-  (`session.py:2051-2157`) is a hand-ordered chain of nine `if not …: return []`
-  steps with different side effects (roll back, park, re-dispatch, restage a
-  merged registrar). Each wave that added a check added a method and a line
-  here, which is why this method is the file's growth point.
-- **Tests reach into privates.** 16 distinct private members are used from
-  tests (`_dag_task` ×8, `_objective`, `_wave_committed`, `_process_batch`,
-  `_preview_is_valid`, `_gates`, `_validate_and_commit`, `_read_sets`, …).
-- **History in docstrings (Q10).** `grep -rnE "Wave [0-9]+" mak cli` shows
-  wave-by-wave narration throughout (`mak/core/atomic.py`,
-  `mak/node_store/transaction.py`, `mak/node_store/store.py::sync_file`,
-  `mak/config.py::anchor_mak_dir`, `mak/git_integration/git.py::commit_task`,
-  `cli/runner.py`, `mak/session.py` itself).
-- **The adjudicator is the one LLM call inside the commit path (Q7)**, invoked
-  from `_reads_are_current` via `self._adjudicate_fn`, and is not fenced or
-  accounted as nondeterministic.
-
-### Design decisions
-
-#### D27.1 — `WaveState`, created fresh per wave
-
-A dataclass holding **every** per-wave field: `completed`, `failed`,
-`failure_reasons`, `failure_history`, `wave_committed`, `file_before`,
-`file_writers`, `node_writer`, `fragments_before`, `commit_log`, `defects_at`,
-`cascade_at`, `gates_at`, `granted`, `read_sets`, `parked`, `deferring`,
-`waiting_on_providers`, the counters (`stale_reads`, `stale_redispatches`,
-`conflict_rejections`, `redispatches`, `concurrency_samples`, `dispatches`,
-`context_bytes`, `starved_dispatches`), `budget_stop`, `preexisting_files`,
-`wave_graph`, `lock_policy`, `progress`, `partial_queue`, `scheduler`.
-`install_plan` does `self._wave = WaveState.start(...)`; there is no reset list.
-Session-lifetime state stays on `Session`: config and collaborators, `state`,
-`_objective`, `_cascade_history`, `_agent_usage`, the symbol-index cache,
-`_makignore`, `_last_result`, the executor. A test asserts that
-`WaveState.start()` twice yields equal, independent objects, and the module
-docstring classifies every field.
-
-#### D27.2 — `mak/session/` becomes a package
-
-| Module | Class | Takes over |
-|---|---|---|
-| `__init__.py` | re-exports | `Session`, `SessionResult`, `SessionState`, `SubTaskProgress` — every existing `from mak.session import …` keeps working |
-| `core.py` | `Session` | the state machine: `initialize`, `plan`, `propose_plan`, `install_plan`, `run`, `teardown`, `recover`, `close`; target **≤ 600 lines** |
-| `wave.py` | `WaveState` | D27.1 |
-| `reconcile.py` | `WorkTreeReconciler` | reconciliation, prune, `.makignore` |
-| `dispatch.py` | `DispatchEnricher` | layers 0–5, symbol index, budgets, starvation guard, read-set capture |
-| `commit/pipeline.py` | `CommitPipeline` | D27.3 |
-| `commit/checks.py` | one class per check | the nine current steps |
-| `commit/apply.py` | `CommitApplier` | the store transaction, `install_files`, wave bookkeeping, audit commit |
-| `parking.py` | `ParkedCommits` | park, resume, victim release |
-| `outcomes.py` | `NoopPolicy`, `RetryPolicy`, `FailureLog` | no-op acceptance/refusal, retry notes, empty-result diagnosis, failure history |
-| `post_wave.py` | `PostWaveAnalyzer` | cascade, cross-module defects, gates, fix-up tasks, repair obligations, fingerprints |
-| `recovery.py` | `RecoveryManager` | journal recovery, `recover`, re-audit |
-| `finalize.py` | `Finalizer` | teardown, suite, push gate |
-| `watchdog.py` | `LockWatchdog` | heartbeat, lease renewal, deadlock scan |
-
-Collaborators receive what they need explicitly (store, lock table, config
-section, logger, `WaveState`) — never the `Session`.
-
-#### D27.3 — The commit pipeline is an ordered list of checks
-
-```python
-class CommitCheck(Protocol):
-    name: str
-    def check(self, ctx: CommitContext) -> Verdict: ...
-
-@dataclass(frozen=True)
-class Verdict:
-    kind: Literal["accept", "reject", "defer", "resend"]
-    reasons: tuple[str, ...] = ()
-    retry_note: str | None = None                  # resend
-    waiting_on: str | None = None                  # defer: lock / provider / reader
-    restaged: Mapping[NodeId, str] | None = None   # accept with rewritten sources
-```
-
-`CommitContext` carries task id, staged ids and sources (mutable only through
-`restaged`), batch peers, the task's grant and read set, and read-only access to
-store, lock table, and `WaveState`. The default order is data:
-
-```python
-DEFAULT_CHECKS = (
-    ProvidersCommitted, RegistrarMerge, ReadSetCurrent, StructuralConflicts,
-    ContractsHold, InterfaceGranted, PreviewCompiles, ProspectiveSemantics,
-    LeaseStillHeld,
-)
-```
-
-The pipeline stops at the first non-accept verdict and hands it to one handler
-per kind (reject → the reject path, defer → `ParkedCommits`, resend →
-`RetryPolicy`). A test asserts `DEFAULT_CHECKS` names in order, so a reordering
-is a visible, reviewed change. Side effects that today live inside checks
-(acquiring `#api` WRITE, rolling back staged nodes, restaging a merged
-registrar) move into the verdict handlers or are expressed through `restaged`.
-
-#### D27.4 — Behaviour-preserving, proven by golden event logs
-
-Before any code moves, record golden logs on `main`: for
-`tests/test_concurrency_integration.py`, the semantic corpus
-(`benchmark/semantic/run_semantic.py --json`), and Template 4 mock mode, the
-sequence of `(task_id, EventType, salient payload keys)` per task plus final
-`SessionResult`/metrics. After each step the same runs must reproduce them
-exactly (timestamps and durations excluded). The existing suite must pass
-**unchanged**, except for tests that reached into moved private members, which
-are ported to the new collaborator's public API in the same commit.
-
-#### D27.5 — Size budgets become a test
-
-`tests/test_module_budgets.py`: `mak/session/core.py` ≤ 600 lines; no module
-in `mak/session/` over 800; no function in `mak/session/` over 80 lines (AST
-walk). An explicit allowlist with a reason is the only exception mechanism.
-
-#### D27.6 — Fence the adjudicator (Q7)
-
-The adjudicator is injected as a separate `Adjudicator` strategy into
-`ReadSetCurrent` only when `semantic.adjudicator` is set. Every consulted
-decision is logged with `nondeterministic=true`, counted in metrics as
-`adjudicated_accepts`, and shown in the run summary. `validate_config` rejects
-an adjudicator combined with `stale_read: redispatch` or `reject` (it can never
-be consulted there). CONTRIBUTING states it is the only model call on the commit
-path.
-
-#### D27.7 — Docstrings describe the contract, not the history (Q10, P.5)
-
-Rewrite every docstring and comment in `mak/` and `cli/` that narrates a past
-wave or bug ("used to", "Wave N", "before this"), keeping the *why* of the
-current design. Acceptance: `grep -rnE "Wave [0-9]+" mak cli` returns nothing.
-
-### Implementation plan
-
-- **27.1 Golden logs (D27.4)** — a script under `tests/golden/` that records and
-  compares; commit the goldens.
-- **27.2 `WaveState` (D27.1)** — move fields, delete the reset list, run goldens.
-- **27.3 Package skeleton** — `mak/session.py` → `mak/session/core.py` with
-  re-exports; nothing else moves; run goldens.
-- **27.4 Extract in dependency order**, goldens after each: `WorkTreeReconciler`,
-  `DispatchEnricher`, `FailureLog`/`RetryPolicy`/`NoopPolicy`, `ParkedCommits`,
-  `CommitApplier`, `CommitPipeline` + checks (D27.3), `PostWaveAnalyzer`,
-  `RecoveryManager`, `Finalizer`, `LockWatchdog`.
-- **27.5 Port private-member tests** to the collaborators they now belong to.
-- **27.6 Adjudicator fence (D27.6).**
-- **27.7 Size-budget test (D27.5).**
-- **27.8 Docstring sweep (D27.7).**
-- **27.9 Gates** — full suite (3.11, 3.13), mypy, ruff, goldens, benchmark mock
-  runs for all four templates.
-- **27.10 Document** — CONTRIBUTING §11 rewritten around the collaborators and
-  the check list; project layout; CHANGELOG ("internal refactor, no behaviour
-  change").
-
-### Required test matrix
-
-| Case | Expected |
-|---|---|
-| goldens: concurrency integration, semantic corpus, Template 4 mock | identical event sequences and results |
-| `WaveState.start()` twice | equal, independent objects |
-| second wave after a failed first wave | no state from wave 1 visible in wave 2 (explicit assertion over every `WaveState` field) |
-| `DEFAULT_CHECKS` order | equals the documented order |
-| a new check inserted in a test pipeline | runs in position, verdict honoured, no `Session` change needed |
-| adjudicator with `stale_read: reject` | `ConfigError` |
-| adjudicated accept | logged `nondeterministic=true`, counted |
-| module/function budgets | enforced |
-
-### Acceptance criteria
-
-- `Session` is ≤ 600 lines and owns no per-wave attribute.
-- The commit pipeline is a list of `CommitCheck` objects; adding a check touches
-  no `Session` code.
-- Goldens reproduce; the suite passes with only ported private-access tests
-  changed.
-- No `Wave N` references remain in `mak/` or `cli/`.
-
-### Deliberately out of scope
-
-- Any behaviour change, including "obvious" fixes spotted while moving code —
-  record them as follow-ups instead.
-- Changing the check order.
-- Splitting `mak/config.py` (1,001 lines); a candidate for the next
-  consolidation wave.
 
 ---
 
@@ -1810,6 +1585,26 @@ scripted fan-out demo.
 
 - Network transports beyond stdio.
 - Multi-project servers.
+
+---
+
+## Follow-ups from Wave 27 (hotfix-sized)
+
+Spotted during the session decomposition and deliberately left out of a
+behaviour-preserving wave:
+
+- **History narration without a wave number.** No `Wave N` remains in `mak/` or
+  `cli/`, but many docstrings still say "used to" / "before this"; rewrite them
+  as the current contract. `pyproject.toml` comments still cite "Wave 15, D8"
+  and "Wave 9.3".
+- **Make `CommitContext` read-only in fact.** Checks can still mutate
+  `ctx.wave`, and `ReadSetCurrent` bumps the `stale_reads` /
+  `stale_redispatches` / `adjudicated_accepts` counters itself. A frozen wave
+  view plus counters carried on `Verdict` would make the contract enforceable.
+- **Registry protocol parameter name.** Pyright reports `AdapterRegistry.get
+  (agent_id)` vs `AdapterRegistryLike.get(agent_type)` at the scheduler call
+  sites (mypy is clean); align the names.
+- **Split `mak/config.py`** (1,000+ lines) — the next consolidation candidate.
 
 ---
 

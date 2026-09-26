@@ -1,4 +1,4 @@
-"""Impacted tests with pairwise attribution (Wave 20, D4).
+"""Impacted tests with pairwise attribution.
 
 The research definition of a semantic merge conflict is a test that passes with
 change A alone and with change B alone, and fails with A and B together. Git

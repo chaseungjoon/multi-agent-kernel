@@ -1,0 +1,132 @@
+{
+ "calls": 1,
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 6,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 293.0,
+     "dispatches": 1.0,
+     "mean_context_bytes": 293.0,
+     "redispatches": 0.0,
+     "stale_reads": 0.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 1.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "audit": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 293,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 217,
+       "count": 5,
+       "nodes": [
+        "web/middleware.py::module_header::__header__",
+        "web/middleware.py::function::use",
+        "web/middleware.py::function::cors",
+        "web/middleware.py::function::require_auth",
+        "web/middleware.py::function::audit"
+       ]
+      },
+      "write_targets": {
+       "bytes": 76,
+       "count": 1,
+       "nodes": [
+        "web/middleware.py::function::_install"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 5,
+     "starved": false,
+     "targets": [
+      "web/middleware.py::function::_install"
+     ],
+     "task_id": "audit",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "web/middleware.py::function::_install"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "web/middleware.py::function::_install"
+     ],
+     "source_lengths": {
+      "web/middleware.py::function::_install": 91
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "audit",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "audit"
+    }
+   ]
+  ]
+ },
+ "files": {
+  "web/__init__.py": "",
+  "web/middleware.py": "CHAIN = []\n\n\ndef use(fn):\n    CHAIN.append(fn)\n\n\ndef cors(req):\n    return req\n\n\ndef require_auth(req):\n    req[\"user\"] = \"ann\"\n    return req\n\n\ndef audit(req):\n    req[\"seen\"] = req.get(\"user\", \"anonymous\")\n    return req\n\n\ndef _install() -> None:\n    \"\"\"Build the middleware chain.\"\"\"\n    use(cors)\n    use(audit)\n"
+ },
+ "fixups": 0,
+ "mechanisms": [],
+ "outcome": "clean",
+ "resolved": true
+}

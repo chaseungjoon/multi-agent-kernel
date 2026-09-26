@@ -29,7 +29,7 @@ SCHEMA_VERSION = 3
 # three built-in providers those names are identical, so that migration is a
 # rename of the outer key and nothing else.
 #
-# v3 (Wave 24) adds per-entry ``supported_parameters``. A v1 or v2 record simply
+# v3 adds per-entry ``supported_parameters``. A v1 or v2 record simply
 # has no such key, which ``ModelEntry.from_dict`` reads as *unknown* — the
 # tri-state's whole purpose. So the migration is a no-op on the data and a
 # user who upgrades keeps every cached model; the next refresh fills the

@@ -126,6 +126,8 @@ def make_session(
     max_attempts: int = 3,
     concurrency: int = 4,
     validate: bool = True,
+    gate_runner: object | None = None,
+    adjudicator_llm: object | None = None,
 ) -> tuple[Session, NodeStore, SessionLogger]:
     """Return a session over ``tmp_path``, with a logger and this config."""
     store = NodeStore(tmp_path / ".mak" / "store")
@@ -151,6 +153,8 @@ def make_session(
         logger=logger,
         max_attempts=max_attempts,
         collect_timeout_s=20.0,
+        gate_runner=gate_runner,  # type: ignore[arg-type]
+        adjudicator_llm=adjudicator_llm,  # type: ignore[arg-type]
     )
     return session, store, logger
 

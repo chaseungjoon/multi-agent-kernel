@@ -46,8 +46,7 @@ RESERVED_ENDPOINT_IDS: frozenset[str] = frozenset(
 )
 
 # Transport -> the adapter type ``mak.bootstrap`` constructs for it. ``type``
-# survives Wave 22 purely as this constructor selector; the *routing* key is the
-# agent id.
+# is purely this constructor selector; the *routing* key is the agent id.
 TRANSPORT_ADAPTER_TYPE: dict[Transport, str] = {
     Transport.OPENAI_CHAT: "openai_api",
     Transport.ANTHROPIC: "anthropic_api",
@@ -136,9 +135,9 @@ BUILTIN_PROFILES: tuple[EndpointProfile, ...] = (
         structured_output=StructuredOutput.AUTO,
         token_parameter=TokenParameter.MAX_TOKENS,
         # The one profile that gets it. OpenRouter documents
-        # ``provider.require_parameters``, and Wave 24 measured what happens
-        # without it: a model id whose free route cannot honor the requested
-        # format is served anyway and refuses at the provider.
+        # ``provider.require_parameters``, and without it (as measured) a model
+        # id whose free route cannot honor the requested format is served
+        # anyway and refuses at the provider.
         provider_routing=ProviderRouting.OPENROUTER,
         note=(
             "OpenRouter routes to many upstream models; structured-output and "

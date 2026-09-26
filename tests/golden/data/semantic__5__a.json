@@ -1,0 +1,133 @@
+{
+ "calls": 1,
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 3,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 107.0,
+     "dispatches": 1.0,
+     "mean_context_bytes": 107.0,
+     "redispatches": 0.0,
+     "stale_reads": 0.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 1.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "a": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 107,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 12,
+       "count": 1,
+       "nodes": [
+        "store/base.py::class::Repo"
+       ]
+      },
+      "write_targets": {
+       "bytes": 95,
+       "count": 2,
+       "nodes": [
+        "store/base.py::method::Repo.save",
+        "store/base.py::function::persist_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 1,
+     "starved": false,
+     "targets": [
+      "store/base.py::method::Repo.save",
+      "store/base.py::function::persist_all"
+     ],
+     "task_id": "a",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "store/base.py::method::Repo.save",
+      "store/base.py::function::persist_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "store/base.py::method::Repo.save",
+      "store/base.py::function::persist_all"
+     ],
+     "source_lengths": {
+      "store/base.py::function::persist_all": 65,
+      "store/base.py::method::Repo.save": 41
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "a",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "a"
+    }
+   ]
+  ]
+ },
+ "files": {
+  "store/__init__.py": "",
+  "store/base.py": "class Repo:\n    def save(self, force):\n        return \"base\"\n\n\ndef persist_all(repos):\n    return [r.save(True) for r in repos]\n"
+ },
+ "fixups": 0,
+ "mechanisms": [],
+ "outcome": "clean",
+ "resolved": true
+}

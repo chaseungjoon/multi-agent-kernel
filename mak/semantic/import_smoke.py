@@ -1,4 +1,4 @@
-"""Import every touched module in a fresh interpreter (Wave 20, D6).
+"""Import every touched module in a fresh interpreter.
 
 A parse check proves a module is valid Python; it does not prove the module can
 be *imported* — a name that fails at import time, a module-level call into code

@@ -109,7 +109,7 @@ class EditRound:
     - ``symbol_edits``: agent_id -> introduced source, for name-collision checks.
     - ``registry_edits`` / ``previous``: node_id -> the source about to be
       committed, and the committed source it replaces, so the registry-key check
-      reports only duplicates an edit *introduces* (Wave 20).
+      reports only duplicates an edit *introduces*.
     """
 
     definitions: dict[str, str] = field(default_factory=dict)

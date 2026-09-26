@@ -238,7 +238,7 @@ def _coerce_subtask(raw: object, index: int) -> SubTask:
 
 @dataclass(frozen=True, slots=True)
 class _Declarations:
-    """A sub-task's Wave 20 interface declarations, validated."""
+    """A sub-task's interface declarations, validated."""
 
     changes_api: bool | None
     api_targets: list[NodeId]
@@ -574,7 +574,7 @@ class Planner:
         # a real one in each task's "agent_type" instead of guessing (an
         # unconfigured id would otherwise have to be remapped by the session).
         # The serialized field keeps its name for compatibility; its value is a
-        # routing id (Wave 22).
+        # routing id.
         self._agent_types = list(agent_types or [])
         # Optional human labels — "nvidia-llama — meta/llama-3.3-70b via NVIDIA
         # Build" — so the model can choose sensibly between several agents. They

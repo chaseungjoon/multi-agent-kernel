@@ -1,4 +1,4 @@
-"""Commit-time reconciliation of a keyed registrar target (Wave 20, P5).
+"""Commit-time reconciliation of a keyed registrar target.
 
 Appenders to a keyed registrar hold it INTENT_WRITE, which they co-hold, so
 several can be in flight at once — each agent returning the table as *it* read

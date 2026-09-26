@@ -1,4 +1,4 @@
-"""Run the optional heavy gates at wave end (Wave 20, D3/D4/D6).
+"""Run the optional heavy gates at wave end.
 
 Every gate is off by default and none of them can fail a wave: each finding
 becomes a fix-up task through the same review flow as the cascade, and a gate

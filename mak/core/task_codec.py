@@ -1,8 +1,8 @@
 """One JSON shape for a ``SubTask``, shared by the planner and the task graph.
 
-The planner's plan array and ``.mak/task_graph.json`` are the same objects, and
-they used to be serialized by two hand-written dict literals. Adding a field to
-one and not the other is how ``--recover`` would silently drop a task's Wave 20
+The planner's plan array and ``.mak/task_graph.json`` are the same objects.
+Serialized by two hand-written dict literals, adding a field to one and not the
+other is how ``--recover`` would silently drop a task's interface
 declarations — a recovered body-only task would be locked as undeclared, and a
 recovered contract would vanish. One encoder and one decoder remove the chance.
 

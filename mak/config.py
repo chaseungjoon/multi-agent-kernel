@@ -27,7 +27,7 @@ _DEFAULT_INCLUDE: list[str] = ["**/*.py"]
 # Directories that are never project source. ``.mak`` heads the list: the node
 # store persists fragments as ``.py`` files under ``.mak/node_store/``, and
 # ``Path.glob("**/*.py")`` descends into dotted directories, so without it every
-# run re-ingests the previous run's output as if it were source (Wave 11). The
+# run re-ingests the previous run's output as if it were source. The
 # session also skips the mak dir unconditionally — a user config that overrides
 # ``exclude_patterns`` must not be able to switch that protection off.
 _DEFAULT_EXCLUDE: list[str] = [
@@ -251,7 +251,7 @@ class AgentConfig:
     is otherwise a multi-second reload per task. ``temperature`` unset leaves the
     server's own default, which is tuned for chat rather than for code.
 
-    ``id`` and ``endpoint`` are Wave 22's separation of concerns. ``id`` is the
+    ``id`` and ``endpoint`` separate two concerns. ``id`` is the
     **routing key**: the registry, scheduler, pool caps, planner choice, logs and
     git metadata all key on it, which is what lets two agents share an adapter
     class (two OpenAI-compatible endpoints, say) without one overwriting the
@@ -380,7 +380,7 @@ class PlannerConfig:
     a token for a protected gateway (``vllm --api-key``); a local runtime needs
     none, and leaving it unset is what lets the placeholder-key rule apply.
 
-    ``endpoint`` (Wave 22) is the authoritative planner route when set: it names
+    ``endpoint`` is the authoritative planner route when set: it names
     an entry in the top-level ``endpoints:`` section and supersedes both the
     model-prefix inference and the legacy ``backend``/``base_url`` pair. Naming
     an endpoint *and* a contradictory ``backend``/``base_url``/``api_key_env`` is
@@ -461,7 +461,7 @@ _ON_OFF = ("off", "on")
 
 @dataclass(frozen=True, slots=True)
 class SemanticConfig:
-    """Semantic-conflict prevention, detection and the optional gates (Wave 20).
+    """Semantic-conflict prevention, detection and the optional gates.
 
     Node write locks rule out *textual* conflicts. These settings govern the
     *semantic* ones — two edits on disjoint nodes that are each right and wrong

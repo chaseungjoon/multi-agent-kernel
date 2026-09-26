@@ -38,7 +38,7 @@ class TestDeletionTracking:
             {"t": [{"m.py": "def a():\n    return 1\n"}]},
             [task("t", ["m.py"])],
         )
-        entry = session._wave_committed[NodeId("m.py::function::b")]  # type: ignore[attr-defined]
+        entry = session.wave.committed[NodeId("m.py::function::b")]
         assert entry == ("def b():\n    return 2\n", None)
 
 

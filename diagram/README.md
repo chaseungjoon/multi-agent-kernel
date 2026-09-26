@@ -48,6 +48,6 @@ To use an existing Chrome installation, add `-p /path/to/puppeteer-config.json`
 with a JSON object containing an `executablePath` pointing to Chrome. Rendering
 tools are documentation tooling; they are not Python runtime dependencies.
 
-The diagrams were checked against `mak/session.py`, `mak/scheduler/scheduler.py`,
+The diagrams were checked against `mak/session/`, `mak/scheduler/scheduler.py`,
 `mak/agent_runner/runner.py`, `mak/node_store/transaction.py`, `mak/bootstrap.py`,
 `mak/cascade.py`, `mak/teardown.py`, and the CLI entry points.

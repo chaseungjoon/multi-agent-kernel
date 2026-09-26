@@ -1,0 +1,6669 @@
+{
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 87,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 162669.0,
+     "dispatches": 58.0,
+     "mean_context_bytes": 2804.64,
+     "redispatches": 0.0,
+     "stale_reads": 8.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 58.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "add_item": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 4915,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1388,
+       "count": 6,
+       "nodes": [
+        "app/events.py::module_body::__body__",
+        "app/settings.py::module_body::__body__",
+        "app/settings.py::function::_register_all",
+        "app/events.py::function::_register_all",
+        "app/settings.py::module_header::__header__",
+        "app/events.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 3040,
+       "count": 15,
+       "nodes": [
+        "app/cart.py::module_header::__header__",
+        "app/cart.py::function::cart_total",
+        "app/cart.py::function::item_counts",
+        "app/cart.py::function::apply_coupon",
+        "app/cart.py::function::free_shipping_eligible",
+        "app/cart.py::function::remove_item",
+        "app/cart.py::function::quantity_update",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__",
+        "app/errors.py::module_header::__header__",
+        "app/errors.py::function::register",
+        "app/errors.py::function::message_for",
+        "app/errors.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 487,
+       "count": 3,
+       "nodes": [
+        "app/cart.py::function::add_item",
+        "app/routes.py::function::_register_all",
+        "app/errors.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 21,
+     "starved": false,
+     "targets": [
+      "app/cart.py::function::add_item",
+      "app/routes.py::function::_register_all",
+      "app/errors.py::function::_register_all"
+     ],
+     "task_id": "add_item",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/cart.py::function::add_item",
+      "app/routes.py::function::_register_all",
+      "app/errors.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/cart.py::function::add_item",
+      "app/routes.py::function::_register_all",
+      "app/errors.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/cart.py::function::add_item": 161,
+      "app/errors.py::function::_register_all": 203,
+      "app/routes.py::function::_register_all": 160
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "add_item",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('POST /cart/items', cart.add_item)"
+     ],
+     "current_version": 1,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "add_item"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('cart.limit_exceeded', 'Cart cannot exceed the maximum number of items')"
+     ],
+     "current_version": 1,
+     "node_id": "app/errors.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "add_item"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "add_item"
+    }
+   ]
+  ],
+  "address_label": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2826,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2459,
+       "count": 11,
+       "nodes": [
+        "app/shipping.py::module_header::__header__",
+        "app/shipping.py::function::shipping_cost",
+        "app/shipping.py::function::normalize_postcode",
+        "app/shipping.py::function::delivery_window",
+        "app/shipping.py::function::tracking_valid",
+        "app/shipping.py::function::zone_for_country",
+        "app/shipping.py::function::oversize_surcharge",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 367,
+       "count": 2,
+       "nodes": [
+        "app/shipping.py::function::address_label",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/shipping.py::function::address_label",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "address_label",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/shipping.py::function::address_label",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/shipping.py::function::address_label",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/routes.py::function::_register_all": 173,
+      "app/shipping.py::function::address_label": 182
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "address_label",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('POST /shipping/label', shipping.address_label)"
+     ],
+     "current_version": 2,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "address_label"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "address_label"
+    }
+   ]
+  ],
+  "apply_coupon": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2360,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2002,
+       "count": 11,
+       "nodes": [
+        "app/cart.py::module_header::__header__",
+        "app/cart.py::function::cart_total",
+        "app/cart.py::function::add_item",
+        "app/cart.py::function::item_counts",
+        "app/cart.py::function::free_shipping_eligible",
+        "app/cart.py::function::remove_item",
+        "app/cart.py::function::quantity_update",
+        "app/errors.py::module_header::__header__",
+        "app/errors.py::function::register",
+        "app/errors.py::function::message_for",
+        "app/errors.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 358,
+       "count": 2,
+       "nodes": [
+        "app/cart.py::function::apply_coupon",
+        "app/errors.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/cart.py::function::apply_coupon",
+      "app/errors.py::function::_register_all"
+     ],
+     "task_id": "apply_coupon",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/cart.py::function::apply_coupon",
+      "app/errors.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/cart.py::function::apply_coupon",
+      "app/errors.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/cart.py::function::apply_coupon": 203,
+      "app/errors.py::function::_register_all": 182
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "apply_coupon",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('cart.bad_coupon', 'Coupon code is not recognized')"
+     ],
+     "current_version": 2,
+     "node_id": "app/errors.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "apply_coupon"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "app/cart.py::function::add_item",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "apply_coupon",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "apply_coupon"
+    }
+   ]
+  ],
+  "apply_discount": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2848,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2361,
+       "count": 12,
+       "nodes": [
+        "app/catalog.py::module_header::__header__",
+        "app/catalog.py::function::slugify",
+        "app/catalog.py::function::format_price",
+        "app/catalog.py::function::in_stock",
+        "app/catalog.py::function::sku",
+        "app/catalog.py::function::star_bar",
+        "app/catalog.py::function::list_page",
+        "app/catalog.py::function::bulk_price",
+        "app/errors.py::module_header::__header__",
+        "app/errors.py::function::register",
+        "app/errors.py::function::message_for",
+        "app/errors.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 487,
+       "count": 2,
+       "nodes": [
+        "app/catalog.py::function::apply_discount",
+        "app/errors.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/catalog.py::function::apply_discount",
+      "app/errors.py::function::_register_all"
+     ],
+     "task_id": "apply_discount",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/catalog.py::function::apply_discount",
+      "app/errors.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/catalog.py::function::apply_discount",
+      "app/errors.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/catalog.py::function::apply_discount": 194,
+      "app/errors.py::function::_register_all": 351
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "apply_discount",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('catalog.bad_discount', 'Discount must be between 0 and 100 percent')"
+     ],
+     "current_version": 3,
+     "node_id": "app/errors.py::function::_register_all",
+     "read_version": 3,
+     "task_id": "apply_discount"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "apply_discount"
+    }
+   ]
+  ],
+  "average_rating": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2742,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2316,
+       "count": 11,
+       "nodes": [
+        "app/reviews.py::module_header::__header__",
+        "app/reviews.py::function::star_histogram",
+        "app/reviews.py::function::contains_profanity",
+        "app/reviews.py::function::helpfulness",
+        "app/reviews.py::function::truncate_review",
+        "app/reviews.py::function::verified_badge",
+        "app/reviews.py::function::sort_reviews",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 426,
+       "count": 2,
+       "nodes": [
+        "app/reviews.py::function::average_rating",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/reviews.py::function::average_rating",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "average_rating",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/reviews.py::function::average_rating",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/reviews.py::function::average_rating",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/reviews.py::function::average_rating": 270,
+      "app/routes.py::function::_register_all": 282
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "average_rating",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /reviews/average', reviews.average_rating)"
+     ],
+     "current_version": 3,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 3,
+     "task_id": "average_rating"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "average_rating"
+    }
+   ]
+  ],
+  "bulk_price": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2700,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2338,
+       "count": 12,
+       "nodes": [
+        "app/catalog.py::module_header::__header__",
+        "app/catalog.py::function::slugify",
+        "app/catalog.py::function::format_price",
+        "app/catalog.py::function::apply_discount",
+        "app/catalog.py::function::in_stock",
+        "app/catalog.py::function::sku",
+        "app/catalog.py::function::star_bar",
+        "app/catalog.py::function::list_page",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 362,
+       "count": 2,
+       "nodes": [
+        "app/catalog.py::function::bulk_price",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/catalog.py::function::bulk_price",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "bulk_price",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/catalog.py::function::bulk_price",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/catalog.py::function::bulk_price",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/catalog.py::function::bulk_price": 230,
+      "app/settings.py::function::_register_all": 157
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "bulk_price",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('catalog.bulk_threshold', 10)"
+     ],
+     "current_version": 1,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "bulk_price"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "app/catalog.py::function::apply_discount",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "bulk_price",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "bulk_price"
+    }
+   ]
+  ],
+  "cancel_allowed": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3084,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2511,
+       "count": 12,
+       "nodes": [
+        "app/orders.py::module_header::__header__",
+        "app/orders.py::function::order_number",
+        "app/orders.py::function::next_status",
+        "app/orders.py::function::order_total",
+        "app/orders.py::function::confirmation_line",
+        "app/orders.py::function::estimated_delivery",
+        "app/orders.py::function::split_shipments",
+        "app/orders.py::function::refund_amount",
+        "app/errors.py::module_header::__header__",
+        "app/errors.py::function::register",
+        "app/errors.py::function::message_for",
+        "app/errors.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 573,
+       "count": 2,
+       "nodes": [
+        "app/orders.py::function::cancel_allowed",
+        "app/errors.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/orders.py::function::cancel_allowed",
+      "app/errors.py::function::_register_all"
+     ],
+     "task_id": "cancel_allowed",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/orders.py::function::cancel_allowed",
+      "app/errors.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/orders.py::function::cancel_allowed",
+      "app/errors.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/errors.py::function::_register_all": 424,
+      "app/orders.py::function::cancel_allowed": 189
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "cancel_allowed",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('orders.cancel_denied', 'Order can no longer be cancelled')"
+     ],
+     "current_version": 4,
+     "node_id": "app/errors.py::function::_register_all",
+     "read_version": 4,
+     "task_id": "cancel_allowed"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "cancel_allowed"
+    }
+   ]
+  ],
+  "cart_total": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2659,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2210,
+       "count": 11,
+       "nodes": [
+        "app/cart.py::module_header::__header__",
+        "app/cart.py::function::add_item",
+        "app/cart.py::function::item_counts",
+        "app/cart.py::function::apply_coupon",
+        "app/cart.py::function::free_shipping_eligible",
+        "app/cart.py::function::remove_item",
+        "app/cart.py::function::quantity_update",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 449,
+       "count": 2,
+       "nodes": [
+        "app/cart.py::function::cart_total",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/cart.py::function::cart_total",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "cart_total",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/cart.py::function::cart_total",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/cart.py::function::cart_total",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/cart.py::function::cart_total": 138,
+      "app/routes.py::function::_register_all": 331
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "cart_total",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /cart/total', cart.cart_total)"
+     ],
+     "current_version": 4,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 4,
+     "task_id": "cart_total"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "cart_total"
+    }
+   ]
+  ],
+  "confirmation_line": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3089,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2705,
+       "count": 12,
+       "nodes": [
+        "app/orders.py::module_header::__header__",
+        "app/orders.py::function::order_number",
+        "app/orders.py::function::next_status",
+        "app/orders.py::function::order_total",
+        "app/orders.py::function::estimated_delivery",
+        "app/orders.py::function::cancel_allowed",
+        "app/orders.py::function::split_shipments",
+        "app/orders.py::function::refund_amount",
+        "app/events.py::module_header::__header__",
+        "app/events.py::function::register",
+        "app/events.py::function::emit",
+        "app/events.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 384,
+       "count": 2,
+       "nodes": [
+        "app/orders.py::function::confirmation_line",
+        "app/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/orders.py::function::confirmation_line",
+      "app/events.py::function::_register_all"
+     ],
+     "task_id": "confirmation_line",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/orders.py::function::confirmation_line",
+      "app/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/orders.py::function::confirmation_line",
+      "app/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/events.py::function::_register_all": 175,
+      "app/orders.py::function::confirmation_line": 185
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "confirmation_line",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('order.placed', orders.confirmation_line)"
+     ],
+     "current_version": 1,
+     "node_id": "app/events.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "confirmation_line"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "app/orders.py::function::cancel_allowed",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "confirmation_line",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "confirmation_line"
+    }
+   ]
+  ],
+  "contains_profanity": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2801,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2159,
+       "count": 11,
+       "nodes": [
+        "app/reviews.py::module_header::__header__",
+        "app/reviews.py::function::average_rating",
+        "app/reviews.py::function::star_histogram",
+        "app/reviews.py::function::helpfulness",
+        "app/reviews.py::function::truncate_review",
+        "app/reviews.py::function::verified_badge",
+        "app/reviews.py::function::sort_reviews",
+        "app/errors.py::module_header::__header__",
+        "app/errors.py::function::register",
+        "app/errors.py::function::message_for",
+        "app/errors.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 642,
+       "count": 2,
+       "nodes": [
+        "app/reviews.py::function::contains_profanity",
+        "app/errors.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/reviews.py::function::contains_profanity",
+      "app/errors.py::function::_register_all"
+     ],
+     "task_id": "contains_profanity",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/reviews.py::function::contains_profanity",
+      "app/errors.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/reviews.py::function::contains_profanity",
+      "app/errors.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/errors.py::function::_register_all": 496,
+      "app/reviews.py::function::contains_profanity": 325
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "contains_profanity",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('reviews.rejected', 'Review contains prohibited language')"
+     ],
+     "current_version": 5,
+     "node_id": "app/errors.py::function::_register_all",
+     "read_version": 5,
+     "task_id": "contains_profanity"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "contains_profanity"
+    }
+   ]
+  ],
+  "currency_to_cents": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 5705,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1426,
+       "count": 6,
+       "nodes": [
+        "app/events.py::module_body::__body__",
+        "app/settings.py::module_body::__body__",
+        "app/settings.py::function::_register_all",
+        "app/events.py::function::_register_all",
+        "app/settings.py::module_header::__header__",
+        "app/events.py::module_header::__header__"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 3305,
+       "count": 15,
+       "nodes": [
+        "app/payments.py::module_header::__header__",
+        "app/payments.py::function::luhn_valid",
+        "app/payments.py::function::mask_card",
+        "app/payments.py::function::processing_fee",
+        "app/payments.py::function::split_evenly",
+        "app/payments.py::function::is_expired",
+        "app/payments.py::function::receipt_id",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__",
+        "app/errors.py::module_header::__header__",
+        "app/errors.py::function::register",
+        "app/errors.py::function::message_for",
+        "app/errors.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 974,
+       "count": 3,
+       "nodes": [
+        "app/payments.py::function::currency_to_cents",
+        "app/routes.py::function::_register_all",
+        "app/errors.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 21,
+     "starved": false,
+     "targets": [
+      "app/payments.py::function::currency_to_cents",
+      "app/routes.py::function::_register_all",
+      "app/errors.py::function::_register_all"
+     ],
+     "task_id": "currency_to_cents",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/payments.py::function::currency_to_cents",
+      "app/routes.py::function::_register_all",
+      "app/errors.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/payments.py::function::currency_to_cents",
+      "app/routes.py::function::_register_all",
+      "app/errors.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/errors.py::function::_register_all": 491,
+      "app/payments.py::function::currency_to_cents": 350,
+      "app/routes.py::function::_register_all": 396
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "currency_to_cents",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('POST /payments/parse', payments.currency_to_cents)"
+     ],
+     "current_version": 5,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 5,
+     "task_id": "currency_to_cents"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('payments.bad_amount', 'Amount must look like $D.DD')"
+     ],
+     "current_version": 6,
+     "node_id": "app/errors.py::function::_register_all",
+     "read_version": 5,
+     "task_id": "currency_to_cents"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "currency_to_cents"
+    }
+   ]
+  ],
+  "delivery_window": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2565,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2185,
+       "count": 11,
+       "nodes": [
+        "app/shipping.py::module_header::__header__",
+        "app/shipping.py::function::shipping_cost",
+        "app/shipping.py::function::normalize_postcode",
+        "app/shipping.py::function::address_label",
+        "app/shipping.py::function::tracking_valid",
+        "app/shipping.py::function::zone_for_country",
+        "app/shipping.py::function::oversize_surcharge",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 380,
+       "count": 2,
+       "nodes": [
+        "app/shipping.py::function::delivery_window",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/shipping.py::function::delivery_window",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "delivery_window",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/shipping.py::function::delivery_window",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/shipping.py::function::delivery_window",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/settings.py::function::_register_all": 201,
+      "app/shipping.py::function::delivery_window": 182
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "delivery_window",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('shipping.express_divisor', 2)"
+     ],
+     "current_version": 2,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 2,
+     "task_id": "delivery_window"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "delivery_window"
+    }
+   ]
+  ],
+  "estimated_delivery": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1835,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1578,
+       "count": 8,
+       "nodes": [
+        "app/orders.py::module_header::__header__",
+        "app/orders.py::function::order_number",
+        "app/orders.py::function::next_status",
+        "app/orders.py::function::order_total",
+        "app/orders.py::function::confirmation_line",
+        "app/orders.py::function::cancel_allowed",
+        "app/orders.py::function::split_shipments",
+        "app/orders.py::function::refund_amount"
+       ]
+      },
+      "write_targets": {
+       "bytes": 257,
+       "count": 1,
+       "nodes": [
+        "app/orders.py::function::estimated_delivery"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "app/orders.py::function::estimated_delivery"
+     ],
+     "task_id": "estimated_delivery",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/orders.py::function::estimated_delivery"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/orders.py::function::estimated_delivery"
+     ],
+     "source_lengths": {
+      "app/orders.py::function::estimated_delivery": 294
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "estimated_delivery",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "estimated_delivery"
+    }
+   ]
+  ],
+  "filter_by_price": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2955,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2351,
+       "count": 11,
+       "nodes": [
+        "app/search.py::module_header::__header__",
+        "app/search.py::function::tokenize",
+        "app/search.py::function::match_score",
+        "app/search.py::function::highlight",
+        "app/search.py::function::suggest",
+        "app/search.py::function::page_count",
+        "app/search.py::function::query_time_bucket",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 604,
+       "count": 2,
+       "nodes": [
+        "app/search.py::function::filter_by_price",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/search.py::function::filter_by_price",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "filter_by_price",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/search.py::function::filter_by_price",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/search.py::function::filter_by_price",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/routes.py::function::_register_all": 455,
+      "app/search.py::function::filter_by_price": 199
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "filter_by_price",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /search/filter', search.filter_by_price)"
+     ],
+     "current_version": 6,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 6,
+     "task_id": "filter_by_price"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "filter_by_price"
+    }
+   ]
+  ],
+  "format_price": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3172,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2596,
+       "count": 12,
+       "nodes": [
+        "app/catalog.py::module_header::__header__",
+        "app/catalog.py::function::slugify",
+        "app/catalog.py::function::apply_discount",
+        "app/catalog.py::function::in_stock",
+        "app/catalog.py::function::sku",
+        "app/catalog.py::function::star_bar",
+        "app/catalog.py::function::list_page",
+        "app/catalog.py::function::bulk_price",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 576,
+       "count": 2,
+       "nodes": [
+        "app/catalog.py::function::format_price",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/catalog.py::function::format_price",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "format_price",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/catalog.py::function::format_price",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/catalog.py::function::format_price",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/catalog.py::function::format_price": 158,
+      "app/routes.py::function::_register_all": 453
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "format_price",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /catalog/price', catalog.format_price)"
+     ],
+     "current_version": 7,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 6,
+     "task_id": "format_price"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "format_price"
+    }
+   ]
+  ],
+  "free_shipping_eligible": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2316,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1935,
+       "count": 11,
+       "nodes": [
+        "app/cart.py::module_header::__header__",
+        "app/cart.py::function::cart_total",
+        "app/cart.py::function::add_item",
+        "app/cart.py::function::item_counts",
+        "app/cart.py::function::apply_coupon",
+        "app/cart.py::function::remove_item",
+        "app/cart.py::function::quantity_update",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 381,
+       "count": 2,
+       "nodes": [
+        "app/cart.py::function::free_shipping_eligible",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/cart.py::function::free_shipping_eligible",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "free_shipping_eligible",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/cart.py::function::free_shipping_eligible",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/cart.py::function::free_shipping_eligible",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/cart.py::function::free_shipping_eligible": 106,
+      "app/settings.py::function::_register_all": 248
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "free_shipping_eligible",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('cart.free_shipping_cents', 5000)"
+     ],
+     "current_version": 3,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 3,
+     "task_id": "free_shipping_eligible"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "free_shipping_eligible"
+    }
+   ]
+  ],
+  "helpfulness": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1668,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1470,
+       "count": 7,
+       "nodes": [
+        "app/reviews.py::module_header::__header__",
+        "app/reviews.py::function::average_rating",
+        "app/reviews.py::function::star_histogram",
+        "app/reviews.py::function::contains_profanity",
+        "app/reviews.py::function::truncate_review",
+        "app/reviews.py::function::verified_badge",
+        "app/reviews.py::function::sort_reviews"
+       ]
+      },
+      "write_targets": {
+       "bytes": 198,
+       "count": 1,
+       "nodes": [
+        "app/reviews.py::function::helpfulness"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/reviews.py::function::helpfulness"
+     ],
+     "task_id": "helpfulness",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/reviews.py::function::helpfulness"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/reviews.py::function::helpfulness"
+     ],
+     "source_lengths": {
+      "app/reviews.py::function::helpfulness": 201
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "helpfulness",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "helpfulness"
+    }
+   ]
+  ],
+  "highlight": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3062,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2270,
+       "count": 11,
+       "nodes": [
+        "app/search.py::module_header::__header__",
+        "app/search.py::function::tokenize",
+        "app/search.py::function::match_score",
+        "app/search.py::function::suggest",
+        "app/search.py::function::page_count",
+        "app/search.py::function::filter_by_price",
+        "app/search.py::function::query_time_bucket",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 792,
+       "count": 2,
+       "nodes": [
+        "app/search.py::function::highlight",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/search.py::function::highlight",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "highlight",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/search.py::function::highlight",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/search.py::function::highlight",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/routes.py::function::_register_all": 568,
+      "app/search.py::function::highlight": 444
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "highlight",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /search/highlight', search.highlight)"
+     ],
+     "current_version": 8,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 8,
+     "task_id": "highlight"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "highlight"
+    }
+   ]
+  ],
+  "in_stock": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1729,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1580,
+       "count": 8,
+       "nodes": [
+        "app/catalog.py::module_header::__header__",
+        "app/catalog.py::function::slugify",
+        "app/catalog.py::function::format_price",
+        "app/catalog.py::function::apply_discount",
+        "app/catalog.py::function::sku",
+        "app/catalog.py::function::star_bar",
+        "app/catalog.py::function::list_page",
+        "app/catalog.py::function::bulk_price"
+       ]
+      },
+      "write_targets": {
+       "bytes": 149,
+       "count": 1,
+       "nodes": [
+        "app/catalog.py::function::in_stock"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "app/catalog.py::function::in_stock"
+     ],
+     "task_id": "in_stock",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/catalog.py::function::in_stock"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/catalog.py::function::in_stock"
+     ],
+     "source_lengths": {
+      "app/catalog.py::function::in_stock": 134
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "in_stock",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "in_stock"
+    }
+   ]
+  ],
+  "initials": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1584,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1374,
+       "count": 7,
+       "nodes": [
+        "app/accounts.py::module_header::__header__",
+        "app/accounts.py::function::validate_username",
+        "app/accounts.py::function::password_strength",
+        "app/accounts.py::function::mask_email",
+        "app/accounts.py::function::signup_greeting",
+        "app/accounts.py::function::is_adult",
+        "app/accounts.py::function::login_throttle_delay"
+       ]
+      },
+      "write_targets": {
+       "bytes": 210,
+       "count": 1,
+       "nodes": [
+        "app/accounts.py::function::initials"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/accounts.py::function::initials"
+     ],
+     "task_id": "initials",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/accounts.py::function::initials"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/accounts.py::function::initials"
+     ],
+     "source_lengths": {
+      "app/accounts.py::function::initials": 178
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "initials",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "initials"
+    }
+   ]
+  ],
+  "is_adult": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2624,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2188,
+       "count": 11,
+       "nodes": [
+        "app/accounts.py::module_header::__header__",
+        "app/accounts.py::function::validate_username",
+        "app/accounts.py::function::password_strength",
+        "app/accounts.py::function::mask_email",
+        "app/accounts.py::function::initials",
+        "app/accounts.py::function::signup_greeting",
+        "app/accounts.py::function::login_throttle_delay",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 436,
+       "count": 2,
+       "nodes": [
+        "app/accounts.py::function::is_adult",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/accounts.py::function::is_adult",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "is_adult",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/accounts.py::function::is_adult",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/accounts.py::function::is_adult",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/accounts.py::function::is_adult": 191,
+      "app/settings.py::function::_register_all": 285
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "is_adult",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('accounts.min_age', 18)"
+     ],
+     "current_version": 4,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 4,
+     "task_id": "is_adult"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "app/accounts.py::function::initials",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "is_adult",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "is_adult"
+    }
+   ]
+  ],
+  "is_expired": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1814,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1553,
+       "count": 7,
+       "nodes": [
+        "app/payments.py::module_header::__header__",
+        "app/payments.py::function::luhn_valid",
+        "app/payments.py::function::mask_card",
+        "app/payments.py::function::processing_fee",
+        "app/payments.py::function::split_evenly",
+        "app/payments.py::function::currency_to_cents",
+        "app/payments.py::function::receipt_id"
+       ]
+      },
+      "write_targets": {
+       "bytes": 261,
+       "count": 1,
+       "nodes": [
+        "app/payments.py::function::is_expired"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/payments.py::function::is_expired"
+     ],
+     "task_id": "is_expired",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/payments.py::function::is_expired"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/payments.py::function::is_expired"
+     ],
+     "source_lengths": {
+      "app/payments.py::function::is_expired": 271
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "is_expired",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "is_expired"
+    }
+   ]
+  ],
+  "item_counts": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1249,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1099,
+       "count": 7,
+       "nodes": [
+        "app/cart.py::module_header::__header__",
+        "app/cart.py::function::cart_total",
+        "app/cart.py::function::add_item",
+        "app/cart.py::function::apply_coupon",
+        "app/cart.py::function::free_shipping_eligible",
+        "app/cart.py::function::remove_item",
+        "app/cart.py::function::quantity_update"
+       ]
+      },
+      "write_targets": {
+       "bytes": 150,
+       "count": 1,
+       "nodes": [
+        "app/cart.py::function::item_counts"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/cart.py::function::item_counts"
+     ],
+     "task_id": "item_counts",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/cart.py::function::item_counts"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/cart.py::function::item_counts"
+     ],
+     "source_lengths": {
+      "app/cart.py::function::item_counts": 142
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "item_counts",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "item_counts"
+    }
+   ]
+  ],
+  "list_page": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3307,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2525,
+       "count": 12,
+       "nodes": [
+        "app/catalog.py::module_header::__header__",
+        "app/catalog.py::function::slugify",
+        "app/catalog.py::function::format_price",
+        "app/catalog.py::function::apply_discount",
+        "app/catalog.py::function::in_stock",
+        "app/catalog.py::function::sku",
+        "app/catalog.py::function::star_bar",
+        "app/catalog.py::function::bulk_price",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 782,
+       "count": 2,
+       "nodes": [
+        "app/catalog.py::function::list_page",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/catalog.py::function::list_page",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "list_page",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/catalog.py::function::list_page",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/catalog.py::function::list_page",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/catalog.py::function::list_page": 251,
+      "app/routes.py::function::_register_all": 621
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "list_page",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /catalog/page', catalog.list_page)"
+     ],
+     "current_version": 9,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 9,
+     "task_id": "list_page"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "list_page"
+    }
+   ]
+  ],
+  "login_throttle_delay": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2934,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2130,
+       "count": 11,
+       "nodes": [
+        "app/accounts.py::module_header::__header__",
+        "app/accounts.py::function::validate_username",
+        "app/accounts.py::function::password_strength",
+        "app/accounts.py::function::mask_email",
+        "app/accounts.py::function::initials",
+        "app/accounts.py::function::signup_greeting",
+        "app/accounts.py::function::is_adult",
+        "app/errors.py::module_header::__header__",
+        "app/errors.py::function::register",
+        "app/errors.py::function::message_for",
+        "app/errors.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 804,
+       "count": 2,
+       "nodes": [
+        "app/accounts.py::function::login_throttle_delay",
+        "app/errors.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/accounts.py::function::login_throttle_delay",
+      "app/errors.py::function::_register_all"
+     ],
+     "task_id": "login_throttle_delay",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/accounts.py::function::login_throttle_delay",
+      "app/errors.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/accounts.py::function::login_throttle_delay",
+      "app/errors.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/accounts.py::function::login_throttle_delay": 205,
+      "app/errors.py::function::_register_all": 631
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "login_throttle_delay",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('accounts.locked', 'Too many failed sign-in attempts')"
+     ],
+     "current_version": 7,
+     "node_id": "app/errors.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "login_throttle_delay"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "login_throttle_delay"
+    }
+   ]
+  ],
+  "luhn_valid": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3470,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2597,
+       "count": 11,
+       "nodes": [
+        "app/payments.py::module_header::__header__",
+        "app/payments.py::function::mask_card",
+        "app/payments.py::function::processing_fee",
+        "app/payments.py::function::split_evenly",
+        "app/payments.py::function::currency_to_cents",
+        "app/payments.py::function::is_expired",
+        "app/payments.py::function::receipt_id",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 873,
+       "count": 2,
+       "nodes": [
+        "app/payments.py::function::luhn_valid",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/payments.py::function::luhn_valid",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "luhn_valid",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/payments.py::function::luhn_valid",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/payments.py::function::luhn_valid",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/payments.py::function::luhn_valid": 359,
+      "app/routes.py::function::_register_all": 682
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "luhn_valid",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('POST /payments/validate', payments.luhn_valid)"
+     ],
+     "current_version": 10,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 10,
+     "task_id": "luhn_valid"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "luhn_valid"
+    }
+   ]
+  ],
+  "mask_card": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1824,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1633,
+       "count": 7,
+       "nodes": [
+        "app/payments.py::module_header::__header__",
+        "app/payments.py::function::luhn_valid",
+        "app/payments.py::function::processing_fee",
+        "app/payments.py::function::split_evenly",
+        "app/payments.py::function::currency_to_cents",
+        "app/payments.py::function::is_expired",
+        "app/payments.py::function::receipt_id"
+       ]
+      },
+      "write_targets": {
+       "bytes": 191,
+       "count": 1,
+       "nodes": [
+        "app/payments.py::function::mask_card"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/payments.py::function::mask_card"
+     ],
+     "task_id": "mask_card",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/payments.py::function::mask_card"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/payments.py::function::mask_card"
+     ],
+     "source_lengths": {
+      "app/payments.py::function::mask_card": 152
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "mask_card",
+     "usage": {}
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "app/payments.py::function::luhn_valid",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "mask_card",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "mask_card"
+    }
+   ]
+  ],
+  "mask_email": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2966,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2095,
+       "count": 11,
+       "nodes": [
+        "app/accounts.py::module_header::__header__",
+        "app/accounts.py::function::validate_username",
+        "app/accounts.py::function::password_strength",
+        "app/accounts.py::function::initials",
+        "app/accounts.py::function::signup_greeting",
+        "app/accounts.py::function::is_adult",
+        "app/accounts.py::function::login_throttle_delay",
+        "app/errors.py::module_header::__header__",
+        "app/errors.py::function::register",
+        "app/errors.py::function::message_for",
+        "app/errors.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 871,
+       "count": 2,
+       "nodes": [
+        "app/accounts.py::function::mask_email",
+        "app/errors.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/accounts.py::function::mask_email",
+      "app/errors.py::function::_register_all"
+     ],
+     "task_id": "mask_email",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/accounts.py::function::mask_email",
+      "app/errors.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/accounts.py::function::mask_email",
+      "app/errors.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/accounts.py::function::mask_email": 259,
+      "app/errors.py::function::_register_all": 700
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "mask_email",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('accounts.invalid_email', 'Email address is not valid')"
+     ],
+     "current_version": 8,
+     "node_id": "app/errors.py::function::_register_all",
+     "read_version": 8,
+     "task_id": "mask_email"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "mask_email"
+    }
+   ]
+  ],
+  "match_score": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1689,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1519,
+       "count": 7,
+       "nodes": [
+        "app/search.py::module_header::__header__",
+        "app/search.py::function::tokenize",
+        "app/search.py::function::highlight",
+        "app/search.py::function::suggest",
+        "app/search.py::function::page_count",
+        "app/search.py::function::filter_by_price",
+        "app/search.py::function::query_time_bucket"
+       ]
+      },
+      "write_targets": {
+       "bytes": 170,
+       "count": 1,
+       "nodes": [
+        "app/search.py::function::match_score"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/search.py::function::match_score"
+     ],
+     "task_id": "match_score",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/search.py::function::match_score"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/search.py::function::match_score"
+     ],
+     "source_lengths": {
+      "app/search.py::function::match_score": 114
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "match_score",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "match_score"
+    }
+   ]
+  ],
+  "next_status": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3069,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2697,
+       "count": 12,
+       "nodes": [
+        "app/orders.py::module_header::__header__",
+        "app/orders.py::function::order_number",
+        "app/orders.py::function::order_total",
+        "app/orders.py::function::confirmation_line",
+        "app/orders.py::function::estimated_delivery",
+        "app/orders.py::function::cancel_allowed",
+        "app/orders.py::function::split_shipments",
+        "app/orders.py::function::refund_amount",
+        "app/events.py::module_header::__header__",
+        "app/events.py::function::register",
+        "app/events.py::function::emit",
+        "app/events.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 372,
+       "count": 2,
+       "nodes": [
+        "app/orders.py::function::next_status",
+        "app/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/orders.py::function::next_status",
+      "app/events.py::function::_register_all"
+     ],
+     "task_id": "next_status",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/orders.py::function::next_status",
+      "app/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/orders.py::function::next_status",
+      "app/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/events.py::function::_register_all": 232,
+      "app/orders.py::function::next_status": 207
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "next_status",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('order.status_changed', orders.next_status)"
+     ],
+     "current_version": 2,
+     "node_id": "app/events.py::function::_register_all",
+     "read_version": 2,
+     "task_id": "next_status"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "next_status"
+    }
+   ]
+  ],
+  "normalize_postcode": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1575,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1365,
+       "count": 7,
+       "nodes": [
+        "app/shipping.py::module_header::__header__",
+        "app/shipping.py::function::shipping_cost",
+        "app/shipping.py::function::address_label",
+        "app/shipping.py::function::delivery_window",
+        "app/shipping.py::function::tracking_valid",
+        "app/shipping.py::function::zone_for_country",
+        "app/shipping.py::function::oversize_surcharge"
+       ]
+      },
+      "write_targets": {
+       "bytes": 210,
+       "count": 1,
+       "nodes": [
+        "app/shipping.py::function::normalize_postcode"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/shipping.py::function::normalize_postcode"
+     ],
+     "task_id": "normalize_postcode",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/shipping.py::function::normalize_postcode"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/shipping.py::function::normalize_postcode"
+     ],
+     "source_lengths": {
+      "app/shipping.py::function::normalize_postcode": 190
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "normalize_postcode",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "normalize_postcode"
+    }
+   ]
+  ],
+  "order_number": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3589,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2700,
+       "count": 12,
+       "nodes": [
+        "app/orders.py::module_header::__header__",
+        "app/orders.py::function::next_status",
+        "app/orders.py::function::order_total",
+        "app/orders.py::function::confirmation_line",
+        "app/orders.py::function::estimated_delivery",
+        "app/orders.py::function::cancel_allowed",
+        "app/orders.py::function::split_shipments",
+        "app/orders.py::function::refund_amount",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 889,
+       "count": 2,
+       "nodes": [
+        "app/orders.py::function::order_number",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/orders.py::function::order_number",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "order_number",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/orders.py::function::order_number",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/orders.py::function::order_number",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/orders.py::function::order_number": 147,
+      "app/routes.py::function::_register_all": 732
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "order_number",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('POST /orders', orders.order_number)"
+     ],
+     "current_version": 11,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 11,
+     "task_id": "order_number"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "order_number"
+    }
+   ]
+  ],
+  "order_total": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 6704,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 2038,
+       "count": 6,
+       "nodes": [
+        "app/errors.py::module_body::__body__",
+        "app/events.py::module_body::__body__",
+        "app/events.py::function::_register_all",
+        "app/errors.py::module_header::__header__",
+        "app/events.py::module_header::__header__",
+        "app/errors.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 3462,
+       "count": 16,
+       "nodes": [
+        "app/orders.py::module_header::__header__",
+        "app/orders.py::function::order_number",
+        "app/orders.py::function::next_status",
+        "app/orders.py::function::confirmation_line",
+        "app/orders.py::function::estimated_delivery",
+        "app/orders.py::function::cancel_allowed",
+        "app/orders.py::function::split_shipments",
+        "app/orders.py::function::refund_amount",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1204,
+       "count": 3,
+       "nodes": [
+        "app/orders.py::function::order_total",
+        "app/routes.py::function::_register_all",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 22,
+     "starved": false,
+     "targets": [
+      "app/orders.py::function::order_total",
+      "app/routes.py::function::_register_all",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "order_total",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/orders.py::function::order_total",
+      "app/routes.py::function::_register_all",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/orders.py::function::order_total",
+      "app/routes.py::function::_register_all",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/orders.py::function::order_total": 210,
+      "app/routes.py::function::_register_all": 736,
+      "app/settings.py::function::_register_all": 330
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "order_total",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /orders/total', orders.order_total)"
+     ],
+     "current_version": 12,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 11,
+     "task_id": "order_total"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('orders.tax_basis_points', 875)"
+     ],
+     "current_version": 5,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 5,
+     "task_id": "order_total"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "app/orders.py::function::order_number",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "order_total",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "order_total"
+    }
+   ]
+  ],
+  "oversize_surcharge": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3071,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2119,
+       "count": 11,
+       "nodes": [
+        "app/shipping.py::module_header::__header__",
+        "app/shipping.py::function::shipping_cost",
+        "app/shipping.py::function::normalize_postcode",
+        "app/shipping.py::function::address_label",
+        "app/shipping.py::function::delivery_window",
+        "app/shipping.py::function::tracking_valid",
+        "app/shipping.py::function::zone_for_country",
+        "app/errors.py::module_header::__header__",
+        "app/errors.py::function::register",
+        "app/errors.py::function::message_for",
+        "app/errors.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 952,
+       "count": 2,
+       "nodes": [
+        "app/shipping.py::function::oversize_surcharge",
+        "app/errors.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/shipping.py::function::oversize_surcharge",
+      "app/errors.py::function::_register_all"
+     ],
+     "task_id": "oversize_surcharge",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/shipping.py::function::oversize_surcharge",
+      "app/errors.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/shipping.py::function::oversize_surcharge",
+      "app/errors.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/errors.py::function::_register_all": 779,
+      "app/shipping.py::function::oversize_surcharge": 279
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "oversize_surcharge",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('shipping.oversize', 'Package exceeds the standard weight limit')"
+     ],
+     "current_version": 9,
+     "node_id": "app/errors.py::function::_register_all",
+     "read_version": 9,
+     "task_id": "oversize_surcharge"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "oversize_surcharge"
+    }
+   ]
+  ],
+  "page_count": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1633,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1402,
+       "count": 7,
+       "nodes": [
+        "app/search.py::module_header::__header__",
+        "app/search.py::function::tokenize",
+        "app/search.py::function::match_score",
+        "app/search.py::function::highlight",
+        "app/search.py::function::suggest",
+        "app/search.py::function::filter_by_price",
+        "app/search.py::function::query_time_bucket"
+       ]
+      },
+      "write_targets": {
+       "bytes": 231,
+       "count": 1,
+       "nodes": [
+        "app/search.py::function::page_count"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/search.py::function::page_count"
+     ],
+     "task_id": "page_count",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/search.py::function::page_count"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/search.py::function::page_count"
+     ],
+     "source_lengths": {
+      "app/search.py::function::page_count": 245
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "page_count",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "page_count"
+    }
+   ]
+  ],
+  "password_strength": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2660,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2099,
+       "count": 11,
+       "nodes": [
+        "app/accounts.py::module_header::__header__",
+        "app/accounts.py::function::validate_username",
+        "app/accounts.py::function::mask_email",
+        "app/accounts.py::function::initials",
+        "app/accounts.py::function::signup_greeting",
+        "app/accounts.py::function::is_adult",
+        "app/accounts.py::function::login_throttle_delay",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 561,
+       "count": 2,
+       "nodes": [
+        "app/accounts.py::function::password_strength",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/accounts.py::function::password_strength",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "password_strength",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/accounts.py::function::password_strength",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/accounts.py::function::password_strength",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/accounts.py::function::password_strength": 364,
+      "app/settings.py::function::_register_all": 378
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "password_strength",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('security.min_password_length', 8)"
+     ],
+     "current_version": 6,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 6,
+     "task_id": "password_strength"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "password_strength"
+    }
+   ]
+  ],
+  "processing_fee": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3062,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2490,
+       "count": 11,
+       "nodes": [
+        "app/payments.py::module_header::__header__",
+        "app/payments.py::function::luhn_valid",
+        "app/payments.py::function::mask_card",
+        "app/payments.py::function::split_evenly",
+        "app/payments.py::function::currency_to_cents",
+        "app/payments.py::function::is_expired",
+        "app/payments.py::function::receipt_id",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 572,
+       "count": 2,
+       "nodes": [
+        "app/payments.py::function::processing_fee",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/payments.py::function::processing_fee",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "processing_fee",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/payments.py::function::processing_fee",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/payments.py::function::processing_fee",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/payments.py::function::processing_fee": 151,
+      "app/settings.py::function::_register_all": 425
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "processing_fee",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('payments.fee_basis_points', 290)"
+     ],
+     "current_version": 7,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "processing_fee"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "processing_fee"
+    }
+   ]
+  ],
+  "quantity_update": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3052,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2055,
+       "count": 11,
+       "nodes": [
+        "app/cart.py::module_header::__header__",
+        "app/cart.py::function::cart_total",
+        "app/cart.py::function::add_item",
+        "app/cart.py::function::item_counts",
+        "app/cart.py::function::apply_coupon",
+        "app/cart.py::function::free_shipping_eligible",
+        "app/cart.py::function::remove_item",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 997,
+       "count": 2,
+       "nodes": [
+        "app/cart.py::function::quantity_update",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/cart.py::function::quantity_update",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "quantity_update",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/cart.py::function::quantity_update",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/cart.py::function::quantity_update",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/cart.py::function::quantity_update": 250,
+      "app/routes.py::function::_register_all": 844
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "quantity_update",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('POST /cart/quantity', cart.quantity_update)"
+     ],
+     "current_version": 13,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 13,
+     "task_id": "quantity_update"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "quantity_update"
+    }
+   ]
+  ],
+  "query_time_bucket": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2901,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2474,
+       "count": 11,
+       "nodes": [
+        "app/search.py::module_header::__header__",
+        "app/search.py::function::tokenize",
+        "app/search.py::function::match_score",
+        "app/search.py::function::highlight",
+        "app/search.py::function::suggest",
+        "app/search.py::function::page_count",
+        "app/search.py::function::filter_by_price",
+        "app/events.py::module_header::__header__",
+        "app/events.py::function::register",
+        "app/events.py::function::emit",
+        "app/events.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 427,
+       "count": 2,
+       "nodes": [
+        "app/search.py::function::query_time_bucket",
+        "app/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/search.py::function::query_time_bucket",
+      "app/events.py::function::_register_all"
+     ],
+     "task_id": "query_time_bucket",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/search.py::function::query_time_bucket",
+      "app/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/search.py::function::query_time_bucket",
+      "app/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/events.py::function::_register_all": 291,
+      "app/search.py::function::query_time_bucket": 200
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "query_time_bucket",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('search.performed', search.query_time_bucket)"
+     ],
+     "current_version": 3,
+     "node_id": "app/events.py::function::_register_all",
+     "read_version": 3,
+     "task_id": "query_time_bucket"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "query_time_bucket"
+    }
+   ]
+  ],
+  "receipt_id": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3162,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2618,
+       "count": 11,
+       "nodes": [
+        "app/payments.py::module_header::__header__",
+        "app/payments.py::function::luhn_valid",
+        "app/payments.py::function::mask_card",
+        "app/payments.py::function::processing_fee",
+        "app/payments.py::function::split_evenly",
+        "app/payments.py::function::currency_to_cents",
+        "app/payments.py::function::is_expired",
+        "app/events.py::module_header::__header__",
+        "app/events.py::function::register",
+        "app/events.py::function::emit",
+        "app/events.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 544,
+       "count": 2,
+       "nodes": [
+        "app/payments.py::function::receipt_id",
+        "app/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/payments.py::function::receipt_id",
+      "app/events.py::function::_register_all"
+     ],
+     "task_id": "receipt_id",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/payments.py::function::receipt_id",
+      "app/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/payments.py::function::receipt_id",
+      "app/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/events.py::function::_register_all": 345,
+      "app/payments.py::function::receipt_id": 161
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "receipt_id",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('payment.captured', payments.receipt_id)"
+     ],
+     "current_version": 4,
+     "node_id": "app/events.py::function::_register_all",
+     "read_version": 4,
+     "task_id": "receipt_id"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "receipt_id"
+    }
+   ]
+  ],
+  "refund_amount": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3012,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2349,
+       "count": 12,
+       "nodes": [
+        "app/orders.py::module_header::__header__",
+        "app/orders.py::function::order_number",
+        "app/orders.py::function::next_status",
+        "app/orders.py::function::order_total",
+        "app/orders.py::function::confirmation_line",
+        "app/orders.py::function::estimated_delivery",
+        "app/orders.py::function::cancel_allowed",
+        "app/orders.py::function::split_shipments",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 663,
+       "count": 2,
+       "nodes": [
+        "app/orders.py::function::refund_amount",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/orders.py::function::refund_amount",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "refund_amount",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/orders.py::function::refund_amount",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/orders.py::function::refund_amount",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/orders.py::function::refund_amount": 244,
+      "app/settings.py::function::_register_all": 471
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "refund_amount",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('orders.refund_window_days', 30)"
+     ],
+     "current_version": 8,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 8,
+     "task_id": "refund_amount"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "refund_amount"
+    }
+   ]
+  ],
+  "remove_item": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1280,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1091,
+       "count": 7,
+       "nodes": [
+        "app/cart.py::module_header::__header__",
+        "app/cart.py::function::cart_total",
+        "app/cart.py::function::add_item",
+        "app/cart.py::function::item_counts",
+        "app/cart.py::function::apply_coupon",
+        "app/cart.py::function::free_shipping_eligible",
+        "app/cart.py::function::quantity_update"
+       ]
+      },
+      "write_targets": {
+       "bytes": 189,
+       "count": 1,
+       "nodes": [
+        "app/cart.py::function::remove_item"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/cart.py::function::remove_item"
+     ],
+     "task_id": "remove_item",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/cart.py::function::remove_item"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/cart.py::function::remove_item"
+     ],
+     "source_lengths": {
+      "app/cart.py::function::remove_item": 178
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "remove_item",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "remove_item"
+    }
+   ]
+  ],
+  "shipping_cost": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3451,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2376,
+       "count": 11,
+       "nodes": [
+        "app/shipping.py::module_header::__header__",
+        "app/shipping.py::function::normalize_postcode",
+        "app/shipping.py::function::address_label",
+        "app/shipping.py::function::delivery_window",
+        "app/shipping.py::function::tracking_valid",
+        "app/shipping.py::function::zone_for_country",
+        "app/shipping.py::function::oversize_surcharge",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1075,
+       "count": 2,
+       "nodes": [
+        "app/shipping.py::function::shipping_cost",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/shipping.py::function::shipping_cost",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "shipping_cost",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/shipping.py::function::shipping_cost",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/shipping.py::function::shipping_cost",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/routes.py::function::_register_all": 903,
+      "app/shipping.py::function::shipping_cost": 315
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "shipping_cost",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /shipping/cost', shipping.shipping_cost)"
+     ],
+     "current_version": 14,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 14,
+     "task_id": "shipping_cost"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "shipping_cost"
+    }
+   ]
+  ],
+  "signup_greeting": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3038,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2512,
+       "count": 11,
+       "nodes": [
+        "app/accounts.py::module_header::__header__",
+        "app/accounts.py::function::validate_username",
+        "app/accounts.py::function::password_strength",
+        "app/accounts.py::function::mask_email",
+        "app/accounts.py::function::initials",
+        "app/accounts.py::function::is_adult",
+        "app/accounts.py::function::login_throttle_delay",
+        "app/events.py::module_header::__header__",
+        "app/events.py::function::register",
+        "app/events.py::function::emit",
+        "app/events.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 526,
+       "count": 2,
+       "nodes": [
+        "app/accounts.py::function::signup_greeting",
+        "app/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/accounts.py::function::signup_greeting",
+      "app/events.py::function::_register_all"
+     ],
+     "task_id": "signup_greeting",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/accounts.py::function::signup_greeting",
+      "app/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/accounts.py::function::signup_greeting",
+      "app/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/accounts.py::function::signup_greeting": 78,
+      "app/events.py::function::_register_all": 403
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "signup_greeting",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('account.created', accounts.signup_greeting)"
+     ],
+     "current_version": 5,
+     "node_id": "app/events.py::function::_register_all",
+     "read_version": 5,
+     "task_id": "signup_greeting"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "signup_greeting"
+    }
+   ]
+  ],
+  "sku": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3014,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2247,
+       "count": 12,
+       "nodes": [
+        "app/catalog.py::module_header::__header__",
+        "app/catalog.py::function::slugify",
+        "app/catalog.py::function::format_price",
+        "app/catalog.py::function::apply_discount",
+        "app/catalog.py::function::in_stock",
+        "app/catalog.py::function::star_bar",
+        "app/catalog.py::function::list_page",
+        "app/catalog.py::function::bulk_price",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 767,
+       "count": 2,
+       "nodes": [
+        "app/catalog.py::function::sku",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/catalog.py::function::sku",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "sku",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/catalog.py::function::sku",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/catalog.py::function::sku",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/catalog.py::function::sku": 230,
+      "app/settings.py::function::_register_all": 508
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "sku",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('catalog.sku_width', 5)"
+     ],
+     "current_version": 9,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 9,
+     "task_id": "sku"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "sku"
+    }
+   ]
+  ],
+  "slugify": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3613,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2504,
+       "count": 12,
+       "nodes": [
+        "app/catalog.py::module_header::__header__",
+        "app/catalog.py::function::format_price",
+        "app/catalog.py::function::apply_discount",
+        "app/catalog.py::function::in_stock",
+        "app/catalog.py::function::sku",
+        "app/catalog.py::function::star_bar",
+        "app/catalog.py::function::list_page",
+        "app/catalog.py::function::bulk_price",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1109,
+       "count": 2,
+       "nodes": [
+        "app/catalog.py::function::slugify",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "app/catalog.py::function::slugify",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "slugify",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/catalog.py::function::slugify",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/catalog.py::function::slugify",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/catalog.py::function::slugify": 233,
+      "app/routes.py::function::_register_all": 954
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "slugify",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /catalog/slug', catalog.slugify)"
+     ],
+     "current_version": 15,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 15,
+     "task_id": "slugify"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "slugify"
+    }
+   ]
+  ],
+  "sort_reviews": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1671,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1510,
+       "count": 7,
+       "nodes": [
+        "app/reviews.py::module_header::__header__",
+        "app/reviews.py::function::average_rating",
+        "app/reviews.py::function::star_histogram",
+        "app/reviews.py::function::contains_profanity",
+        "app/reviews.py::function::helpfulness",
+        "app/reviews.py::function::truncate_review",
+        "app/reviews.py::function::verified_badge"
+       ]
+      },
+      "write_targets": {
+       "bytes": 161,
+       "count": 1,
+       "nodes": [
+        "app/reviews.py::function::sort_reviews"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/reviews.py::function::sort_reviews"
+     ],
+     "task_id": "sort_reviews",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/reviews.py::function::sort_reviews"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/reviews.py::function::sort_reviews"
+     ],
+     "source_lengths": {
+      "app/reviews.py::function::sort_reviews": 93
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "sort_reviews",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "sort_reviews"
+    }
+   ]
+  ],
+  "split_evenly": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3685,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2564,
+       "count": 11,
+       "nodes": [
+        "app/payments.py::module_header::__header__",
+        "app/payments.py::function::luhn_valid",
+        "app/payments.py::function::mask_card",
+        "app/payments.py::function::processing_fee",
+        "app/payments.py::function::currency_to_cents",
+        "app/payments.py::function::is_expired",
+        "app/payments.py::function::receipt_id",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1121,
+       "count": 2,
+       "nodes": [
+        "app/payments.py::function::split_evenly",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/payments.py::function::split_evenly",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "split_evenly",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/payments.py::function::split_evenly",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/payments.py::function::split_evenly",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/payments.py::function::split_evenly": 199,
+      "app/routes.py::function::_register_all": 962
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "split_evenly",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /payments/split', payments.split_evenly)"
+     ],
+     "current_version": 16,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 15,
+     "task_id": "split_evenly"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "split_evenly"
+    }
+   ]
+  ],
+  "split_shipments": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1801,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1569,
+       "count": 8,
+       "nodes": [
+        "app/orders.py::module_header::__header__",
+        "app/orders.py::function::order_number",
+        "app/orders.py::function::next_status",
+        "app/orders.py::function::order_total",
+        "app/orders.py::function::confirmation_line",
+        "app/orders.py::function::estimated_delivery",
+        "app/orders.py::function::cancel_allowed",
+        "app/orders.py::function::refund_amount"
+       ]
+      },
+      "write_targets": {
+       "bytes": 232,
+       "count": 1,
+       "nodes": [
+        "app/orders.py::function::split_shipments"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "app/orders.py::function::split_shipments"
+     ],
+     "task_id": "split_shipments",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/orders.py::function::split_shipments"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/orders.py::function::split_shipments"
+     ],
+     "source_lengths": {
+      "app/orders.py::function::split_shipments": 208
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "split_shipments",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "split_shipments"
+    }
+   ]
+  ],
+  "star_bar": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1712,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1524,
+       "count": 8,
+       "nodes": [
+        "app/catalog.py::module_header::__header__",
+        "app/catalog.py::function::slugify",
+        "app/catalog.py::function::format_price",
+        "app/catalog.py::function::apply_discount",
+        "app/catalog.py::function::in_stock",
+        "app/catalog.py::function::sku",
+        "app/catalog.py::function::list_page",
+        "app/catalog.py::function::bulk_price"
+       ]
+      },
+      "write_targets": {
+       "bytes": 188,
+       "count": 1,
+       "nodes": [
+        "app/catalog.py::function::star_bar"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 8,
+     "starved": false,
+     "targets": [
+      "app/catalog.py::function::star_bar"
+     ],
+     "task_id": "star_bar",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/catalog.py::function::star_bar"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/catalog.py::function::star_bar"
+     ],
+     "source_lengths": {
+      "app/catalog.py::function::star_bar": 151
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "star_bar",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "star_bar"
+    }
+   ]
+  ],
+  "star_histogram": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1603,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1414,
+       "count": 7,
+       "nodes": [
+        "app/reviews.py::module_header::__header__",
+        "app/reviews.py::function::average_rating",
+        "app/reviews.py::function::contains_profanity",
+        "app/reviews.py::function::helpfulness",
+        "app/reviews.py::function::truncate_review",
+        "app/reviews.py::function::verified_badge",
+        "app/reviews.py::function::sort_reviews"
+       ]
+      },
+      "write_targets": {
+       "bytes": 189,
+       "count": 1,
+       "nodes": [
+        "app/reviews.py::function::star_histogram"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/reviews.py::function::star_histogram"
+     ],
+     "task_id": "star_histogram",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/reviews.py::function::star_histogram"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/reviews.py::function::star_histogram"
+     ],
+     "source_lengths": {
+      "app/reviews.py::function::star_histogram": 244
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "star_histogram",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "star_histogram"
+    }
+   ]
+  ],
+  "suggest": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2952,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2274,
+       "count": 11,
+       "nodes": [
+        "app/search.py::module_header::__header__",
+        "app/search.py::function::tokenize",
+        "app/search.py::function::match_score",
+        "app/search.py::function::highlight",
+        "app/search.py::function::page_count",
+        "app/search.py::function::filter_by_price",
+        "app/search.py::function::query_time_bucket",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 678,
+       "count": 2,
+       "nodes": [
+        "app/search.py::function::suggest",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/search.py::function::suggest",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "suggest",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/search.py::function::suggest",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/search.py::function::suggest",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/search.py::function::suggest": 133,
+      "app/settings.py::function::_register_all": 550
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "suggest",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('search.max_suggestions', 5)"
+     ],
+     "current_version": 10,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 10,
+     "task_id": "suggest"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "suggest"
+    }
+   ]
+  ],
+  "tokenize": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3690,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2490,
+       "count": 11,
+       "nodes": [
+        "app/search.py::module_header::__header__",
+        "app/search.py::function::match_score",
+        "app/search.py::function::highlight",
+        "app/search.py::function::suggest",
+        "app/search.py::function::page_count",
+        "app/search.py::function::filter_by_price",
+        "app/search.py::function::query_time_bucket",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1200,
+       "count": 2,
+       "nodes": [
+        "app/search.py::function::tokenize",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/search.py::function::tokenize",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "tokenize",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/search.py::function::tokenize",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/search.py::function::tokenize",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/routes.py::function::_register_all": 1058,
+      "app/search.py::function::tokenize": 255
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "tokenize",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /search', search.tokenize)"
+     ],
+     "current_version": 17,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 17,
+     "task_id": "tokenize"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "app/search.py::function::suggest",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "tokenize",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "tokenize"
+    }
+   ]
+  ],
+  "tracking_valid": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1666,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1454,
+       "count": 7,
+       "nodes": [
+        "app/shipping.py::module_header::__header__",
+        "app/shipping.py::function::shipping_cost",
+        "app/shipping.py::function::normalize_postcode",
+        "app/shipping.py::function::address_label",
+        "app/shipping.py::function::delivery_window",
+        "app/shipping.py::function::zone_for_country",
+        "app/shipping.py::function::oversize_surcharge"
+       ]
+      },
+      "write_targets": {
+       "bytes": 212,
+       "count": 1,
+       "nodes": [
+        "app/shipping.py::function::tracking_valid"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 7,
+     "starved": false,
+     "targets": [
+      "app/shipping.py::function::tracking_valid"
+     ],
+     "task_id": "tracking_valid",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/shipping.py::function::tracking_valid"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/shipping.py::function::tracking_valid"
+     ],
+     "source_lengths": {
+      "app/shipping.py::function::tracking_valid": 240
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "tracking_valid",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "tracking_valid"
+    }
+   ]
+  ],
+  "truncate_review": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3741,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2464,
+       "count": 11,
+       "nodes": [
+        "app/reviews.py::module_header::__header__",
+        "app/reviews.py::function::average_rating",
+        "app/reviews.py::function::star_histogram",
+        "app/reviews.py::function::contains_profanity",
+        "app/reviews.py::function::helpfulness",
+        "app/reviews.py::function::verified_badge",
+        "app/reviews.py::function::sort_reviews",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1277,
+       "count": 2,
+       "nodes": [
+        "app/reviews.py::function::truncate_review",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/reviews.py::function::truncate_review",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "truncate_review",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/reviews.py::function::truncate_review",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/reviews.py::function::truncate_review",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/reviews.py::function::truncate_review": 183,
+      "app/routes.py::function::_register_all": 1120
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "truncate_review",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('GET /reviews/preview', reviews.truncate_review)"
+     ],
+     "current_version": 18,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 18,
+     "task_id": "truncate_review"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "truncate_review"
+    }
+   ]
+  ],
+  "validate_username": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3651,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2395,
+       "count": 11,
+       "nodes": [
+        "app/accounts.py::module_header::__header__",
+        "app/accounts.py::function::password_strength",
+        "app/accounts.py::function::mask_email",
+        "app/accounts.py::function::initials",
+        "app/accounts.py::function::signup_greeting",
+        "app/accounts.py::function::is_adult",
+        "app/accounts.py::function::login_throttle_delay",
+        "app/routes.py::module_header::__header__",
+        "app/routes.py::function::register",
+        "app/routes.py::function::dispatch",
+        "app/routes.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1256,
+       "count": 2,
+       "nodes": [
+        "app/accounts.py::function::validate_username",
+        "app/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/accounts.py::function::validate_username",
+      "app/routes.py::function::_register_all"
+     ],
+     "task_id": "validate_username",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/accounts.py::function::validate_username",
+      "app/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/accounts.py::function::validate_username",
+      "app/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/accounts.py::function::validate_username": 230,
+      "app/routes.py::function::_register_all": 1126
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "validate_username",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('POST /accounts/validate', accounts.validate_username)"
+     ],
+     "current_version": 19,
+     "node_id": "app/routes.py::function::_register_all",
+     "read_version": 18,
+     "task_id": "validate_username"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "validate_username"
+    }
+   ]
+  ],
+  "verified_badge": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3083,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2468,
+       "count": 11,
+       "nodes": [
+        "app/reviews.py::module_header::__header__",
+        "app/reviews.py::function::average_rating",
+        "app/reviews.py::function::star_histogram",
+        "app/reviews.py::function::contains_profanity",
+        "app/reviews.py::function::helpfulness",
+        "app/reviews.py::function::truncate_review",
+        "app/reviews.py::function::sort_reviews",
+        "app/events.py::module_header::__header__",
+        "app/events.py::function::register",
+        "app/events.py::function::emit",
+        "app/events.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 615,
+       "count": 2,
+       "nodes": [
+        "app/reviews.py::function::verified_badge",
+        "app/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/reviews.py::function::verified_badge",
+      "app/events.py::function::_register_all"
+     ],
+     "task_id": "verified_badge",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/reviews.py::function::verified_badge",
+      "app/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/reviews.py::function::verified_badge",
+      "app/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/events.py::function::_register_all": 460,
+      "app/reviews.py::function::verified_badge": 219
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "verified_badge",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('review.submitted', reviews.verified_badge)"
+     ],
+     "current_version": 6,
+     "node_id": "app/events.py::function::_register_all",
+     "read_version": 6,
+     "task_id": "verified_badge"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "app/reviews.py::function::truncate_review",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "verified_badge",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "verified_badge"
+    }
+   ]
+  ],
+  "zone_for_country": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3036,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2275,
+       "count": 11,
+       "nodes": [
+        "app/shipping.py::module_header::__header__",
+        "app/shipping.py::function::shipping_cost",
+        "app/shipping.py::function::normalize_postcode",
+        "app/shipping.py::function::address_label",
+        "app/shipping.py::function::delivery_window",
+        "app/shipping.py::function::tracking_valid",
+        "app/shipping.py::function::oversize_surcharge",
+        "app/settings.py::module_header::__header__",
+        "app/settings.py::function::register",
+        "app/settings.py::function::get",
+        "app/settings.py::module_body::__body__"
+       ]
+      },
+      "write_targets": {
+       "bytes": 761,
+       "count": 2,
+       "nodes": [
+        "app/shipping.py::function::zone_for_country",
+        "app/settings.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "app/shipping.py::function::zone_for_country",
+      "app/settings.py::function::_register_all"
+     ],
+     "task_id": "zone_for_country",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/shipping.py::function::zone_for_country",
+      "app/settings.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/shipping.py::function::zone_for_country",
+      "app/settings.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "app/settings.py::function::_register_all": 591,
+      "app/shipping.py::function::zone_for_country": 204
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "zone_for_country",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('shipping.default_zone', 3)"
+     ],
+     "current_version": 11,
+     "node_id": "app/settings.py::function::_register_all",
+     "read_version": 11,
+     "task_id": "zone_for_country"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "zone_for_country"
+    }
+   ]
+  ]
+ },
+ "result": {
+  "conflicts": 0.0,
+  "notes": [],
+  "passed": 148,
+  "registration_dropped": 45,
+  "registration_duplicates": 0,
+  "registration_expected": 45,
+  "registration_survived": 0,
+  "resolutions": 0.0,
+  "total": 148
+ }
+}

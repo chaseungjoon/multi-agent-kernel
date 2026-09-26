@@ -1,0 +1,3082 @@
+{
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 43,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 75026.0,
+     "dispatches": 24.0,
+     "mean_context_bytes": 3126.08,
+     "redispatches": 0.0,
+     "stale_reads": 11.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 24.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "authorize": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2409,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 307,
+       "count": 2,
+       "nodes": [
+        "service/events.py::function::lookup",
+        "service/events.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1451,
+       "count": 8,
+       "nodes": [
+        "service/tenancy.py::module_header::__header__",
+        "service/tenancy.py::function::visible_jobs",
+        "service/tenancy.py::function::quota_remaining",
+        "service/tenancy.py::function::validate_tenant",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup",
+        "service/policies.py::module_header::__header__",
+        "service/policies.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 651,
+       "count": 3,
+       "nodes": [
+        "service/tenancy.py::function::authorize",
+        "service/routes.py::function::_register_all",
+        "service/policies.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/tenancy.py::function::authorize",
+      "service/routes.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "task_id": "authorize",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/tenancy.py::function::authorize",
+      "service/routes.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/tenancy.py::function::authorize",
+      "service/routes.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/policies.py::function::_register_all": 231,
+      "service/routes.py::function::_register_all": 231,
+      "service/tenancy.py::function::authorize": 498
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "authorize",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('authorize', tenancy.authorize)"
+     ],
+     "current_version": 1,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "authorize"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('authorize', tenancy.authorize)"
+     ],
+     "current_version": 1,
+     "node_id": "service/policies.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "authorize"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "authorize"
+    }
+   ]
+  ],
+  "cancel": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2914,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 893,
+       "count": 5,
+       "nodes": [
+        "service/events.py::function::lookup",
+        "service/policies.py::function::lookup",
+        "service/events.py::function::_register_all",
+        "service/policies.py::function::_register_all",
+        "service/tenancy.py::function::authorize"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1494,
+       "count": 6,
+       "nodes": [
+        "service/lifecycle.py::module_header::__header__",
+        "service/lifecycle.py::function::complete",
+        "service/lifecycle.py::function::fail",
+        "service/lifecycle.py::function::replay",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 527,
+       "count": 2,
+       "nodes": [
+        "service/lifecycle.py::function::cancel",
+        "service/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 11,
+     "starved": false,
+     "targets": [
+      "service/lifecycle.py::function::cancel",
+      "service/routes.py::function::_register_all"
+     ],
+     "task_id": "cancel",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/lifecycle.py::function::cancel",
+      "service/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/lifecycle.py::function::cancel",
+      "service/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/lifecycle.py::function::cancel": 680,
+      "service/routes.py::function::_register_all": 227
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "cancel",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('cancel', lifecycle.cancel)"
+     ],
+     "current_version": 2,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "cancel"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "cross_file",
+     "node_id": "service/policies.py::function::_register_all",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "cancel",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "cross_file",
+     "node_id": "service/tenancy.py::function::authorize",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "cancel",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "cancel"
+    }
+   ]
+  ],
+  "canonical_payload": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1322,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1028,
+       "count": 4,
+       "nodes": [
+        "service/submission.py::module_header::__header__",
+        "service/submission.py::function::find_duplicate",
+        "service/submission.py::function::create_job",
+        "service/submission.py::function::payload_digest"
+       ]
+      },
+      "write_targets": {
+       "bytes": 294,
+       "count": 1,
+       "nodes": [
+        "service/submission.py::function::canonical_payload"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 4,
+     "starved": false,
+     "targets": [
+      "service/submission.py::function::canonical_payload"
+     ],
+     "task_id": "canonical_payload",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/submission.py::function::canonical_payload"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/submission.py::function::canonical_payload"
+     ],
+     "source_lengths": {
+      "service/submission.py::function::canonical_payload": 507
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "canonical_payload",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "canonical_payload"
+    }
+   ]
+  ],
+  "claim": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2751,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 352,
+       "count": 2,
+       "nodes": [
+        "service/policies.py::function::lookup",
+        "service/policies.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1582,
+       "count": 8,
+       "nodes": [
+        "service/leasing.py::module_header::__header__",
+        "service/leasing.py::function::heartbeat",
+        "service/leasing.py::function::expired_leases",
+        "service/leasing.py::function::requeue_expired",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 817,
+       "count": 3,
+       "nodes": [
+        "service/leasing.py::function::claim",
+        "service/routes.py::function::_register_all",
+        "service/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/leasing.py::function::claim",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "task_id": "claim",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/leasing.py::function::claim",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/leasing.py::function::claim",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 223,
+      "service/leasing.py::function::claim": 581,
+      "service/routes.py::function::_register_all": 309
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "claim",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('claim', leasing.claim)"
+     ],
+     "current_version": 3,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 3,
+     "task_id": "claim"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('claim', leasing.claim)"
+     ],
+     "current_version": 1,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "claim"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "claim"
+    }
+   ]
+  ],
+  "complete": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3256,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 352,
+       "count": 2,
+       "nodes": [
+        "service/policies.py::function::lookup",
+        "service/policies.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2128,
+       "count": 8,
+       "nodes": [
+        "service/lifecycle.py::module_header::__header__",
+        "service/lifecycle.py::function::fail",
+        "service/lifecycle.py::function::cancel",
+        "service/lifecycle.py::function::replay",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 776,
+       "count": 3,
+       "nodes": [
+        "service/lifecycle.py::function::complete",
+        "service/routes.py::function::_register_all",
+        "service/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/lifecycle.py::function::complete",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "task_id": "complete",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/lifecycle.py::function::complete",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/lifecycle.py::function::complete",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 231,
+      "service/lifecycle.py::function::complete": 562,
+      "service/routes.py::function::_register_all": 317
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "complete",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('complete', lifecycle.complete)"
+     ],
+     "current_version": 4,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 3,
+     "task_id": "complete"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('complete', lifecycle.complete)"
+     ],
+     "current_version": 2,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "complete"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "complete"
+    }
+   ]
+  ],
+  "create_job": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2889,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 352,
+       "count": 2,
+       "nodes": [
+        "service/policies.py::function::lookup",
+        "service/policies.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1811,
+       "count": 8,
+       "nodes": [
+        "service/submission.py::module_header::__header__",
+        "service/submission.py::function::canonical_payload",
+        "service/submission.py::function::find_duplicate",
+        "service/submission.py::function::payload_digest",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 726,
+       "count": 3,
+       "nodes": [
+        "service/submission.py::function::create_job",
+        "service/routes.py::function::_register_all",
+        "service/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/submission.py::function::create_job",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "task_id": "create_job",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/submission.py::function::create_job",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/submission.py::function::create_job",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 236,
+      "service/routes.py::function::_register_all": 322,
+      "service/submission.py::function::create_job": 487
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "create_job",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('create_job', submission.create_job)"
+     ],
+     "current_version": 5,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 3,
+     "task_id": "create_job"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('create_job', submission.create_job)"
+     ],
+     "current_version": 3,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 1,
+     "task_id": "create_job"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "create_job"
+    }
+   ]
+  ],
+  "expired_leases": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3239,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 525,
+       "count": 2,
+       "nodes": [
+        "service/routes.py::function::lookup",
+        "service/routes.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1926,
+       "count": 8,
+       "nodes": [
+        "service/leasing.py::module_header::__header__",
+        "service/leasing.py::function::claim",
+        "service/leasing.py::function::heartbeat",
+        "service/leasing.py::function::requeue_expired",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup",
+        "service/policies.py::module_header::__header__",
+        "service/policies.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 788,
+       "count": 3,
+       "nodes": [
+        "service/leasing.py::function::expired_leases",
+        "service/events.py::function::_register_all",
+        "service/policies.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/leasing.py::function::expired_leases",
+      "service/events.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "task_id": "expired_leases",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/leasing.py::function::expired_leases",
+      "service/events.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/leasing.py::function::expired_leases",
+      "service/events.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 373,
+      "service/leasing.py::function::expired_leases": 371,
+      "service/policies.py::function::_register_all": 286
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "expired_leases",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('expired_leases', leasing.expired_leases)"
+     ],
+     "current_version": 4,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 4,
+     "task_id": "expired_leases"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('expired_leases', leasing.expired_leases)"
+     ],
+     "current_version": 2,
+     "node_id": "service/policies.py::function::_register_all",
+     "read_version": 2,
+     "task_id": "expired_leases"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "expired_leases"
+    }
+   ]
+  ],
+  "fail": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3766,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 525,
+       "count": 2,
+       "nodes": [
+        "service/routes.py::function::lookup",
+        "service/routes.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2273,
+       "count": 8,
+       "nodes": [
+        "service/lifecycle.py::module_header::__header__",
+        "service/lifecycle.py::function::complete",
+        "service/lifecycle.py::function::cancel",
+        "service/lifecycle.py::function::replay",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup",
+        "service/policies.py::module_header::__header__",
+        "service/policies.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 968,
+       "count": 3,
+       "nodes": [
+        "service/lifecycle.py::function::fail",
+        "service/events.py::function::_register_all",
+        "service/policies.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/lifecycle.py::function::fail",
+      "service/events.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "task_id": "fail",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/lifecycle.py::function::fail",
+      "service/events.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/lifecycle.py::function::fail",
+      "service/events.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 355,
+      "service/lifecycle.py::function::fail": 805,
+      "service/policies.py::function::_register_all": 268
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "fail",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('fail', lifecycle.fail)"
+     ],
+     "current_version": 5,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 4,
+     "task_id": "fail"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('fail', lifecycle.fail)"
+     ],
+     "current_version": 3,
+     "node_id": "service/policies.py::function::_register_all",
+     "read_version": 2,
+     "task_id": "fail"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "fail"
+    }
+   ]
+  ],
+  "find_duplicate": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3374,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 439,
+       "count": 2,
+       "nodes": [
+        "service/events.py::function::lookup",
+        "service/events.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1898,
+       "count": 8,
+       "nodes": [
+        "service/submission.py::module_header::__header__",
+        "service/submission.py::function::canonical_payload",
+        "service/submission.py::function::create_job",
+        "service/submission.py::function::payload_digest",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup",
+        "service/policies.py::module_header::__header__",
+        "service/policies.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1037,
+       "count": 3,
+       "nodes": [
+        "service/submission.py::function::find_duplicate",
+        "service/routes.py::function::_register_all",
+        "service/policies.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/submission.py::function::find_duplicate",
+      "service/routes.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "task_id": "find_duplicate",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/submission.py::function::find_duplicate",
+      "service/routes.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/submission.py::function::find_duplicate",
+      "service/routes.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/policies.py::function::_register_all": 289,
+      "service/routes.py::function::_register_all": 462,
+      "service/submission.py::function::find_duplicate": 673
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "find_duplicate",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('find_duplicate', submission.find_duplicate)"
+     ],
+     "current_version": 6,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 6,
+     "task_id": "find_duplicate"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('find_duplicate', submission.find_duplicate)"
+     ],
+     "current_version": 4,
+     "node_id": "service/policies.py::function::_register_all",
+     "read_version": 2,
+     "task_id": "find_duplicate"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 6,
+     "layer": "cross_file",
+     "node_id": "service/events.py::function::_register_all",
+     "policy": "revalidate",
+     "read_version": 4,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "find_duplicate",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "find_duplicate"
+    }
+   ]
+  ],
+  "heartbeat": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3518,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1033,
+       "count": 4,
+       "nodes": [
+        "service/events.py::function::lookup",
+        "service/policies.py::function::lookup",
+        "service/policies.py::function::_register_all",
+        "service/events.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1676,
+       "count": 6,
+       "nodes": [
+        "service/leasing.py::module_header::__header__",
+        "service/leasing.py::function::claim",
+        "service/leasing.py::function::expired_leases",
+        "service/leasing.py::function::requeue_expired",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 809,
+       "count": 2,
+       "nodes": [
+        "service/leasing.py::function::heartbeat",
+        "service/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/leasing.py::function::heartbeat",
+      "service/routes.py::function::_register_all"
+     ],
+     "task_id": "heartbeat",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/leasing.py::function::heartbeat",
+      "service/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/leasing.py::function::heartbeat",
+      "service/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/leasing.py::function::heartbeat": 586,
+      "service/routes.py::function::_register_all": 507
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "heartbeat",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('heartbeat', leasing.heartbeat)"
+     ],
+     "current_version": 7,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "heartbeat"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "heartbeat"
+    }
+   ]
+  ],
+  "oldest_ready_age": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1380,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1129,
+       "count": 4,
+       "nodes": [
+        "service/operations.py::module_header::__header__",
+        "service/operations.py::function::page_jobs",
+        "service/operations.py::function::state_counts",
+        "service/operations.py::function::purge_candidates"
+       ]
+      },
+      "write_targets": {
+       "bytes": 251,
+       "count": 1,
+       "nodes": [
+        "service/operations.py::function::oldest_ready_age"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 4,
+     "starved": false,
+     "targets": [
+      "service/operations.py::function::oldest_ready_age"
+     ],
+     "task_id": "oldest_ready_age",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/operations.py::function::oldest_ready_age"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/operations.py::function::oldest_ready_age"
+     ],
+     "source_lengths": {
+      "service/operations.py::function::oldest_ready_age": 418
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "oldest_ready_age",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "oldest_ready_age"
+    }
+   ]
+  ],
+  "page_jobs": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3147,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1033,
+       "count": 4,
+       "nodes": [
+        "service/events.py::function::lookup",
+        "service/policies.py::function::lookup",
+        "service/policies.py::function::_register_all",
+        "service/events.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1350,
+       "count": 6,
+       "nodes": [
+        "service/operations.py::module_header::__header__",
+        "service/operations.py::function::state_counts",
+        "service/operations.py::function::purge_candidates",
+        "service/operations.py::function::oldest_ready_age",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 764,
+       "count": 2,
+       "nodes": [
+        "service/operations.py::function::page_jobs",
+        "service/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/operations.py::function::page_jobs",
+      "service/routes.py::function::_register_all"
+     ],
+     "task_id": "page_jobs",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/operations.py::function::page_jobs",
+      "service/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/operations.py::function::page_jobs",
+      "service/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/operations.py::function::page_jobs": 477,
+      "service/routes.py::function::_register_all": 510
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "page_jobs",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('page_jobs', operations.page_jobs)"
+     ],
+     "current_version": 8,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "page_jobs"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "service/operations.py::function::oldest_ready_age",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "page_jobs",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "page_jobs"
+    }
+   ]
+  ],
+  "payload_digest": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 2025,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1843,
+       "count": 4,
+       "nodes": [
+        "service/submission.py::module_header::__header__",
+        "service/submission.py::function::canonical_payload",
+        "service/submission.py::function::find_duplicate",
+        "service/submission.py::function::create_job"
+       ]
+      },
+      "write_targets": {
+       "bytes": 182,
+       "count": 1,
+       "nodes": [
+        "service/submission.py::function::payload_digest"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 4,
+     "starved": false,
+     "targets": [
+      "service/submission.py::function::payload_digest"
+     ],
+     "task_id": "payload_digest",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/submission.py::function::payload_digest"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/submission.py::function::payload_digest"
+     ],
+     "source_lengths": {
+      "service/submission.py::function::payload_digest": 234
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "payload_digest",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "payload_digest"
+    }
+   ]
+  ],
+  "purge_candidates": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3735,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 676,
+       "count": 2,
+       "nodes": [
+        "service/routes.py::function::lookup",
+        "service/routes.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1935,
+       "count": 8,
+       "nodes": [
+        "service/operations.py::module_header::__header__",
+        "service/operations.py::function::page_jobs",
+        "service/operations.py::function::state_counts",
+        "service/operations.py::function::oldest_ready_age",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup",
+        "service/policies.py::module_header::__header__",
+        "service/policies.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1124,
+       "count": 3,
+       "nodes": [
+        "service/operations.py::function::purge_candidates",
+        "service/events.py::function::_register_all",
+        "service/policies.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/operations.py::function::purge_candidates",
+      "service/events.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "task_id": "purge_candidates",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/operations.py::function::purge_candidates",
+      "service/events.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/operations.py::function::purge_candidates",
+      "service/events.py::function::_register_all",
+      "service/policies.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 472,
+      "service/operations.py::function::purge_candidates": 520,
+      "service/policies.py::function::_register_all": 443
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "purge_candidates",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('purge_candidates', operations.purge_candidates)"
+     ],
+     "current_version": 6,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 6,
+     "task_id": "purge_candidates"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('purge_candidates', operations.purge_candidates)"
+     ],
+     "current_version": 5,
+     "node_id": "service/policies.py::function::_register_all",
+     "read_version": 5,
+     "task_id": "purge_candidates"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "purge_candidates"
+    }
+   ]
+  ],
+  "quota_remaining": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3265,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1207,
+       "count": 4,
+       "nodes": [
+        "service/events.py::function::lookup",
+        "service/routes.py::function::lookup",
+        "service/events.py::function::_register_all",
+        "service/routes.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1411,
+       "count": 6,
+       "nodes": [
+        "service/tenancy.py::module_header::__header__",
+        "service/tenancy.py::function::authorize",
+        "service/tenancy.py::function::visible_jobs",
+        "service/tenancy.py::function::validate_tenant",
+        "service/policies.py::module_header::__header__",
+        "service/policies.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 647,
+       "count": 2,
+       "nodes": [
+        "service/tenancy.py::function::quota_remaining",
+        "service/policies.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/tenancy.py::function::quota_remaining",
+      "service/policies.py::function::_register_all"
+     ],
+     "task_id": "quota_remaining",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/tenancy.py::function::quota_remaining",
+      "service/policies.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/tenancy.py::function::quota_remaining",
+      "service/policies.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/policies.py::function::_register_all": 438,
+      "service/tenancy.py::function::quota_remaining": 410
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "quota_remaining",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('quota_remaining', tenancy.quota_remaining)"
+     ],
+     "current_version": 6,
+     "node_id": "service/policies.py::function::_register_all",
+     "read_version": 5,
+     "task_id": "quota_remaining"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 7,
+     "layer": "cross_file",
+     "node_id": "service/events.py::function::_register_all",
+     "policy": "revalidate",
+     "read_version": 6,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "quota_remaining",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "quota_remaining"
+    }
+   ]
+  ],
+  "ready_jobs": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3446,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 621,
+       "count": 2,
+       "nodes": [
+        "service/policies.py::function::lookup",
+        "service/policies.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1537,
+       "count": 8,
+       "nodes": [
+        "service/scheduling.py::module_header::__header__",
+        "service/scheduling.py::function::retry_delay",
+        "service/scheduling.py::function::retry_after",
+        "service/scheduling.py::function::retryable_status",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1288,
+       "count": 3,
+       "nodes": [
+        "service/scheduling.py::function::ready_jobs",
+        "service/routes.py::function::_register_all",
+        "service/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/scheduling.py::function::ready_jobs",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "task_id": "ready_jobs",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/scheduling.py::function::ready_jobs",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/scheduling.py::function::ready_jobs",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 522,
+      "service/routes.py::function::_register_all": 605,
+      "service/scheduling.py::function::ready_jobs": 444
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "ready_jobs",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('ready_jobs', scheduling.ready_jobs)"
+     ],
+     "current_version": 9,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 9,
+     "task_id": "ready_jobs"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('ready_jobs', scheduling.ready_jobs)"
+     ],
+     "current_version": 7,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "ready_jobs"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "ready_jobs"
+    }
+   ]
+  ],
+  "replay": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 5742,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1639,
+       "count": 4,
+       "nodes": [
+        "service/policies.py::function::lookup",
+        "service/tenancy.py::function::authorize",
+        "service/policies.py::function::_register_all",
+        "service/operations.py::function::purge_candidates"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2766,
+       "count": 8,
+       "nodes": [
+        "service/lifecycle.py::module_header::__header__",
+        "service/lifecycle.py::function::complete",
+        "service/lifecycle.py::function::fail",
+        "service/lifecycle.py::function::cancel",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1337,
+       "count": 3,
+       "nodes": [
+        "service/lifecycle.py::function::replay",
+        "service/routes.py::function::_register_all",
+        "service/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 12,
+     "starved": false,
+     "targets": [
+      "service/lifecycle.py::function::replay",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "task_id": "replay",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/lifecycle.py::function::replay",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/lifecycle.py::function::replay",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 513,
+      "service/lifecycle.py::function::replay": 541,
+      "service/routes.py::function::_register_all": 596
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "replay",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('replay', lifecycle.replay)"
+     ],
+     "current_version": 10,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 9,
+     "task_id": "replay"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('replay', lifecycle.replay)"
+     ],
+     "current_version": 8,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "replay"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "replay"
+    }
+   ]
+  ],
+  "requeue_expired": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 4031,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1297,
+       "count": 4,
+       "nodes": [
+        "service/policies.py::function::lookup",
+        "service/routes.py::function::lookup",
+        "service/policies.py::function::_register_all",
+        "service/routes.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1983,
+       "count": 6,
+       "nodes": [
+        "service/leasing.py::module_header::__header__",
+        "service/leasing.py::function::claim",
+        "service/leasing.py::function::heartbeat",
+        "service/leasing.py::function::expired_leases",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 751,
+       "count": 2,
+       "nodes": [
+        "service/leasing.py::function::requeue_expired",
+        "service/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/leasing.py::function::requeue_expired",
+      "service/events.py::function::_register_all"
+     ],
+     "task_id": "requeue_expired",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/leasing.py::function::requeue_expired",
+      "service/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/leasing.py::function::requeue_expired",
+      "service/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 529,
+      "service/leasing.py::function::requeue_expired": 481
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "requeue_expired",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('requeue_expired', leasing.requeue_expired)"
+     ],
+     "current_version": 9,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "requeue_expired"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 11,
+     "layer": "cross_file",
+     "node_id": "service/routes.py::function::_register_all",
+     "policy": "revalidate",
+     "read_version": 9,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "requeue_expired",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "requeue_expired"
+    }
+   ]
+  ],
+  "retry_after": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1437,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1042,
+       "count": 4,
+       "nodes": [
+        "service/scheduling.py::module_header::__header__",
+        "service/scheduling.py::function::retry_delay",
+        "service/scheduling.py::function::ready_jobs",
+        "service/scheduling.py::function::retryable_status"
+       ]
+      },
+      "write_targets": {
+       "bytes": 395,
+       "count": 1,
+       "nodes": [
+        "service/scheduling.py::function::retry_after"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 4,
+     "starved": false,
+     "targets": [
+      "service/scheduling.py::function::retry_after"
+     ],
+     "task_id": "retry_after",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/scheduling.py::function::retry_after"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/scheduling.py::function::retry_after"
+     ],
+     "source_lengths": {
+      "service/scheduling.py::function::retry_after": 820
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "retry_after",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "retry_after"
+    }
+   ]
+  ],
+  "retry_delay": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3719,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1508,
+       "count": 4,
+       "nodes": [
+        "service/events.py::function::lookup",
+        "service/routes.py::function::lookup",
+        "service/events.py::function::_register_all",
+        "service/routes.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1445,
+       "count": 6,
+       "nodes": [
+        "service/scheduling.py::module_header::__header__",
+        "service/scheduling.py::function::ready_jobs",
+        "service/scheduling.py::function::retry_after",
+        "service/scheduling.py::function::retryable_status",
+        "service/policies.py::module_header::__header__",
+        "service/policies.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 766,
+       "count": 2,
+       "nodes": [
+        "service/scheduling.py::function::retry_delay",
+        "service/policies.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/scheduling.py::function::retry_delay",
+      "service/policies.py::function::_register_all"
+     ],
+     "task_id": "retry_delay",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/scheduling.py::function::retry_delay",
+      "service/policies.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/scheduling.py::function::retry_delay",
+      "service/policies.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/policies.py::function::_register_all": 552,
+      "service/scheduling.py::function::retry_delay": 433
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "retry_delay",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('retry_delay', scheduling.retry_delay)"
+     ],
+     "current_version": 7,
+     "node_id": "service/policies.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "retry_delay"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "service/scheduling.py::function::retry_after",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "retry_delay",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "retry_delay"
+    }
+   ]
+  ],
+  "retryable_status": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3719,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1508,
+       "count": 4,
+       "nodes": [
+        "service/events.py::function::lookup",
+        "service/routes.py::function::lookup",
+        "service/events.py::function::_register_all",
+        "service/routes.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1555,
+       "count": 6,
+       "nodes": [
+        "service/scheduling.py::module_header::__header__",
+        "service/scheduling.py::function::retry_delay",
+        "service/scheduling.py::function::ready_jobs",
+        "service/scheduling.py::function::retry_after",
+        "service/policies.py::module_header::__header__",
+        "service/policies.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 656,
+       "count": 2,
+       "nodes": [
+        "service/scheduling.py::function::retryable_status",
+        "service/policies.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/scheduling.py::function::retryable_status",
+      "service/policies.py::function::_register_all"
+     ],
+     "task_id": "retryable_status",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/scheduling.py::function::retryable_status",
+      "service/policies.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/scheduling.py::function::retryable_status",
+      "service/policies.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/policies.py::function::_register_all": 562,
+      "service/scheduling.py::function::retryable_status": 187
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "retryable_status",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('retryable_status', scheduling.retryable_status)"
+     ],
+     "current_version": 8,
+     "node_id": "service/policies.py::function::_register_all",
+     "read_version": 7,
+     "task_id": "retryable_status"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "service/scheduling.py::function::retry_delay",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "retryable_status",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "service/scheduling.py::function::retry_after",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "retryable_status",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "retryable_status"
+    }
+   ]
+  ],
+  "state_counts": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 4454,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 735,
+       "count": 2,
+       "nodes": [
+        "service/policies.py::function::lookup",
+        "service/policies.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 2135,
+       "count": 8,
+       "nodes": [
+        "service/operations.py::module_header::__header__",
+        "service/operations.py::function::page_jobs",
+        "service/operations.py::function::purge_candidates",
+        "service/operations.py::function::oldest_ready_age",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup",
+        "service/events.py::module_header::__header__",
+        "service/events.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 1584,
+       "count": 3,
+       "nodes": [
+        "service/operations.py::function::state_counts",
+        "service/routes.py::function::_register_all",
+        "service/events.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/operations.py::function::state_counts",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "task_id": "state_counts",
+     "write_sources": 3
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/operations.py::function::state_counts",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/operations.py::function::state_counts",
+      "service/routes.py::function::_register_all",
+      "service/events.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/events.py::function::_register_all": 674,
+      "service/operations.py::function::state_counts": 480,
+      "service/routes.py::function::_register_all": 700
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "state_counts",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('state_counts', operations.state_counts)"
+     ],
+     "current_version": 11,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 11,
+     "task_id": "state_counts"
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('state_counts', operations.state_counts)"
+     ],
+     "current_version": 10,
+     "node_id": "service/events.py::function::_register_all",
+     "read_version": 10,
+     "task_id": "state_counts"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "state_counts"
+    }
+   ]
+  ],
+  "validate_tenant": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 1547,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1305,
+       "count": 4,
+       "nodes": [
+        "service/tenancy.py::module_header::__header__",
+        "service/tenancy.py::function::authorize",
+        "service/tenancy.py::function::visible_jobs",
+        "service/tenancy.py::function::quota_remaining"
+       ]
+      },
+      "write_targets": {
+       "bytes": 242,
+       "count": 1,
+       "nodes": [
+        "service/tenancy.py::function::validate_tenant"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 4,
+     "starved": false,
+     "targets": [
+      "service/tenancy.py::function::validate_tenant"
+     ],
+     "task_id": "validate_tenant",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/tenancy.py::function::validate_tenant"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/tenancy.py::function::validate_tenant"
+     ],
+     "source_lengths": {
+      "service/tenancy.py::function::validate_tenant": 381
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "validate_tenant",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "validate_tenant"
+    }
+   ]
+  ],
+  "visible_jobs": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 3941,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 1476,
+       "count": 4,
+       "nodes": [
+        "service/events.py::function::lookup",
+        "service/policies.py::function::lookup",
+        "service/policies.py::function::_register_all",
+        "service/events.py::function::_register_all"
+       ]
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 1595,
+       "count": 6,
+       "nodes": [
+        "service/tenancy.py::module_header::__header__",
+        "service/tenancy.py::function::authorize",
+        "service/tenancy.py::function::quota_remaining",
+        "service/tenancy.py::function::validate_tenant",
+        "service/routes.py::module_header::__header__",
+        "service/routes.py::function::lookup"
+       ]
+      },
+      "write_targets": {
+       "bytes": 870,
+       "count": 2,
+       "nodes": [
+        "service/tenancy.py::function::visible_jobs",
+        "service/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 10,
+     "starved": false,
+     "targets": [
+      "service/tenancy.py::function::visible_jobs",
+      "service/routes.py::function::_register_all"
+     ],
+     "task_id": "visible_jobs",
+     "write_sources": 2
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "service/tenancy.py::function::visible_jobs",
+      "service/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "service/tenancy.py::function::visible_jobs",
+      "service/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "service/routes.py::function::_register_all": 697,
+      "service/tenancy.py::function::visible_jobs": 267
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "visible_jobs",
+     "usage": {}
+    }
+   ],
+   [
+    "registry_merged",
+    {
+     "appended": [
+      "register('visible_jobs', tenancy.visible_jobs)"
+     ],
+     "current_version": 12,
+     "node_id": "service/routes.py::function::_register_all",
+     "read_version": 11,
+     "task_id": "visible_jobs"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 2,
+     "layer": "same_file",
+     "node_id": "service/tenancy.py::function::validate_tenant",
+     "policy": "revalidate",
+     "read_version": 1,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "visible_jobs",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "stale_read",
+    {
+     "attempt": 1,
+     "change": "body_only",
+     "commit_verdict": "accept",
+     "current_version": 11,
+     "layer": "cross_file",
+     "node_id": "service/events.py::function::_register_all",
+     "policy": "revalidate",
+     "read_version": 10,
+     "reason": "body-only change",
+     "referenced": false,
+     "task_id": "visible_jobs",
+     "verdict": "accept"
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "visible_jobs"
+    }
+   ]
+  ]
+ },
+ "result": {
+  "conflicts": 0.0,
+  "notes": [],
+  "passed": 152,
+  "registration_dropped": 30,
+  "registration_duplicates": 0,
+  "registration_expected": 30,
+  "registration_survived": 0,
+  "resolutions": 0.0,
+  "total": 152
+ }
+}

@@ -1,0 +1,131 @@
+{
+ "calls": 1,
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 5,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 214.0,
+     "dispatches": 1.0,
+     "mean_context_bytes": 214.0,
+     "redispatches": 0.0,
+     "stale_reads": 0.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 1.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "a": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 214,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 132,
+       "count": 4,
+       "nodes": [
+        "web/routes.py::module_header::__header__",
+        "web/routes.py::function::register",
+        "web/routes.py::function::users_index",
+        "web/routes.py::function::admin_users"
+       ]
+      },
+      "write_targets": {
+       "bytes": 82,
+       "count": 1,
+       "nodes": [
+        "web/routes.py::function::_register_all"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 4,
+     "starved": false,
+     "targets": [
+      "web/routes.py::function::_register_all"
+     ],
+     "task_id": "a",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "web/routes.py::function::_register_all"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "web/routes.py::function::_register_all"
+     ],
+     "source_lengths": {
+      "web/routes.py::function::_register_all": 88
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "a",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "a"
+    }
+   ]
+  ]
+ },
+ "files": {
+  "web/__init__.py": "",
+  "web/routes.py": "TABLE = {}\n\n\ndef register(key, fn):\n    TABLE[key] = fn\n\n\ndef users_index():\n    return \"users\"\n\n\ndef admin_users():\n    return \"admin\"\n\n\ndef _register_all() -> None:\n    \"\"\"Every route.\"\"\"\n    register(\"/users\", users_index)\n"
+ },
+ "fixups": 0,
+ "mechanisms": [],
+ "outcome": "clean",
+ "resolved": true
+}

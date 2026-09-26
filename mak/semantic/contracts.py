@@ -1,4 +1,4 @@
-"""Session-side use of declared contracts (Wave 20, P3).
+"""Session-side use of declared contracts.
 
 Which dependency edges may become *soft* under ``semantic.contract_dispatch``,
 which contracts a task should be shown and checked against, and how a contract

@@ -10,7 +10,7 @@ created with no mode enforcement (observed at 0644 with live keys), and only
 survives an upgrade by accident. Reading it warns and names the replacement;
 the next release drops it.
 
-**Any variable name, not three (Wave 22).** The name set used to be a fixed
+**Any variable name, not three.** The name set used to be a fixed
 tuple of the three built-in providers. Every custom endpoint brings its own
 credential variable, and a gateway may need a secret header as well, so the set
 is now whatever the caller asks for.

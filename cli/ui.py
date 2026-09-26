@@ -245,6 +245,13 @@ def show_results(
         line.append(f" · {skp} skipped · {blk} blocked", style="dim")
     if execution.wave_count > 1:
         line.append(f" · {execution.wave_count} waves", style="dim")
+    # The adjudicator is the one model call on the commit path; a run that
+    # relied on it says so rather than presenting its accepts as the kernel's.
+    if execution.adjudicated_accepts:
+        line.append(
+            f" · {execution.adjudicated_accepts} adjudicated (nondeterministic)",
+            style="yellow",
+        )
     console.print()
     console.print(line)
 

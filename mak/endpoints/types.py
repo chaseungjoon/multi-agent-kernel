@@ -1,9 +1,9 @@
 """Endpoint domain types: the four identities the old schema conflated.
 
-Before Wave 22, ``AgentConfig.type`` meant three things at once — which adapter
+A single ``AgentConfig.type`` cannot mean three things at once — which adapter
 class to construct, which wire protocol to speak, and which key to route work
-under. That is why two OpenAI-compatible endpoints could not coexist: they
-shared a type, so the second silently overwrote the first in the registry.
+under — or two OpenAI-compatible endpoints could not coexist: they would share
+a type, so the second would silently overwrite the first in the registry.
 
 This module separates them:
 
@@ -42,7 +42,7 @@ from mak.core.exceptions import ConfigError
 class Transport(StrEnum):
     """The wire protocol an endpoint speaks.
 
-    "Universal" in Wave 22 means universal *inside the OpenAI Chat Completions
+    "Universal" means universal *inside the OpenAI Chat Completions
     family*. Anthropic Messages, Gemini ``generateContent`` and Ollama's native
     context controls keep dedicated transports rather than being forced through
     the OpenAI SDK, because each carries behaviour the compatible layer drops.

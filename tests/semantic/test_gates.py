@@ -8,6 +8,7 @@ from pathlib import Path
 from mak.config import SemanticConfig
 from mak.core.logging import EventType
 from mak.core.types import NodeId
+from mak.session.post_wave import subset_files
 from tests.semantic.helpers import (
     ScriptRunner,
     committed,
@@ -101,11 +102,11 @@ class TestImpactTests:
         session.install_plan([task("a", ["m.py::function::f"]),
                               task("b", ["m.py::function::g"])])
         assert session.run().ok
-        only_b = session._subset_files(frozenset({"b"}))["m.py"]
+        only_b = subset_files(session.wave, frozenset({"b"}))["m.py"]
         assert only_b is not None
         assert "return 1\n" in only_b and "return 20" in only_b
         assert "return 10" not in only_b
-        both = session._subset_files(frozenset({"a", "b"}))["m.py"]
+        both = subset_files(session.wave, frozenset({"a", "b"}))["m.py"]
         assert both is not None and "return 10" in both and "return 20" in both
 
 
@@ -128,9 +129,9 @@ class TestTypeGate:
         runner = ScriptRunner({"t": [{"m.py::function::f":
                                       "def f() -> int:\n    return 'x'\n"}]})
         session, _, logger = make_session(
-            tmp_path, runner, semantic=SemanticConfig(type_check="mypy")
+            tmp_path, runner, semantic=SemanticConfig(type_check="mypy"),
+            gate_runner=fake,
         )
-        session._gates._runner = fake  # type: ignore[attr-defined]
         session.initialize()
         session.install_plan([task("t", ["m.py::function::f"])])
         assert session.run().ok
@@ -151,9 +152,9 @@ class TestTypeGate:
 
         runner = ScriptRunner({"t": [{"m.py": "X = 2\n"}]})
         session, _, logger = make_session(
-            tmp_path, runner, semantic=SemanticConfig(type_check="mypy")
+            tmp_path, runner, semantic=SemanticConfig(type_check="mypy"),
+            gate_runner=boom,
         )
-        session._gates._runner = boom  # type: ignore[attr-defined]
         session.initialize()
         session.install_plan([task("t", ["m.py"])])
         assert session.run().ok
@@ -193,9 +194,14 @@ class TestAdjudicator:
             "b": [{"m.py::function::show": "def show(uid):\n    return load(uid)\n"}],
         })
         session, store, logger = make_session(
-            tmp_path, runner, semantic=SemanticConfig(**semantic)  # type: ignore[arg-type]
+            tmp_path, runner,
+            # The configured model is what switches the adjudicator on; the
+            # injected one only replaces how it is built.
+            semantic=SemanticConfig(
+                adjudicator="anthropic:fake", **semantic  # type: ignore[arg-type]
+            ),
+            adjudicator_llm=llm,
         )
-        session._adjudicator_llm = llm  # type: ignore[attr-defined]
         runner._hold["b"] = committed(store, "m.py::function::load", "User")
         session.initialize()
         session.install_plan([task("a", ["m.py::function::load"]),

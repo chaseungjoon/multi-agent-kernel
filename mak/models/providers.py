@@ -40,7 +40,7 @@ class FetchedModel:
     """Raw facts about one model, as reported by its provider.
 
     ``supported_parameters`` is **tri-state**, and the distinction is
-    load-bearing (Wave 24):
+    load-bearing:
 
     * ``None`` — this provider published no capability metadata. Anthropic,
       OpenAI and Gemini never do, and most OpenAI-compatible ``/models``
@@ -109,7 +109,7 @@ def _int_or_none(value: Any) -> int | None:
 
 # Provider -> the packaging extra that installs its SDK. Named in the failure
 # message because "No module named 'anthropic'" tells a user what is missing but
-# not what to type, and MAK's SDKs are optional extras as of Wave 15.
+# not what to type, and MAK's SDKs are optional extras.
 _SDK_EXTRA: dict[str, str] = {
     "anthropic": "anthropic",
     "openai": "openai",

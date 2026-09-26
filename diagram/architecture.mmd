@@ -16,7 +16,7 @@ flowchart TB
     end
 
     subgraph kernel["MAK KERNEL · one Python process"]
-        session["Session orchestration<br/>mak/session.py<br/>Ownership · recovery · token budget"]
+        session["Session state machine + collaborators<br/>mak/session/<br/>Ownership · commit pipeline · recovery · token budget"]
         planner["Planner + plan validation + review<br/>mak/planner/<br/>Code dependency graph → subtask DAG"]
         scheduler["DAG scheduler<br/>mak/scheduler/<br/>Ready queue · bounded concurrency"]
         locks["Symbol reader / writer locks<br/>mak/lock_manager/<br/>Atomic grants · leases · deadlock checks"]

@@ -1,4 +1,4 @@
-r"""Cascade on the real reference graph (Wave 20, R3).
+r"""Cascade on the real reference graph.
 
 The old cascade compared the first function signature of each committed node
 and then regex-matched ``\\bsymbol\\b`` across *other files*. That missed three

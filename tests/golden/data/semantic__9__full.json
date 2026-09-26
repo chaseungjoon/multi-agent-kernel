@@ -1,0 +1,227 @@
+{
+ "calls": 2,
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 2,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 104.0,
+     "dispatches": 2.0,
+     "mean_context_bytes": 52.0,
+     "redispatches": 0.0,
+     "stale_reads": 0.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 2.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ],
+   [
+    "conflict_detected",
+    {
+     "defining_file": "crm/contacts.py",
+     "file": "crm/users.py",
+     "kind": "duplicate_implementation",
+     "reasons": [
+      "'_normalize_email' was implemented twice this wave: in 'crm/contacts.py' (task b) and in 'crm/users.py' (task a). Keep one definition and import it where the other was."
+     ]
+    }
+   ]
+  ],
+  "a": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 52,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 52,
+       "count": 1,
+       "nodes": [
+        "crm/users.py::function::create_user"
+       ]
+      },
+      "write_targets": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 1,
+     "starved": false,
+     "targets": [
+      "crm/users.py"
+     ],
+     "task_id": "a",
+     "write_sources": 0
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "crm/users.py"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "crm/users.py"
+     ],
+     "source_lengths": {
+      "crm/users.py": 134
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "a",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "a"
+    }
+   ]
+  ],
+  "b": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 52,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 52,
+       "count": 1,
+       "nodes": [
+        "crm/contacts.py::function::add_contact"
+       ]
+      },
+      "write_targets": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 1,
+     "starved": false,
+     "targets": [
+      "crm/contacts.py"
+     ],
+     "task_id": "b",
+     "write_sources": 0
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "crm/contacts.py"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "crm/contacts.py"
+     ],
+     "source_lengths": {
+      "crm/contacts.py": 134
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "b",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "b"
+    }
+   ]
+  ]
+ },
+ "files": {
+  "crm/__init__.py": "",
+  "crm/contacts.py": "def _normalize_email(email):\n    return email.strip().lower()\n\n\ndef add_contact(email):\n    return {\"email\": _normalize_email(email)}\n",
+  "crm/users.py": "def _normalize_email(email):\n    return email.strip().lower()\n\n\ndef create_user(email):\n    return {\"email\": _normalize_email(email)}\n"
+ },
+ "fixups": 1,
+ "mechanisms": [
+  "wave_end"
+ ],
+ "outcome": "detected (wave end)",
+ "resolved": false
+}

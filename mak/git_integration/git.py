@@ -35,7 +35,7 @@ class CommitInfo:
     """A parsed MAK commit from ``git log``.
 
     ``agent_type`` keeps its name for compatibility with commits written before
-    Wave 22, but its value is now the agent's **routing id** — the same string
+    agent ids existed, but its value is the agent's **routing id** — the same string
     the registry, scheduler and logs use. For a legacy roster the two are
     identical, so old and new commits read the same way.
     """

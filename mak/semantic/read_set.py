@@ -1,10 +1,10 @@
 """The task read set — what a bundle carried, and at which version.
 
-Before this, only the planner's ``context_nodes`` were read-locked, and nothing
-at all was version-tracked. Everything ``Session._enrich_bundle`` added on its
-own — same-file siblings, cross-file callers, dependency outputs — could be
-rewritten by another task while the agent was working from the old copy, and
-the commit that followed had no way to know. That is the whole of shape 1
+Read-locking only the planner's ``context_nodes`` is not enough. Everything the
+dispatch enricher (``mak.session.dispatch``) adds on its own — same-file
+siblings, cross-file callers, dependency outputs — can be rewritten by another
+task while the agent is working from the old copy, and without a record of what
+was read the commit that follows has no way to know. That is the whole of shape 1
 (stale read / write skew).
 
 A read set closes it the way optimistic concurrency control does in a

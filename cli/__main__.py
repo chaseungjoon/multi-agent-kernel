@@ -210,9 +210,9 @@ def _update() -> int:
 def _gc(argv: list[str]) -> int:
     """Prune this project's node store (``mak gc``).
 
-    Every commit writes a new ``v{n}.py`` and, before Wave 18, nothing ever
-    removed one — so a store written by an older MAK carries versions and
-    superseded fragment directories that no run will ever read again. A fresh
+    Every commit writes a new ``v{n}.py``, and a store written by an older MAK,
+    which never removed one, carries versions and superseded fragment
+    directories that no run will ever read again. A fresh
     store stays bounded on its own; this is the one-time sweep for the rest.
     """
     from mak.config import anchor_mak_dir, discover_config_path, load_config

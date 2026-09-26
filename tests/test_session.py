@@ -25,7 +25,11 @@ from mak.git_integration.git import GitHelper
 from mak.lock_manager.lock_table import LockTable
 from mak.node_store import transaction as transaction_mod
 from mak.node_store.store import NodeStore
-from mak.session import Session, SessionState, SubTaskProgress, _Completion
+from mak.session import Session, SessionState, SubTaskProgress
+from mak.session.commit.checks import preview_is_valid
+from mak.session.concurrency import Completion
+from mak.session.results import plan_metrics
+from mak.session.store_view import StoreView
 from mak.teardown import SuiteOutcome
 
 # --- fakes -------------------------------------------------------------------
@@ -300,7 +304,7 @@ class TestPlanValidation:
             _task("edit-parse", ["util.py::function::parse_config"]),
             _task("edit-load", ["app.py::function::load"]),
         ])
-        assert session._dag_task("edit-load").depends_on == ["edit-parse"]
+        assert session.wave.task("edit-load").depends_on == ["edit-parse"]
         kinds = {f.kind for f in session.last_plan_findings}
         assert "missing_dep" in kinds
 
@@ -310,7 +314,7 @@ class TestPlanValidation:
         session.initialize()
         # 'lod' is a typo for the real 'load'.
         session.install_plan([_task("t", ["app.py::function::lod"])])
-        assert session._dag_task("t").target_nodes == [
+        assert session.wave.task("t").target_nodes == [
             NodeId("app.py::function::load")
         ]
         assert "corrected_node" in {f.kind for f in session.last_plan_findings}
@@ -324,7 +328,7 @@ class TestPlanValidation:
             _task("edit-load", ["app.py::function::load"]),
         ])
         # No validation: the missing edge is NOT added and no findings recorded.
-        assert session._dag_task("edit-load").depends_on == []
+        assert session.wave.task("edit-load").depends_on == []
         assert session.last_plan_findings == []
 
     def test_cascade_tasks_validate_without_findings(self, tmp_path: Path) -> None:
@@ -532,10 +536,10 @@ class TestRecovery:
         )
         # Drive only the first task to completion, then stop (crash). Only 'a' is
         # ready ('b' depends on it), so the batch is exactly {a}.
-        s1._scheduler.tick()  # dispatch a onto the pool
-        s1._process_batch(s1._collect_batch())
+        s1.wave.require_scheduler().tick()  # dispatch a onto the pool
+        s1.batches.process_batch(s1.wave, s1.batches.collect())
         s1.close()
-        assert s1._completed == ["a"]
+        assert s1.wave.completed == ["a"]
 
         # Second session recovers from the persisted task graph.
         store2 = NodeStore(tmp_path / "store")
@@ -750,7 +754,7 @@ class TestCascadeDetection:
         )
 
         assert session._objective == "embed every separated track"
-        assert session._require_scheduler().annotations["objective"] == (
+        assert session.wave.require_scheduler().annotations["objective"] == (
             "embed every separated track"
         )
 
@@ -786,12 +790,12 @@ class TestTransactionalCommit:
         nid = NodeId("m.py::function::a")
 
         store.put_node(nid, NodeFragment(nid, "function", "def broken(:\n", 1))
-        assert session._preview_is_valid([nid]) is False
+        assert preview_is_valid(StoreView(store), [nid]) is False
 
         store.rollback_node(nid)
         valid = NodeFragment(nid, "function", "def a():\n    return 9\n", 1)
         store.put_node(nid, valid)
-        assert session._preview_is_valid([nid]) is True
+        assert preview_is_valid(StoreView(store), [nid]) is True
 
     def test_reconstruct_failure_reverts_commit(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -821,7 +825,7 @@ class TestTransactionalCommit:
         assert "return 0" in (tmp_path / "m.py").read_text()
         # A rolled-back transaction is not work that happened: leaving it in the
         # wave log sent cascade analysis off to inspect a reverted edit.
-        assert session._wave_committed == {}
+        assert session.wave.committed == {}
 
 
 class TestStallReporting:
@@ -907,7 +911,7 @@ class TestDefaultAgentRouting:
         )
         assert bare.agent_type == ""
         session.install_plan([bare])
-        assert session._dag_task("a").agent_type == "anthropic_api"
+        assert session.wave.task("a").agent_type == "anthropic_api"
 
     def test_explicit_agent_type_preserved(self, tmp_path: Path) -> None:
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
@@ -915,7 +919,7 @@ class TestDefaultAgentRouting:
         session = self._session_with_default(tmp_path, store, "anthropic_api")
         session.initialize()
         session.install_plan([_task("a", ["m.py::function::a"])])
-        assert session._dag_task("a").agent_type == "fake"
+        assert session.wave.task("a").agent_type == "fake"
 
     def test_no_default_leaves_agent_type_unchanged(self, tmp_path: Path) -> None:
         (tmp_path / "m.py").write_text("def a():\n    return 0\n")
@@ -928,7 +932,7 @@ class TestDefaultAgentRouting:
             target_nodes=[NodeId("m.py::function::a")],
         )
         session.install_plan([bare])
-        assert session._dag_task("a").agent_type == ""
+        assert session.wave.task("a").agent_type == ""
 
 
 class _ListingRegistry:
@@ -973,7 +977,7 @@ class TestAgentDistribution:
             for i in range(4)
         ]
         session.install_plan(tasks)
-        assigned = [session._dag_task(f"t{i}").agent_type for i in range(4)]
+        assigned = [session.wave.task(f"t{i}").agent_type for i in range(4)]
         # Round-robin across the pool, wrapping on the 4th task.
         assert assigned == [
             "anthropic_api", "openai_api", "gemini_api", "anthropic_api"
@@ -993,7 +997,7 @@ class TestAgentDistribution:
         )
         session.install_plan([bad])
         # Remapped to the pool's first entry instead of crashing dispatch.
-        assert session._dag_task("a").agent_type == "anthropic_api"
+        assert session.wave.task("a").agent_type == "anthropic_api"
 
 
 # --- Wave 5: concurrency -----------------------------------------------------
@@ -1083,19 +1087,20 @@ class TestPlanMetrics:
         h2 = "def helper():\n    return 2\n"
         store.put_node(na, NodeFragment(na, "function", h1, 1))
         store.put_node(nb, NodeFragment(nb, "function", h2, 1))
-        session._process_batch(
+        session.batches.process_batch(
+            session.wave,
             [
-                _Completion(
+                Completion(
                     TaskBundle(task_id="a", description="", target_nodes=[na]),
                     TaskResult(task_id="a", success=True, modified_nodes=[na]),
                 ),
-                _Completion(
+                Completion(
                     TaskBundle(task_id="b", description="", target_nodes=[nb]),
                     TaskResult(task_id="b", success=True, modified_nodes=[nb]),
                 ),
-            ]
+            ],
         )
-        assert session._plan_metrics()["conflict_rejections"] == 1
+        assert plan_metrics(session.wave)["conflict_rejections"] == 1
 
     def test_plan_metrics_logged_and_readable(self, tmp_path: Path) -> None:
         from mak.core.logging import EventType, SessionLogger
@@ -1154,21 +1159,21 @@ class TestCrossAgentConflictDetection:
         store.put_node(na, NodeFragment(na, "function", helper1, 1))
         store.put_node(nb, NodeFragment(nb, "function", helper2, 1))
         batch = [
-            _Completion(
+            Completion(
                 TaskBundle(task_id="a", description="", target_nodes=[na]),
                 TaskResult(task_id="a", success=True, modified_nodes=[na]),
             ),
-            _Completion(
+            Completion(
                 TaskBundle(task_id="b", description="", target_nodes=[nb]),
                 TaskResult(task_id="b", success=True, modified_nodes=[nb]),
             ),
         ]
-        session._process_batch(batch)
+        session.batches.process_batch(session.wave, batch)
 
         # Deterministic order: 'a' commits first; 'b' collides with the now-committed
         # 'helper' and is rejected — the detector saw a cross-agent edit at last.
-        assert session._completed == ["a"]
-        assert session._failed == ["b"]
+        assert session.wave.completed == ["a"]
+        assert session.wave.failed == ["b"]
         assert "helper" in store.get_node(na).source
         # 'b' was rolled back to the ingested definition.
         assert store.get_node(nb).source.lstrip().startswith("def b")
@@ -1189,7 +1194,7 @@ class TestCommitTimeLockRevalidation:
         # Stage a valid edit but hold no write lock (a lapsed lease).
         edited = "def a():\n    return 9\n"
         store.put_node(nid, NodeFragment(nid, "function", edited, 1))
-        committed = session._validate_and_commit("a", [nid])
+        committed = session.pipeline.commit(session.wave, "a", [nid])
         assert committed == []
         assert store.get_node(nid).version == 1  # store never advanced
 
@@ -2523,7 +2528,6 @@ class TestProspectiveSemanticValidity:
             tmp_path, runner=GreenfieldRunner({}), node_store=_store(tmp_path)
         )
         session.initialize()
-        session._objective = "embed every separated track"
         defect = CrossModuleDefect(
             kind="unresolved_import",
             file="caller.py",
@@ -2533,7 +2537,9 @@ class TestProspectiveSemanticValidity:
             site="import:provider:1:0:0",
         )
 
-        (task,) = session._cross_module_fix_tasks([defect])
+        (task,) = session.post_wave.fixups.cross_module_tasks(
+            session.wave, [defect], objective="embed every separated track"
+        )
 
         assert NodeId("provider.py") in task.target_nodes
         assert task.repair_obligations[0].family_key == defect.family_key

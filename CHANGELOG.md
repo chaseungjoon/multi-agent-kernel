@@ -14,6 +14,45 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.9.4b] — 2026-09-26
+
+An internal refactor of the session, with no change to what a run does. The
+recorded event logs of the concurrency corpus, the semantic-conflict corpus and
+all four benchmark templates reproduce exactly before and after.
+
+### Changed
+- **`mak/session.py` is now the `mak/session/` package.** `Session` is a thin
+  state machine over single-purpose collaborators (enrichment, batch settling,
+  the commit pipeline, retries and no-ops, parking, post-wave analysis,
+  recovery, teardown), each in its own module. `from mak.session import …`
+  keeps working for every public name.
+- **Per-wave state is created fresh for each wave** (`WaveState`) instead of
+  being reset field by field, so nothing a wave accumulates can leak into the
+  next. A task queued for re-dispatch when a run stopped early no longer
+  carries into the next wave.
+- **The commit path is an ordered list of checks** (`CommitPipeline`,
+  `DEFAULT_CHECKS`); a new commit-time check is one more entry in the list.
+- The optional LLM adjudicator (`semantic.adjudicator`) runs only when it is
+  configured: a model injected into `Session(adjudicator_llm=...)` no longer
+  switches it on by itself.
+- Docstrings and comments describe the current contract instead of the history
+  of how it came to be.
+
+### Added
+- Every adjudicator consultation is logged with `nondeterministic: true`, the
+  stale reads it accepted are counted in the new `adjudicated_accepts` plan
+  metric, and the run summary says how many there were.
+- `session.wave`, `session.batches`, `session.pipeline` and
+  `session.post_wave` expose the current wave's state and the collaborators an
+  embedder or a test drives directly.
+- Golden event-log tests (`python -m tests.golden.golden compare`) and size
+  budgets for the session package (`tests/test_module_budgets.py`).
+
+### Fixed
+- A config that sets `semantic.adjudicator` with a `stale_read` policy other
+  than `revalidate` is now rejected at startup: no other policy ever consults the
+  adjudicator, so it silently did nothing.
+
 ## [0.9.3b] — 2026-09-25
 
 ### Changed

@@ -160,7 +160,7 @@ class SubTask:
     imports). The runner ships the current source of both to the agent so it is
     not editing blind.
 
-    The four Wave 20 fields are the task's *declarations* about its interface,
+    The four interface fields are the task's *declarations* about its interface,
     and each one is enforced at commit rather than trusted:
 
     - ``changes_api`` is tri-state. ``None`` — the default, and what every plan
@@ -184,7 +184,8 @@ class SubTask:
     context_nodes: list[NodeId] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
     # The agent's **routing id**, not its transport. The field keeps its name so
-    # task bundles and recovery files written before Wave 22 still decode, and
+    # task bundles and recovery files written before agent ids existed still
+    # decode, and
     # for a legacy roster the id *is* the type, so old files mean exactly what
     # they always did. A future schema version renames it to ``agent_id``.
     agent_type: str = ""

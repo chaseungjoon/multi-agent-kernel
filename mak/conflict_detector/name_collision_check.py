@@ -9,8 +9,8 @@ The unit of comparison is the *agent*: a single agent legitimately defining a
 symbol once is fine; the same qualified name defined by two different agents is the
 collision.
 
-Symbols are attributed to their owning class where the node id says so (Wave 11
-audit): a ``method`` / ``class_body`` fragment is stored dedented, so its members
+Symbols are attributed to their owning class where the node id says so: a
+``method`` / ``class_body`` fragment is stored dedented, so its members
 parse as module-level names. Without that attribution, two different classes in
 one file each defining ``get`` would be reported as colliding.
 """

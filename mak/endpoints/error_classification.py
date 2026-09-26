@@ -1,7 +1,7 @@
 """Decide *why* a structured-output request was refused, from the error itself.
 
-Wave 24. Before this module the adapter searched ``str(exc)`` for four literal
-substrings. That was wrong in both directions, and one real incident proved it:
+Searching ``str(exc)`` for a few literal substrings is wrong in both
+directions, and one real incident proved it:
 OpenRouter routing to Novita refused the same model twice with two spellings of
 one sentence —
 

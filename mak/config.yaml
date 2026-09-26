@@ -94,7 +94,7 @@ git:
   # policy a project opts into rather than one MAK imposes.
   # require_clean_tree: false
 
-# Semantic conflicts (Wave 20): two edits on different nodes that are each right
+# Semantic conflicts: two edits on different nodes that are each right
 # and wrong together. Every setting below is optional; the values shown are the
 # defaults.
 # semantic:
@@ -115,6 +115,9 @@ git:
 #   type_check: "off"        # off | pyright | mypy
 #   impact_tests: "off"      # off | on
 #   import_smoke: "off"      # off | on
+#   # The one model call on the commit path: asks a cheap model about stale
+#   # reads the static checks cannot settle. Needs stale_read: revalidate;
+#   # its accepts are logged as nondeterministic and counted in the summary.
 #   adjudicator: "off"       # off | <backend>:<model>
 #   adjudicator_max_calls: 5
 #   gate_timeout_s: 300

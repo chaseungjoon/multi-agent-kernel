@@ -1,4 +1,4 @@
-"""Materialize a project state that never existed on disk (Wave 20, D4/D6).
+"""Materialize a project state that never existed on disk.
 
 "Does this test pass with task A alone? With B alone? With both?" is only
 cheap to ask because MAK holds every committed node version: any subset of a

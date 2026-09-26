@@ -55,7 +55,7 @@ class EventType(StrEnum):
     SESSION_ENDED = "session_ended"
     PLAN_VALIDATED = "plan_validated"
     PLAN_METRICS = "plan_metrics"
-    # Wave 20. A task's commit found that a node its bundle carried had been
+    # A task's commit found that a node its bundle carried had been
     # committed by someone else while it was in flight. Logged for *every*
     # stale read, whatever the verdict, with the node, both versions, the kind
     # of change and what the policy decided — "every stale read is logged with

@@ -19,13 +19,13 @@ process each get their own.
 Keyed by ``(endpoint id, model id)`` because the same model id served by two
 endpoints is two different implementations with two different capability sets —
 ``anthropic/claude-opus-5`` through OpenRouter is not the same server as
-Anthropic's own. The model id is kept **whole**: Wave 24 measured
-``inclusionai/ling-3.0-flash-vl`` reporting full structured-output support while
+Anthropic's own. The model id is kept **whole**: in the live catalog,
+``inclusionai/ling-3.0-flash-vl`` reports full structured-output support while
 ``inclusionai/ling-3.0-flash-vl:free`` reports none. Stripping a ``:free``
 suffix to "canonicalize" would cache one product's capabilities under the
 other's name.
 
-**Two kinds of evidence, kept apart (Wave 24).**
+**Two kinds of evidence, kept apart.**
 
 *Reported* parameters come from the endpoint's ``/models`` listing. They are a
 claim, not a proof: they choose where the ladder *starts* and descent below that
@@ -33,7 +33,7 @@ remains available. *Proven* modes come from a real successful call and pin the
 mode exactly. Storing them in one field would let a catalog claim masquerade as
 a verified fact, and a stale catalog would then be unfixable within the session.
 
-**Single-flight discovery (Wave 24).** Four agents starting together used to
+**Single-flight discovery.** Four agents starting together used to
 each see "unknown" and each walk the same failing ladder, paying four times for
 one predictable mismatch. The first caller now owns discovery for a key and the
 rest wait on it, then start from what it learned. No network call happens while
@@ -63,7 +63,7 @@ PROMPT_ONLY = "none"
 
 # Which reported request parameter authorizes which rung.
 #
-# These two names are **not** synonyms, and Wave 24 proved it against the live
+# These two names are **not** synonyms, as measured against the live
 # OpenRouter catalog: ``google/gemma-4-31b-it:free`` reports ``response_format``
 # and not ``structured_outputs``, and it accepts ``{"type": "json_object"}``
 # while refusing a strict ``json_schema``. Across the 446-model catalog, 30
@@ -116,7 +116,7 @@ def start_rung_for(parameters: frozenset[str] | None) -> str | None:
       treating that silence as "no structured output" would disable schema
       enforcement for every one of them.
     * ``frozenset()`` — the service published the field and it was empty.
-      Wave 24 found three such models in OpenRouter's catalog
+      OpenRouter's catalog has published three such models
       (``openrouter/fusion`` and two siblings, all auto-routers), and probing
       confirmed ``openrouter/fusion`` *succeeds* with a strict ``json_schema``
       request. An empty list is a service declining to enumerate, not a service

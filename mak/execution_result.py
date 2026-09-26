@@ -123,6 +123,17 @@ class ExecutionResult:
         )
 
     @property
+    def adjudicated_accepts(self) -> int:
+        """Stale reads the LLM adjudicator accepted, across every wave.
+
+        The only commit decisions a model rather than the kernel made; reported
+        so a run that relied on them says so.
+        """
+        return sum(
+            int(result.metrics.get("adjudicated_accepts", 0.0)) for result in self.waves
+        )
+
+    @property
     def request_satisfied(self) -> bool:
         """Whether the user actually got what they asked for.
 
@@ -147,4 +158,9 @@ class ExecutionResult:
         parts.append(f"{len(self.blocked)} blocked")
         if self.wave_count > 1:
             parts.append(f"across {self.wave_count} waves")
+        if self.adjudicated_accepts:
+            parts.append(
+                f"{self.adjudicated_accepts} stale read(s) accepted by the LLM "
+                "adjudicator (nondeterministic)"
+            )
         return ", ".join(parts)

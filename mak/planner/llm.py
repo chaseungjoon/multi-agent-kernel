@@ -316,8 +316,8 @@ class OllamaPlannerLLM:
     adapter does (see its module docstring): a plan prompt lists the whole node
     inventory, Ollama's default window is a few thousand tokens, and an
     over-long prompt is **silently truncated**. A planner given half a repo
-    writes a confident plan for half a repo. Wave 7 is the real fix for
-    inventory size; this wave must at least not fail silently.
+    writes a confident plan for half a repo. Bounding the inventory itself is
+    the real fix; until then this must at least not fail silently.
     """
 
     def __init__(

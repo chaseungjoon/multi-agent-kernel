@@ -1,6 +1,6 @@
 """Synthesize endpoints for MAK's built-in providers and legacy agent types.
 
-Wave 22 gives every agent a resolved endpoint so that one code path serves both
+Every agent gets a resolved endpoint so that one code path serves both
 ``{type: openai_api}`` written in 2025 and ``{endpoint: nvidia}`` written today.
 The legacy types are not special-cased downstream; they are simply agents whose
 endpoint MAK supplies.

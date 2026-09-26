@@ -33,8 +33,8 @@ Every change is also reported as a :class:`PlanFinding` so the human-in-the-loop
 reviewer sees exactly what validation did and can override it via the edit flow.
 Originals are never mutated (``SubTask`` is frozen; corrections use ``replace``).
 
-**Wave 20 (P4).** With :class:`PlanSemantics` supplied, validation also reads the
-tasks' interface declarations:
+**Interface declarations.** With :class:`PlanSemantics` supplied, validation
+also reads the tasks' interface declarations:
 
 - a writer that declared a **body-only** edit of a node (``changes_api=False``,
   or an API change narrowed to other targets) no longer forces callers' tasks
@@ -81,7 +81,7 @@ class PlanFinding:
 
 @dataclass(frozen=True, slots=True)
 class PlanSemantics:
-    """What Wave 20 validation needs to know beyond the plan and the graph.
+    """What semantic validation needs to know beyond the plan and the graph.
 
     ``api_locks`` says whether interface locks are on (edge relaxation is only
     sound when they are). ``registrar_kinds`` maps a targeted node to

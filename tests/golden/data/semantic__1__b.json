@@ -1,0 +1,130 @@
+{
+ "calls": 1,
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 5,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 121.0,
+     "dispatches": 1.0,
+     "mean_context_bytes": 121.0,
+     "redispatches": 0.0,
+     "stale_reads": 0.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 1.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "b": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 121,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 89,
+       "count": 2,
+       "nodes": [
+        "shop/users.py::module_header::__header__",
+        "shop/users.py::function::load_user"
+       ]
+      },
+      "write_targets": {
+       "bytes": 32,
+       "count": 1,
+       "nodes": [
+        "shop/users.py::function::greet"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 2,
+     "starved": false,
+     "targets": [
+      "shop/users.py::function::greet"
+     ],
+     "task_id": "b",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "shop/users.py::function::greet"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "shop/users.py::function::greet"
+     ],
+     "source_lengths": {
+      "shop/users.py::function::greet": 58
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "b",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "b"
+    }
+   ]
+  ]
+ },
+ "files": {
+  "shop/__init__.py": "",
+  "shop/models.py": "class User:\n    def __init__(self, uid: int, name: str) -> None:\n        self.uid = uid\n        self.name = name\n",
+  "shop/users.py": "from shop.models import User\n\n\ndef load_user(uid):\n    return {\"id\": uid, \"name\": \"ann\"}\n\n\ndef greet(uid):\n    return \"hi \" + load_user(uid)[\"name\"]\n"
+ },
+ "fixups": 0,
+ "mechanisms": [],
+ "outcome": "clean",
+ "resolved": true
+}

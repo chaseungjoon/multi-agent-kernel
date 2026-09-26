@@ -86,7 +86,7 @@ class ModelEntry:
     endpoint_id: str = ""
     evaluated: bool = True
     # Request parameters this endpoint reports for this exact model id.
-    # Tri-state (Wave 24): None = the service published no capability metadata,
+    # Tri-state: None = the service published no capability metadata,
     # frozenset() = it published an empty list, non-empty = the reported set.
     # See ``mak.models.providers.FetchedModel`` for why a boolean is wrong.
     supported_parameters: frozenset[str] | None = None

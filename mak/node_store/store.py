@@ -7,7 +7,7 @@ have to guess the next version. Prior versions are retained on disk, enabling
 order is preserved as ``order`` metadata so reconstruction emits source in its
 original order. All mutations are guarded by a re-entrant lock.
 
-**Retention (Wave 18).** "Prior versions are retained" used to mean *all* of
+**Retention.** "Prior versions are retained" used to mean *all* of
 them: every commit wrote a ``v{n}.py`` and nothing ever removed one, so
 ``.mak/node_store/`` grew monotonically for the life of a project. A commit now
 prunes back to ``version_retention`` versions of that node (the committed one
@@ -16,7 +16,7 @@ version, and ``-1`` restores the old unbounded behaviour). :meth:`gc` applies
 the same policy to the whole store and additionally removes fragment
 directories no live node id addresses any more.
 
-**Ordering (Wave 18).** ``order`` is assigned 0..n *per file*, so a global sort
+**Ordering.** ``order`` is assigned 0..n *per file*, so a global sort
 on ``order`` alone interleaved every file's node 0, then every file's node 1 —
 harmless for reconstruction, which filters by file first, but it presented the
 planner's inventory prompt shuffled. Listings sort by ``(file_path, order)`` and
@@ -89,7 +89,7 @@ def _extract_indent(source: str) -> tuple[str, str]:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class FileSyncReport:
-    """What :meth:`NodeStore.sync_file` changed for one file. Wave 19.
+    """What :meth:`NodeStore.sync_file` changed for one file.
 
     Reconciliation is the one startup step that can silently discard a human's
     work, so it says what it did rather than returning a bare id list: an
@@ -118,7 +118,7 @@ class FileSyncReport:
 class NodeStamp:
     """What a reader saw of a node: its committed version and a content digest.
 
-    Wave 20's read sets compare these, and the digest — not the version — is
+    Read sets compare these, and the digest — not the version — is
     what decides "did this node change?". Versions are not a safe identity on
     their own: a node that is uncommitted, or retired and then re-created,
     starts again at version 1, so ``version == 1`` before and after can describe
@@ -137,7 +137,7 @@ def source_digest(source: str) -> str:
 
 @dataclasses.dataclass(slots=True)
 class _StoreSnapshot:
-    """Everything a transaction must be able to put back (Wave 19).
+    """Everything a transaction must be able to put back.
 
     Shallow copies of the three index dicts plus the generation counter. The
     per-node metadata dicts are copied one level down as well, because
@@ -258,9 +258,9 @@ class NodeStore:
 
         Containment **only** — ``mak_dir_name=None``. Whether an id names
         legitimate project source is a question for the planner and the
-        reconstructor, not for the store: the Wave 11 prune exists precisely to
-        remove the ``.mak/…`` nodes an older MAK ingested, and it cannot delete
-        what it cannot address.
+        reconstructor, not for the store: pruning of uningestable nodes exists
+        precisely to remove ``.mak/…`` nodes a store may hold from an older
+        ingestion, and it cannot delete what it cannot address.
         """
         check_node_id(str(node_id), mak_dir_name=None)
         relative = str(node_id).replace("::", "/")
@@ -331,7 +331,7 @@ class NodeStore:
         # here is what makes the whole store unreadable on the next run.
         write_text_atomic(meta_path, json.dumps(data, indent=2))
 
-    # -- what MAK last put on disk (Wave 19) -------------------------------
+    # -- what MAK last put on disk -----------------------------------------
 
     def _file_state_path(self) -> Path:
         return self._root / "file_state.json"
@@ -398,7 +398,7 @@ class NodeStore:
             value = self._file_state.get(file_path, {}).get("sha256")
             return value if isinstance(value, str) else None
 
-    # -- transactions (Wave 19) -------------------------------------------
+    # -- transactions -----------------------------------------------------
 
     def _snapshot(self) -> _StoreSnapshot:
         """Capture the in-memory index. Call under the lock."""
@@ -606,8 +606,8 @@ class NodeStore:
 
         Outside one, the metadata save is still this method's own commit point,
         but it is no longer allowed to leave memory ahead of disk: a failure
-        there restores the entries this call changed before re-raising. That
-        window is the third of Wave 19's confirmed 19.1 failure modes.
+        there restores the entries this call changed before re-raising, so an
+        interrupted save can never leave the in-memory store ahead of disk.
         """
         with self._lock:
             if node_id not in self._pending:
@@ -663,8 +663,8 @@ class NodeStore:
 
         In-memory *and* on disk. Dropping only the former left every superseded
         fragment's version directory under ``.mak/node_store/`` forever, with
-        nothing left in the store that could ever address it again — the second
-        half of Wave 18's node-store growth finding. Removal is best-effort: a
+        nothing left in the store that could ever address it again, and the
+        store would grow without bound. Removal is best-effort: a
         directory that will not delete is a disk-hygiene problem, never a reason
         to fail the commit that supersedes it.
 
@@ -735,7 +735,7 @@ class NodeStore:
             return previous
 
     def retire_node(self, node_id: NodeId) -> bool:
-        """Retire a node whose symbol no longer exists in the source. Wave 19.
+        """Retire a node whose symbol no longer exists in the source.
 
         Deleting a symbol is not the same operation as never having ingested it.
         :meth:`remove_node` is the maintenance hard delete — it destroys the
@@ -915,7 +915,7 @@ class NodeStore:
         """Delete a node outright: committed and pending state, metadata, files.
 
         Returns whether anything was removed. This is a *maintenance* operation
-        (the Wave 11 prune of nodes that should never have been ingested), not
+        (pruning nodes that should never have been ingested), not
         part of the edit path — an ordinary rejected edit is rolled back or
         reverted, never removed. On-disk versions are deleted only when the
         fragment directory really lies inside the store root.
@@ -966,7 +966,7 @@ class NodeStore:
         return self.sync_file(file_path, source).live
 
     def sync_file(self, file_path: str, source: str | None) -> FileSyncReport:
-        r"""Make the store's picture of ``file_path`` match ``source``. Wave 19.
+        r"""Make the store's picture of ``file_path`` match ``source``.
 
         Re-ingestion used to be write-only and version-blind: it wrote whatever
         fragments the current source produced, never removed a symbol that had

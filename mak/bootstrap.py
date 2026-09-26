@@ -243,9 +243,9 @@ def agents_from_specs(
     never be taken by a user endpoint, so a prefix has exactly one meaning.
 
     Several models on one endpoint, and several endpoints on one transport, are
-    both legal — uniqueness is by **agent id**, not by provider. That is the
-    restriction Wave 22 removes: the registry used to be keyed by adapter type,
-    so a second OpenAI-compatible entry silently replaced the first.
+    both legal — uniqueness is by **agent id**, not by provider. Keying the
+    registry by adapter type instead would let a second OpenAI-compatible entry
+    silently replace the first.
 
     ``env`` is the environment an ``ollama:``/``local:`` spec without a URL
     reads its default endpoint from (default: the process environment);
@@ -496,8 +496,8 @@ def seed_capabilities(
 
     Called once, before the first dispatch, so a capability the endpoint has
     *already published* is honored without paying a rejected request to
-    rediscover it. The incident that motivated Wave 24 cost one failed provider
-    call per task for a fact that was sitting in OpenRouter's
+    rediscover it. Without it, each task can cost one failed provider
+    call for a fact that was sitting in OpenRouter's
     ``/models`` response the whole time.
 
     Only the reported parameter set is seeded — never a mode. Choosing the rung
@@ -620,6 +620,23 @@ def validate_config(config: MakConfig) -> None:
         )
     for agent in legacy:
         _check_local_options(agent)
+    _check_adjudicator(config)
+
+
+def _check_adjudicator(config: MakConfig) -> None:
+    """Refuse an adjudicator the stale-read policy would never consult.
+
+    The adjudicator is only asked about the stale reads ``revalidate`` cannot
+    settle; every other policy decides without it. Configuring one there would
+    look like a safety net that does nothing, so it is rejected at startup.
+    """
+    semantic = config.semantic
+    if semantic.adjudicator is not None and semantic.stale_read != "revalidate":
+        raise ConfigError(
+            f"semantic.adjudicator is set but semantic.stale_read is "
+            f"'{semantic.stale_read}', which never consults it; use "
+            "stale_read: revalidate, or turn the adjudicator off"
+        )
 
 
 def default_agent_id(config: MakConfig) -> str:

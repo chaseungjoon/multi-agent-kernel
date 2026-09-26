@@ -1,4 +1,4 @@
-"""Classify a stale read and decide what the commit does about it (Wave 20, D1).
+"""Classify a stale read and decide what the commit does about it.
 
 A *stale read* is a node a task's bundle carried that someone else committed
 while the task was in flight (see :mod:`mak.semantic.read_set`). Most are

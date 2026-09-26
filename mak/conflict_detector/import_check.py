@@ -12,7 +12,7 @@ additions can collide. Two failure modes matter:
 A binding bound to the same target by the same agent more than once is collapsed;
 only cross-agent (or cross-statement) interactions are reported.
 
-Two things the check deliberately does *not* call a conflict (Wave 11 audit):
+Two things the check deliberately does *not* call a conflict:
 
 - **One edit binding a name to several targets.** That is the conditional-import
   idiom (``try: import ujson as json`` / ``except ImportError: import json``, or

@@ -1,4 +1,4 @@
-"""What a node's interface *is*, binding by binding (Wave 20).
+"""What a node's interface *is*, binding by binding.
 
 ``api_fingerprint`` answers "is this source's interface text identical?" — a
 fine identity for a node, and too blunt a question for enforcement. Adding a

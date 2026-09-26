@@ -1,0 +1,949 @@
+{
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 9,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "dispatches": 18.0,
+     "redispatches": 0.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 18.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ]
+  ],
+  "t-a-f0-0": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "alpha.py::function::f0"
+     ],
+     "task_id": "t-a-f0-0",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "alpha.py::function::f0"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "alpha.py::function::f0"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-a-f0-0",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-a-f0-0"
+    }
+   ]
+  ],
+  "t-a-f0-1": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "alpha.py::function::f0"
+     ],
+     "task_id": "t-a-f0-1",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "alpha.py::function::f0"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "alpha.py::function::f0"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-a-f0-1",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-a-f0-1"
+    }
+   ]
+  ],
+  "t-a-f1-0": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "alpha.py::function::f1"
+     ],
+     "task_id": "t-a-f1-0",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "alpha.py::function::f1"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "alpha.py::function::f1"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-a-f1-0",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-a-f1-0"
+    }
+   ]
+  ],
+  "t-a-f1-1": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "alpha.py::function::f1"
+     ],
+     "task_id": "t-a-f1-1",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "alpha.py::function::f1"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "alpha.py::function::f1"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-a-f1-1",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-a-f1-1"
+    }
+   ]
+  ],
+  "t-a-f2-0": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "alpha.py::function::f2"
+     ],
+     "task_id": "t-a-f2-0",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "alpha.py::function::f2"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "alpha.py::function::f2"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-a-f2-0",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-a-f2-0"
+    }
+   ]
+  ],
+  "t-a-f2-1": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "alpha.py::function::f2"
+     ],
+     "task_id": "t-a-f2-1",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "alpha.py::function::f2"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "alpha.py::function::f2"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-a-f2-1",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-a-f2-1"
+    }
+   ]
+  ],
+  "t-b-f0-0": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "beta.py::function::f0"
+     ],
+     "task_id": "t-b-f0-0",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "beta.py::function::f0"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "beta.py::function::f0"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-b-f0-0",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-b-f0-0"
+    }
+   ]
+  ],
+  "t-b-f0-1": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "beta.py::function::f0"
+     ],
+     "task_id": "t-b-f0-1",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "beta.py::function::f0"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "beta.py::function::f0"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-b-f0-1",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-b-f0-1"
+    }
+   ]
+  ],
+  "t-b-f1-0": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "beta.py::function::f1"
+     ],
+     "task_id": "t-b-f1-0",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "beta.py::function::f1"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "beta.py::function::f1"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-b-f1-0",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-b-f1-0"
+    }
+   ]
+  ],
+  "t-b-f1-1": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "beta.py::function::f1"
+     ],
+     "task_id": "t-b-f1-1",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "beta.py::function::f1"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "beta.py::function::f1"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-b-f1-1",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-b-f1-1"
+    }
+   ]
+  ],
+  "t-b-f2-0": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "beta.py::function::f2"
+     ],
+     "task_id": "t-b-f2-0",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "beta.py::function::f2"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "beta.py::function::f2"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-b-f2-0",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-b-f2-0"
+    }
+   ]
+  ],
+  "t-b-f2-1": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "beta.py::function::f2"
+     ],
+     "task_id": "t-b-f2-1",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "beta.py::function::f2"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "beta.py::function::f2"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-b-f2-1",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-b-f2-1"
+    }
+   ]
+  ],
+  "t-g-f0-0": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "gamma.py::function::f0"
+     ],
+     "task_id": "t-g-f0-0",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "gamma.py::function::f0"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "gamma.py::function::f0"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-g-f0-0",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-g-f0-0"
+    }
+   ]
+  ],
+  "t-g-f0-1": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "gamma.py::function::f0"
+     ],
+     "task_id": "t-g-f0-1",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "gamma.py::function::f0"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "gamma.py::function::f0"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-g-f0-1",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-g-f0-1"
+    }
+   ]
+  ],
+  "t-g-f1-0": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "gamma.py::function::f1"
+     ],
+     "task_id": "t-g-f1-0",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "gamma.py::function::f1"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "gamma.py::function::f1"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-g-f1-0",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-g-f1-0"
+    }
+   ]
+  ],
+  "t-g-f1-1": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "gamma.py::function::f1"
+     ],
+     "task_id": "t-g-f1-1",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "gamma.py::function::f1"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "gamma.py::function::f1"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-g-f1-1",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-g-f1-1"
+    }
+   ]
+  ],
+  "t-g-f2-0": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "gamma.py::function::f2"
+     ],
+     "task_id": "t-g-f2-0",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "gamma.py::function::f2"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "gamma.py::function::f2"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-g-f2-0",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-g-f2-0"
+    }
+   ]
+  ],
+  "t-g-f2-1": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "read_apis": 0,
+     "starved": false,
+     "targets": [
+      "gamma.py::function::f2"
+     ],
+     "task_id": "t-g-f2-1",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "gamma.py::function::f2"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "gamma.py::function::f2"
+     ],
+     "source_lengths": {},
+     "stop_reason": null,
+     "success": true,
+     "task_id": "t-g-f2-1",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "t-g-f2-1"
+    }
+   ]
+  ]
+ },
+ "result": {
+  "blocked": [],
+  "completed": [
+   "t-a-f0-0",
+   "t-a-f0-1",
+   "t-a-f1-0",
+   "t-a-f1-1",
+   "t-a-f2-0",
+   "t-a-f2-1",
+   "t-b-f0-0",
+   "t-b-f0-1",
+   "t-b-f1-0",
+   "t-b-f1-1",
+   "t-b-f2-0",
+   "t-b-f2-1",
+   "t-g-f0-0",
+   "t-g-f0-1",
+   "t-g-f1-0",
+   "t-g-f1-1",
+   "t-g-f2-0",
+   "t-g-f2-1"
+  ],
+  "failed": [],
+  "failure_reasons": {},
+  "metrics": {
+   "adjudicated_accepts": 0.0,
+   "conflict_rejections": 0.0,
+   "dispatches": 18.0,
+   "redispatches": 0.0,
+   "stale_redispatches": 0.0,
+   "starved_dispatches": 0.0,
+   "tasks_completed": 18.0,
+   "tasks_failed": 0.0,
+   "tasks_noop": 0.0
+  },
+  "noop": [],
+  "skipped": [],
+  "state": "completed",
+  "stopped_reason": null
+ }
+}

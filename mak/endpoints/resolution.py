@@ -158,8 +158,8 @@ class ResolvedAgentConfig:
 
     ``id`` is the routing key — registry, scheduler, pool caps, planner choice,
     logs and git metadata all use it. ``adapter_type`` only selects which class
-    to construct, and two agents may legitimately share it. Separating the two
-    is the whole of Wave 22's structural change.
+    to construct, and two agents may legitimately share it. Keeping the two
+    apart is what lets several endpoints share one transport.
 
     ``endpoint`` is ``None`` only for the CLI wrapper adapters (``claude_code``,
     ``codex``, ``copilot``), which drive a local binary and have no URL,

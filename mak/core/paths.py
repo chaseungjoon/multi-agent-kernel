@@ -7,8 +7,9 @@ roots:
 
 - ``NodeStore._fragment_dir`` joins the id (``::`` → ``/``) to the store root and
   writes ``v<n>.py`` under it;
-- ``Session._reconstruct_affected`` joins the id's file component to the work dir
-  and writes the reconstructed file there.
+- ``mak.session.workspace.Workspace.safe_output_path`` joins the id's file
+  component to the work dir, and the commit path writes the reconstructed file
+  there.
 
 Neither join is safe on its own. ``Path("/work") / "/etc/x.py"`` is ``/etc/x.py``
 — an absolute component discards everything before it — and ``..`` walks out of
@@ -90,8 +91,8 @@ def unsafe_node_id_reason(
     questions. *Containment* ("does this escape its root?") is a property of the
     path and holds everywhere. *"Is this project source?"* is a policy about what
     may be planned and reconstructed, and the node store must not enforce it —
-    the Wave 11 prune has to address the ``.mak/…`` nodes an older MAK ingested
-    in order to delete them, and a store that refuses to name them can never
+    pruning has to address any ``.mak/…`` nodes a store picked up from an older
+    ingestion in order to delete them, and a store that refuses to name them can never
     clean them up.
     """
     if not node_id or not node_id.strip():

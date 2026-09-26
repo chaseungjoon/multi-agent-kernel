@@ -95,8 +95,8 @@ def _resolve_one(
 def _legacy_id(agent: AgentConfig) -> str:
     """Return the routing id for a type-based entry.
 
-    Unset, it is the type itself — which is precisely the key the registry used
-    before Wave 22, so every pre-existing config routes exactly as it did.
+    Unset, it is the type itself — the key a legacy roster has always routed
+    on, so every pre-existing config routes exactly as it did.
     """
     return validate_agent_id(agent.id) if agent.id else agent.type
 

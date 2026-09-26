@@ -1,10 +1,10 @@
 """Install a wave's output files as one all-or-nothing step.
 
-``_reconstruct_affected`` used to render and write each affected file in turn
-with ``Path.write_text``. Two things follow from that which Wave 19 had to end.
-The first is partial installation: a task touching two files could write the
-first, fail rendering the second, and leave disk holding half a change whose
-store commits were then reverted. The second is that ``write_text`` truncates
+Rendering and writing each affected file in turn with ``Path.write_text`` has
+two failure modes this module exists to rule out. The first is partial
+installation: a task touching two files could write the first, fail rendering
+the second, and leave disk holding half a change whose store commits were then
+reverted. The second is that ``write_text`` truncates
 before it writes, so an interruption did not merely fail to update a file — it
 destroyed the version that was there.
 

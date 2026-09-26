@@ -6,7 +6,7 @@ deliberately shallow static check: it extracts each definition's parameter shape
 parses the call expressions, and compares arity and keyword-argument names. It is
 not a type checker — argument *types* are never inspected.
 
-**Precision over recall (Wave 11).** A false conflict costs a whole task and its
+**Precision over recall.** A false conflict costs a whole task and its
 dependent subtree; a missed conflict costs nothing the test suite would not also
 catch. Three rules keep the check from judging what it cannot know:
 

@@ -98,8 +98,9 @@ def _entry_for(
         max_output=facts.max_output,
         source="api",
         # Carried through verbatim, including the unknown/empty distinction:
-        # this is the fact that lets Wave 24 refuse a request the model has
-        # already said it cannot serve, instead of learning it by being refused.
+        # this is the fact that lets capability negotiation skip a request the
+        # model has already said it cannot serve, instead of learning it by
+        # being refused.
         supported_parameters=facts.supported_parameters,
         # A model from a third-party catalog has not been assessed by anyone,
         # and the neutral judgment defaults must not read as an endorsement.

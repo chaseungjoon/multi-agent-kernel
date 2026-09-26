@@ -1,0 +1,227 @@
+{
+ "calls": 2,
+ "events": {
+  "_session": [
+   [
+    "session_started",
+    {
+     "node_count": 2,
+     "pruned_nodes": 0
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "phase_span",
+    {
+     "phase": "validate_commit_reconstruct"
+    }
+   ],
+   [
+    "plan_metrics",
+    {
+     "adjudicated_accepts": 0.0,
+     "conflict_rejections": 0.0,
+     "context_bytes_total": 68.0,
+     "dispatches": 2.0,
+     "mean_context_bytes": 34.0,
+     "redispatches": 0.0,
+     "stale_reads": 0.0,
+     "stale_redispatches": 0.0,
+     "starved_dispatches": 0.0,
+     "tasks_completed": 2.0,
+     "tasks_failed": 0.0,
+     "tasks_noop": 0.0
+    }
+   ],
+   [
+    "conflict_detected",
+    {
+     "defining_file": "app/notify.py",
+     "file": "app/jobs.py",
+     "kind": "signature_mismatch",
+     "reasons": [
+      "'app/jobs.py' calls 'send' from 'app/notify.py': missing required argument 'channel' for 'send'"
+     ]
+    }
+   ]
+  ],
+  "a": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 40,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "write_targets": {
+       "bytes": 40,
+       "count": 1,
+       "nodes": [
+        "app/notify.py::function::send"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 0,
+     "starved": false,
+     "targets": [
+      "app/notify.py::function::send"
+     ],
+     "task_id": "a",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/notify.py::function::send"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/notify.py::function::send"
+     ],
+     "source_lengths": {
+      "app/notify.py::function::send": 54
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "a",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "a"
+    }
+   ]
+  ],
+  "b": [
+   [
+    "task_dispatched",
+    {
+     "attempt": 1,
+     "context_bytes": 28,
+     "cross_file_dropped": 0,
+     "depends_on": [],
+     "layers": {
+      "contract": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "cross_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "dependency_output": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "planner_context": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "same_file": {
+       "bytes": 0,
+       "count": 0,
+       "nodes": []
+      },
+      "write_targets": {
+       "bytes": 28,
+       "count": 1,
+       "nodes": [
+        "app/jobs.py::function::nightly"
+       ]
+      }
+     },
+     "read_apis": 0,
+     "read_sources": 0,
+     "starved": false,
+     "targets": [
+      "app/jobs.py::function::nightly"
+     ],
+     "task_id": "b",
+     "write_sources": 1
+    }
+   ],
+   [
+    "agent_result",
+    {
+     "attempt": 1,
+     "error": null,
+     "granted": [
+      "app/jobs.py::function::nightly"
+     ],
+     "no_changes_required": false,
+     "repairs": 0,
+     "returned_nodes": [
+      "app/jobs.py::function::nightly"
+     ],
+     "source_lengths": {
+      "app/jobs.py::function::nightly": 74
+     },
+     "stop_reason": null,
+     "success": true,
+     "task_id": "b",
+     "usage": {}
+    }
+   ],
+   [
+    "task_completed",
+    {
+     "task_id": "b"
+    }
+   ]
+  ]
+ },
+ "files": {
+  "app/__init__.py": "",
+  "app/jobs.py": "def nightly():\n    from app.notify import send\n\n    return send(\"report\")\n",
+  "app/notify.py": "def send(msg, channel):\n    return f\"{channel}:{msg}\"\n"
+ },
+ "fixups": 1,
+ "mechanisms": [
+  "wave_end"
+ ],
+ "outcome": "detected (wave end)",
+ "resolved": false
+}

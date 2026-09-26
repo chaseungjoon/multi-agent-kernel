@@ -1,4 +1,4 @@
-"""Symbol tables and symbol-level diffs of Python sources (Wave 20).
+"""Symbol tables and symbol-level diffs of Python sources.
 
 Post-wave analysis used to work on *node ids*: "which nodes were committed,
 and did their first function's signature change?". That misses every change

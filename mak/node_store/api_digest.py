@@ -3,10 +3,10 @@
 A task that depends on another task's output usually needs that output's *API*,
 not its implementation — a test writer needs to know that ``pick_banner(width,
 height)`` exists and what it returns, not how it draws. The digest is what
-``Session._enrich_bundle`` attaches when a dependency's full source would exceed
-the bundle's context budget: degrading to the API keeps the dependent task
-informed at a fraction of the tokens, where dropping the entry is what left agents
-inventing signatures for code they could not see.
+``mak.session.dispatch.DispatchEnricher`` attaches when a dependency's full
+source would exceed the bundle's context budget: degrading to the API keeps
+the dependent task informed at a fraction of the tokens, where dropping the
+entry would leave agents inventing signatures for code they could not see.
 
 Only public names are emitted. A leading underscore means "not part of the
 contract", with the dunder exception (``__init__`` is very much part of it).
@@ -93,7 +93,7 @@ def _bindings(stmt: ast.stmt) -> list[tuple[str, str]]:
     return []
 
 
-# -- the interface fingerprint (Wave 20) ------------------------------------
+# -- the interface fingerprint ----------------------------------------------
 #
 # ``public_api_digest`` answers "what should a dependent be *shown*?" and so
 # hides private names. ``api_fingerprint`` answers a different question — "did

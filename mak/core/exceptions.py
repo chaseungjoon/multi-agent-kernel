@@ -188,7 +188,7 @@ class ConfigError(MakError):
 
 
 class SemanticGateError(MakError):
-    """Raised when an optional semantic gate cannot run (Wave 20).
+    """Raised when an optional semantic gate cannot run.
 
     A gate is an *extra* check a project opts into — a type checker, the
     impacted tests, an import smoke run, an LLM adjudicator. Its infrastructure
@@ -199,7 +199,7 @@ class SemanticGateError(MakError):
 
 
 class ContractError(MakError):
-    """Raised when a declared API contract cannot be parsed (Wave 20).
+    """Raised when a declared API contract cannot be parsed.
 
     A contract is the planner's promise of a signature (``def f(a: int) -> R``).
     One that does not parse as a Python signature is not a contract anyone can

@@ -34,10 +34,9 @@ def run_setup(state: CliState, console: Console, *, editing: bool = False) -> bo
     ``editing=True`` (what ``/apikey`` passes) goes straight to the key wizard;
     it is the "change my keys" path and has nothing to ask about mode.
 
-    A first run asks the question first, because until Wave 15 it could not: the
-    app opened straight into three API-key prompts and hard-errored when none
-    was given, so a fully-offline user could not reach the prompt at all. Setup
-    can now end successfully with **zero** keys.
+    A first run asks the question first, before any API-key prompt, so a
+    fully-offline user can reach it at all: setup can end successfully with
+    **zero** keys.
 
     Returns whether the session is usable afterwards.
     """

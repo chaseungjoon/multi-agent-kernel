@@ -4,7 +4,7 @@
 the kernel owns one registry and passes it explicitly, so tests and concurrent
 sessions never share a hidden dict.
 
-**Keyed by agent id, not adapter type (Wave 22).** The key used to be the agent
+**Keyed by agent id, not adapter type.** The key used to be the agent
 *type*, which meant a roster naming two OpenAI-compatible endpoints — cloud
 OpenAI and NVIDIA, say — registered both under ``openai_api`` and the second
 silently replaced the first. One of the two endpoints simply never ran, and

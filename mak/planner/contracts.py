@@ -2,7 +2,7 @@
 
 A contract is the planner's statement of the signature a task will give a node —
 ``"def get_user(uid: int) -> User | None"`` — written *before* the code exists.
-It does two jobs (Wave 20, P3):
+It does two jobs:
 
 - **Dependents build against it.** It is shipped to them as a fixed interface
   (layer 0 of the bundle) and used as the signature authority when their calls

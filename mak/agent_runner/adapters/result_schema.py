@@ -4,8 +4,8 @@ Every structured-output backend has to describe the same contract — the five
 ``TaskResult`` keys an agent may return — and every one of them spells it
 slightly differently. Before this module the schema was written out twice
 verbatim (Anthropic's ``input_schema``, Gemini's ``parameters``), differing only
-in how a nullable ``error`` is expressed. Wave 15 needs two more copies for the
-local transports, and four hand-maintained copies of one contract is where a
+in how a nullable ``error`` is expressed. The local transports need two more
+copies, and four hand-maintained copies of one contract is where a
 contract drifts: a field description improved in one place and not the other
 teaches two different things to two models.
 

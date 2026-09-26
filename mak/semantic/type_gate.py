@@ -1,4 +1,4 @@
-"""Diff a type checker's diagnostics against a baseline (Wave 20, D3).
+"""Diff a type checker's diagnostics against a baseline.
 
 Most codebases were never type-clean, so "the type checker reports errors" says
 nothing about a wave. What does is a diagnostic that was *not there before*: a

@@ -1,4 +1,4 @@
-"""Duplicate keys in a registrar function (Wave 20, shape 6).
+"""Duplicate keys in a registrar function.
 
 Two tasks each add ``register("/users", …)`` to a shared table. Node locks
 serialize them correctly and both lines land — and the second registration

@@ -1,4 +1,4 @@
-"""Semantic-conflict machinery (Wave 20).
+"""Semantic-conflict machinery.
 
 Node write locks guarantee no two agents write the same AST node at once. They
 say nothing about two edits on *different* nodes that are each correct and wrong

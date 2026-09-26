@@ -89,7 +89,7 @@ class Scheduler:
         self._dispatched: set[str] = set()
         self.ready_queue: list[SubTask] = list(dag.newly_unblocked())
         # Session-owned state that must survive a crash alongside the DAG — the
-        # per-task read sets (Wave 20). Opaque to the scheduler: it only
+        # per-task read sets. Opaque to the scheduler: it only
         # persists and restores it, so recovery never needs a second file that
         # could disagree with this one about which tasks exist.
         self.annotations: dict[str, object] = {}
@@ -120,7 +120,7 @@ class Scheduler:
         Under the legacy policy this is WRITE on each target and READ on each
         ``context_node``, so a concurrent task cannot be rewriting a node this
         one reads as context; a node that is both is requested WRITE only. The
-        Wave 20 flags add interface, intention and registry-key resources.
+        semantic lock flags add interface, intention and registry-key resources.
         """
         return lock_requests(task, self._lock_policy)
 

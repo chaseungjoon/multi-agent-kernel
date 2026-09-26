@@ -1,4 +1,4 @@
-"""Which lock resources a task needs, in which modes (Wave 20).
+"""Which lock resources a task needs, in which modes.
 
 One function answers this for everyone who needs to know: the scheduler, which
 acquires the set atomically before dispatch; the session, which re-validates at

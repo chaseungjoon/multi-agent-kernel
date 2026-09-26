@@ -4,7 +4,7 @@ Like the Anthropic adapter, this talks to the API directly and forces structured
 output. The model is instructed to emit exactly the ``TaskResult`` field set,
 which is then decoded through MAK's wire protocol — no stdout scraping.
 
-**One class, any number of endpoints (Wave 22).** Cloud OpenAI, NVIDIA Build,
+**One class, any number of endpoints.** Cloud OpenAI, NVIDIA Build,
 OpenRouter, DeepSeek, Z.ai, vLLM, llama.cpp, LM Studio and Ollama's compat layer
 all speak this wire format, so they differ only in a URL, a credential, and
 which capability rungs they support — never in code. The registry keys on agent
@@ -135,7 +135,7 @@ _SYSTEM_PROMPT = (
 def _is_format_rejection(exc: Exception) -> bool:
     """Whether an SDK error is verifiably "I do not support that reply format".
 
-    Kept as a module-level function because Wave 22's suite and third-party
+    Kept as a module-level function because the test suite and third-party
     code both call it. The judgment itself now lives in
     ``mak.endpoints.error_classification``, which parses the provider's
     structured error body instead of grepping ``str(exc)`` for a tuple of
@@ -525,8 +525,9 @@ class OpenAiCompatibleAdapter(AgentAdapter):
     def _note_downgrade(self, mode: str) -> None:
         """Log a descent once per endpoint/model pair.
 
-        Retained as the name Wave 22 introduced; ``_note_rung`` supersedes it
-        and records *why* the rung was chosen as well as which it was.
+        Retained under its original name for existing callers; ``_note_rung``
+        supersedes it and records *why* the rung was chosen as well as which
+        it was.
         """
         self._note_rung(mode, "runtime_rejection")
 
@@ -731,7 +732,8 @@ def _follow_up(messages: Messages, raw_text: str, instruction: str) -> Messages:
     ]
 
 
-# The name this class carried before Wave 22 generalized it past "the OpenAI
-# adapter". Kept so existing imports — including the composition root's adapter
-# table and third-party code — keep working.
+# The name this class carried while it served only OpenAI itself, before it
+# generalized to every OpenAI-compatible endpoint. Kept so existing imports —
+# including the composition root's adapter table and third-party code — keep
+# working.
 OpenAiApiAdapter = OpenAiCompatibleAdapter

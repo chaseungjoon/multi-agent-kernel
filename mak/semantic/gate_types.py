@@ -1,4 +1,4 @@
-"""What every optional semantic gate consumes and produces (Wave 20, D3-D7)."""
+"""What every optional semantic gate consumes and produces."""
 
 from __future__ import annotations
 

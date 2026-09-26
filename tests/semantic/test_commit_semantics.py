@@ -72,7 +72,7 @@ class TestReadSets:
         session.initialize()
         session.install_plan([task("b", [SHOW], context=["ghost.py::function::g"])])
         assert session.run().ok
-        read_set = session._read_sets["b"]
+        read_set = session.wave.read_sets["b"]
         assert read_set[NodeId(SHOW)].layer == "write_targets"
         assert read_set[NodeId(LOAD)].layer == "same_file"
         assert read_set[NodeId("caller.py::function::use")].layer == "cross_file"
