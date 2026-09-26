@@ -41,8 +41,8 @@
    [
     "gate_finding",
     {
-     "detail": "test '::test_unknown_user_does_not_exist' passed before this wave and fails now; it passes with task a alone and with task b alone, and fails with both \u2014 a semantic conflict between them",
-     "file": "",
+     "detail": "test 'tests.test_exists::test_unknown_user_does_not_exist' passed before this wave and fails now; it passes with task a alone and with task b alone, and fails with both \u2014 a semantic conflict between them",
+     "file": "tests.test_exists",
      "gate": "impact_tests",
      "tasks": [
       "a",

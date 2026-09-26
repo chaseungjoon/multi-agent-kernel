@@ -40,7 +40,10 @@ def overlay(
     exit, whatever happens inside the block.
     """
     with tempfile.TemporaryDirectory(prefix="mak-overlay-") as tmp:
-        root = Path(tmp) / "project"
+        # Resolved so subprocesses see the same path they get from getcwd():
+        # macOS temp dirs sit behind the /var -> /private/var symlink, and
+        # pytest leaves junit classnames empty when --rootdir disagrees.
+        root = Path(tmp).resolve() / "project"
         shutil.copytree(
             work_dir,
             root,
