@@ -8,16 +8,16 @@ The planned work for MAK, in priority order.
 
 | Wave | Title | Review items | Depends on | Branch |
 |:-:|---|---|---|---|
-| [**7**](#wave-7--retrieval-based-graph-aware-planner) | Retrieval-based, graph-aware planner | S2, B2 | 27 recommended | `feat/7-planner-retrieval` |
-| [**28**](#wave-28--write-sets-that-can-grow-safely) | Write sets that can grow safely | S3, B3, Q4 (headers) | 27 | `feat/28-growable-write-sets` |
-| [**29**](#wave-29--agents-that-can-look-and-test) | Agents that can look and test | S4, B4, Q5 | 27, 28 | `feat/29-agent-tools` |
-| [**30**](#wave-30--respect-the-users-repository) | Respect the user's repository | S5, S9, S10, S16 (clean tree), B5, B10, B11 | 27 recommended | `feat/30-repository-respect` |
+| [**7**](#wave-7--retrieval-based-graph-aware-planner) | Retrieval-based, graph-aware planner | S2, B2 | - | `feat/7-planner-retrieval` |
+| [**28**](#wave-28--write-sets-that-can-grow-safely) | Write sets that can grow safely | S3, B3, Q4 (headers) | - | `feat/28-growable-write-sets` |
+| [**29**](#wave-29--agents-that-can-look-and-test) | Agents that can look and test | S4, B4, Q5 | 28 | `feat/29-agent-tools` |
+| [**30**](#wave-30--respect-the-users-repository) | Respect the user's repository | S5, S9, S10, S16 (clean tree), B5, B10, B11 | - | `feat/30-repository-respect` |
 | [**R**](#wave-r--first-public-release) | First public release | S16 (spend cap), Q6 | 30 | `feat/R-release-prep` |
-| [**31**](#wave-31--sqlite-state-store) | SQLite state store | S6, B6 | 27 | `feat/31-sqlite-state` |
-| [**32**](#wave-32--scheduler-fairness-and-plan-review-previews) | Scheduler fairness and plan-review previews | S8, S16 (previews), B9 | 27 | `feat/32-scheduler-fairness` |
+| [**31**](#wave-31--sqlite-state-store) | SQLite state store | S6, B6 | - | `feat/31-sqlite-state` |
+| [**32**](#wave-32--scheduler-fairness-and-plan-review-previews) | Scheduler fairness and plan-review previews | S8, S16 (previews), B9 | - | `feat/32-scheduler-fairness` |
 | [**33**](#wave-33--evaluate-what-can-actually-fail) | Evaluate what can actually fail | S11, Q2 | 7, 28 (for meaningful numbers) | `feat/33-honest-evaluation` |
-| [**8**](#wave-8--language-boundary-and-structured-non-python-resources) | Language boundary and structured non-Python resources | S12, Q3, Q12 | 27, 30 | `feat/8-language-boundary` |
-| [**34**](#wave-34--the-kernel-as-a-coordination-service-library--mcp) | The kernel as a coordination service (library + MCP) | S15, Q1 | 27, 28 | `feat/34-kernel-service` |
+| [**8**](#wave-8--language-boundary-and-structured-non-python-resources) | Language boundary and structured non-Python resources | S12, Q3, Q12 | 30 | `feat/8-language-boundary` |
+| [**34**](#wave-34--the-kernel-as-a-coordination-service-library--mcp) | The kernel as a coordination service (library + MCP) | S15, Q1 | 28 | `feat/34-kernel-service` |
 
 
 ---
