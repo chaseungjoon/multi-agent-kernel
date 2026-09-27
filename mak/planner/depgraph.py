@@ -330,10 +330,29 @@ def build_dep_graph(sources: Mapping[NodeId, str]) -> DepGraph:
     return _DepGraphBuilder(sources).build()
 
 
-def dep_graph_from_store(node_store: NodeStore) -> DepGraph:
-    """Build a :class:`DepGraph` from the node store's committed inventory."""
-    sources = {
+def store_sources(node_store: NodeStore) -> dict[NodeId, str]:
+    """Return ``{node_id: source}`` for the store's committed inventory."""
+    return {
         node_id: node_store.get_node(node_id).source
         for node_id in node_store.list_nodes()
     }
-    return build_dep_graph(sources)
+
+
+def dep_graph_from_store(node_store: NodeStore) -> DepGraph:
+    """Build a :class:`DepGraph` from the node store's committed inventory."""
+    return build_dep_graph(store_sources(node_store))
+
+
+def referrers(graph: DepGraph) -> dict[NodeId, frozenset[NodeId]]:
+    """Invert ``graph.references``: each node → the nodes that reference it.
+
+    "Who calls X" otherwise means scanning every entry. Like the graph itself
+    this is a **lower bound**: calls through ``self`` or an instance, dynamic
+    dispatch and callbacks give no edge, so a node absent here may still have
+    callers.
+    """
+    inverted: dict[NodeId, set[NodeId]] = {}
+    for source, targets in graph.references.items():
+        for target in targets:
+            inverted.setdefault(target, set()).add(source)
+    return {node: frozenset(sources) for node, sources in inverted.items()}

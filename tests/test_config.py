@@ -370,8 +370,13 @@ class TestPlannerQualityConfig:
     def test_defaults(self) -> None:
         cfg = PlannerConfig()
         assert cfg.validate is True
-        assert cfg.strategy == "oneshot"
+        assert cfg.strategy == "auto"
         assert cfg.self_critique is False
+        assert cfg.inventory_token_budget == 12_000
+        assert cfg.max_expansions == 3
+        assert cfg.auto_caller_tasks is True
+        assert cfg.max_caller_tasks == 25
+        assert cfg.prompt_cache is True
 
     def test_parsed_from_yaml(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yaml"
@@ -386,6 +391,57 @@ class TestPlannerQualityConfig:
         assert cfg.planner.validate is False
         assert cfg.planner.strategy == "outline"
         assert cfg.planner.self_critique is True
+
+    def test_wave7_keys_are_parsed(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "planner:\n"
+            "  strategy: retrieval\n"
+            "  inventory_token_budget: 8000\n"
+            "  max_expansions: 0\n"
+            "  auto_caller_tasks: false\n"
+            "  max_caller_tasks: 5\n"
+            "  prompt_cache: false\n"
+            "agents:\n  - type: anthropic_api\n"
+        )
+        cfg = load_config(path).planner
+        assert cfg.strategy == "retrieval"
+        assert cfg.inventory_token_budget == 8000
+        assert cfg.max_expansions == 0
+        assert cfg.auto_caller_tasks is False
+        assert cfg.max_caller_tasks == 5
+        assert cfg.prompt_cache is False
+
+    @pytest.mark.parametrize("strategy", ["auto", "oneshot", "outline", "full"])
+    def test_every_strategy_is_accepted(self, tmp_path: Path, strategy: str) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            f"planner:\n  strategy: {strategy}\nagents:\n  - type: anthropic_api\n"
+        )
+        assert load_config(path).planner.strategy == strategy
+
+    @pytest.mark.parametrize(
+        ("line", "key"),
+        [
+            ("strategy: bogus", "strategy"),
+            ("inventory_token_budget: 1999", "inventory_token_budget"),
+            ("inventory_token_budget: 200001", "inventory_token_budget"),
+            ("inventory_token_budget: lots", "inventory_token_budget"),
+            ("max_expansions: -1", "max_expansions"),
+            ("max_expansions: 11", "max_expansions"),
+            ("max_expansions: true", "max_expansions"),
+            ("max_caller_tasks: 201", "max_caller_tasks"),
+            ("auto_caller_tasks: maybe", "auto_caller_tasks"),
+            ("prompt_cache: sometimes", "prompt_cache"),
+        ],
+    )
+    def test_a_bad_value_names_its_key(
+        self, tmp_path: Path, line: str, key: str
+    ) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(f"planner:\n  {line}\nagents:\n  - type: anthropic_api\n")
+        with pytest.raises(ConfigError, match=key):
+            load_config(path)
 
     def test_invalid_strategy_raises(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yaml"

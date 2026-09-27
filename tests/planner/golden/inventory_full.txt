@@ -1,0 +1,17 @@
+app/api/routes.py  (2 nodes)
+  ::module_header::__header__
+  ::function::total  @route def total(items)
+app/billing/rules.py  (2 nodes · used by 1 other file)
+  ::function::rounding  def rounding(value: float, digits: int=...) -> float  ← 2 refs · 2 files (this file, app/billing/service.py)
+  ::function::strict  def strict(value: float) -> float
+app/billing/service.py  (3 nodes · used by 1 other file)
+  ::module_header::__header__
+  ::function::invoice_total  def invoice_total(items: list[float]) -> Invoice  ← 2 refs · 2 files (app/api/routes.py, this file)
+  ::function::refresh  async def refresh(client, *, timeout: float=...) -> None
+app/models.py  (3 nodes · used by 1 other file)
+  ::module_header::__header__
+  ::class::Invoice  @dataclass class Invoice  ← 2 refs · 2 files (app/billing/service.py, this file)
+  ::method::Invoice.with_tax  def with_tax(self, rate: float=..., *, note: str=...) -> 'Invoice'
+tools/cli.py  (2 nodes)
+  ::module_header::__header__
+  ::function::main  def main() -> int

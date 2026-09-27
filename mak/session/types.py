@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from mak.core.types import LockEntry, LockMode, NodeId, SubTask
+from mak.planner.telemetry import NO_PLANNING, PlanningSummary
 from mak.planner.validation import PlanFinding
 
 # A test runner returns (passed, output) so teardown can gate the push.
@@ -159,7 +160,12 @@ class PlanProposal:
 
     ``subtasks`` is the plan after deterministic validation grounded and
     augmented it; ``findings`` says what validation changed.
+    ``proposed_task_ids`` are the caller-update tasks MAK added for the
+    signature changes the plan declares — a reviewer may drop them — and
+    ``planning`` is what producing the plan cost.
     """
 
     subtasks: list[SubTask]
     findings: list[PlanFinding]
+    proposed_task_ids: frozenset[str] = frozenset()
+    planning: PlanningSummary = NO_PLANNING

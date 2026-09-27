@@ -55,6 +55,16 @@ class TestPackagedExamples:
         for agent in config.agents:
             assert registry.get(agent.routing_id()) is not None
 
+    @pytest.mark.parametrize("name", ("local-ollama", "fully-local-offline"))
+    def test_the_ollama_examples_document_the_inventory_budget(
+        self, name: str
+    ) -> None:
+        # A local planner's window is the constraint the budget exists for.
+        assert "inventory_token_budget" in example_path(name).read_text()
+        planner = load_config(example_path(name)).planner
+        assert planner.strategy == "auto"
+        assert planner.inventory_token_budget == 12_000
+
     @pytest.mark.parametrize("name", _LOCAL_EXAMPLES)
     def test_the_local_examples_declare_a_local_agent_with_an_endpoint(
         self, name: str

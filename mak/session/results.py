@@ -70,6 +70,11 @@ def plan_metrics(wave: WaveState) -> dict[str, float]:
 
     ``adjudicated_accepts`` counts the stale reads the LLM adjudicator accepted:
     the only commit decisions in a wave that a model, not the kernel, made.
+
+    ``planner_*`` say what planning this wave cost — calls, rounds, input
+    tokens (cached ones included), the cached subset, and output tokens. A
+    wave the planner did not plan (a cascade wave, a directly installed plan)
+    reports zeros.
     """
     samples = wave.concurrency_samples
     mean = round(sum(samples) / len(samples), 2) if samples else 0.0
@@ -91,6 +96,7 @@ def plan_metrics(wave: WaveState) -> dict[str, float]:
         "stale_reads": float(wave.stale_reads),
         "stale_redispatches": float(wave.stale_redispatches),
         "adjudicated_accepts": float(wave.adjudicated_accepts),
+        **wave.planning.as_metrics(),
     }
 
 

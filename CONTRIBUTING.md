@@ -161,7 +161,8 @@ sequence as editable Mermaid sources with PNG exports.
 User: "Implement topological sort in the scheduler module."
 │
 ▼
-Planner (LLM call) → deterministic plan validation → (optional) human review
+Planner (LLM call over a bounded inventory view) → deterministic plan validation
+  + caller tasks → (optional) human review
   → SubTask A: implement TopologicalSorter.sort   [write: dag.py::function::...sort]
   → SubTask B: implement Scheduler.tick           [write: scheduler.py::...tick]
                                                   [read:  dag.py::...sort]  (depends on A)
@@ -219,7 +220,7 @@ The concurrency gate is `tests/test_concurrency_integration.py`.
 
 ## Current status
 
-MAK **0.9.4 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
+MAK **0.10.0 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
 endpoint support, local runtimes, and the interactive app are all implemented.
 
 | Gate | State |
@@ -236,7 +237,7 @@ endpoint support, local runtimes, and the interactive app are all implemented.
 | Scheduler | `mak/scheduler/` |
 | Structural conflict checks | `mak/conflict_detector/` |
 | Semantic conflicts (read sets, stale reads, contracts, cascade, gates) | `mak/semantic/` |
-| Planner, plan validation, human review | `mak/planner/` |
+| Planner (strategies, inventory view, retrieval, caller completion, telemetry), plan validation, human review | `mak/planner/` |
 | Agent runner, API/CLI/local adapters, sandbox | `mak/agent_runner/` |
 | OpenAI-compatible endpoints and capability negotiation | `mak/endpoints/` |
 | Model catalog | `mak/models/` |
@@ -247,8 +248,8 @@ endpoint support, local runtimes, and the interactive app are all implemented.
 | `mak run` / `mak` console script | `mak/__main__.py`, `cli/__main__.py` |
 | Interactive app | `cli/` |
 
-What is not done yet — packaging for a public release, planner token efficiency,
-multi-language support — is planned in [`TASKS.md`](TASKS.md).
+What is not done yet — packaging for a public release, growable write sets,
+agent tools, multi-language support — is planned in [`TASKS.md`](TASKS.md).
 
 ---
 
@@ -319,6 +320,11 @@ exist so a run is diagnosable without re-running it:
   lengths, error, `no_changes_required`, `stop_reason`, `usage`.
 - `SOURCE_DROPPED` — anything refused at staging, with the id and the grant.
 - `ACCEPTED_NOOP`, `TASK_COMPLETED`, `TASK_FAILED`, `AGENT_REMAPPED`.
+- `PLANNER_CALL` — one per planner LLM call, logged while planning runs: phase,
+  round, attempt, strategy, prompt and cacheable-prefix size, how much of the
+  inventory was shown or left out, token usage (cached input included) and
+  outcome (§9). Sizes and counts only, never prompt text; the first call of a plan
+  also carries `index_build_ms`.
 - `STALE_READ`, `API_ESCALATED`, `COMMIT_DEFERRED`, `GATE_FINDING`,
   `ADJUDICATION`, `CONFLICT_DETECTED`, `PLAN_VALIDATED`, `PLAN_METRICS`,
   `phase_span`.
@@ -1243,17 +1249,56 @@ to separate seed problems from negotiation problems.
 
 ## 9. Planner
 
-`mak/planner/` decomposes a task into a validated `SubTask` DAG.
+`mak/planner/` decomposes a task into a validated `SubTask` DAG. The planner is
+shown the node inventory — ids, shapes and callers, never source — within a
+token budget, and the kernel, not the model, supplies the callers a signature
+change breaks.
 
-**`planner.py`** — `Planner.decompose(user_task, node_inventory)` builds a prompt
-with the task, the node inventory (qualified names only, never source), and the
-configured agent types, calls an injected `PlannerLLM`
-(`complete(prompt) -> str`), and validates the result with `parse_plan`. The
-parser accepts a bare array or `{"subtasks": …}`, strips code fences, validates
-each `SubTask`, and rejects duplicate ids and unknown dependencies. The prompt's
-**cascade prevention** rule asks the model to include a sub-task for every caller
-of any function whose signature it changes. Target rules (each raises
-`ValueError`, which is fed back to the model on retry):
+**`planner.py`** — `Planner.plan(user_task, node_inventory, *, view=None,
+observer=None) -> PlanOutcome` calls an injected `PlannerLLM`
+(`complete(prompt) -> str`) and validates the reply with `parse_plan`;
+`decompose(...)` is `plan(...).plan`. `planner.strategy` decides how much of the
+inventory a prompt shows:
+
+| Strategy | Inventory sent | Calls |
+|---|---|---|
+| `auto` (config default) | `full` when the whole level-1 view fits `inventory_token_budget`, else `retrieval` | — |
+| `full` | every file at level 1: id suffixes, shapes, incoming references | 1 (+ retries) |
+| `retrieval` | the repository tree and seed files, then the expansions the model asks for | 1 + ≤ `max_expansions` |
+| `oneshot` | every node id as a flat list; byte-identical to the pre-0.10 prompt | 1 (+ retries) |
+| `outline` | a file-level outline, then one detail call per step over that step's files (`outline.py`); ids are namespaced `s<k>.<id>` | 1 + steps |
+
+A `Planner` built directly defaults to `oneshot`; `PlannerConfig` defaults to
+`auto`. Without a `view`, one is built from the ids alone (no shapes or
+references).
+
+**Prompt layout.** `full` and `retrieval` prompts are append-only *stable*
+blocks plus a *volatile* tail, with the task placed after the inventory so the
+instructions and inventory are a prefix shared by every task in a session:
+
+| Block | Content | Changes when |
+|---|---|---|
+| S1 | instructions, agent roster, tree (or the full view) | store generation, config, roster |
+| S2 | user task and seed files | per plan |
+| S3… | each expansion or verification round's material | appended per round |
+| V | round directive and retry note | every attempt |
+
+A retry changes only V, and each round's stable blocks are a byte prefix of the
+next round's. A backend implementing `CachingPlannerLLM.complete_parts(stable,
+volatile)` receives the split; an LLM with only `complete` gets
+`"".join(stable) + volatile`. `oneshot` is one stable block plus the retry note.
+
+**Callers.** The `full` / `retrieval` instructions tell the model that MAK knows
+the static call graph (the `← refs` column): it declares `changes_api` and a
+`contract` for each signature it changes, MAK adds the caller updates it can see
+(`planner.auto_caller_tasks`), and the model adds only what the graph cannot see
+— calls through `self` or an instance, dynamic dispatch, code other tasks in the
+plan create. With `auto_caller_tasks: false` the paragraph asks the model to add
+every caller itself. `oneshot` keeps its original "cascade prevention"
+paragraph.
+
+**Target rules** (`plan_schema.py`; each raises `ValueError`, which is fed back
+to the model on retry):
 
 - **Containment** first — a target must resolve inside the work dir
   (`unsafe_node_id_reason`).
@@ -1267,20 +1312,104 @@ of any function whose signature it changes. Target rules (each raises
   the right symbol, and `changes_api: false` cannot accompany a contract. Setting
   `api_targets` or `contract` with `changes_api` null means `true`.
 
-Retries (`max_retries`) cover the LLM call too: transient provider failures back
-off exponentially (1s, 2s, 4s, capped at 8s); a `PlannerFailedError` from the
-backend (missing SDK, refusal) is re-raised immediately; a rejected plan is
+**Retries** (`max_retries`) cover the LLM call too: transient provider failures
+back off exponentially (1s, 2s, 4s, capped at 8s); a `PlannerFailedError` from
+the backend (missing SDK, refusal) is re-raised immediately; a rejected plan is
 re-asked at once; a truncated reply is re-asked for a **smaller** plan.
+`planner.self_critique: true` adds one reflection call that returns
+`{"verdict": "ok"}` or a corrected plan; a failed critique keeps the original.
 
-Two opt-in refinements, off by default:
+The order in `Session.plan()` is plan (+ critique) → validate → caller proposals
+→ review → `install_plan` (which re-validates).
 
-- `planner.strategy: outline` — a file-level outline call, then one detail call
-  per step with the inventory restricted to that step's files. Ids are namespaced
-  `s<k>.<id>`; an outline edge S1 → S2 makes every S2 task depend on every S1 task.
-- `planner.self_critique: true` — one reflection call that returns
-  `{"verdict": "ok"}` or a corrected plan. A failed critique keeps the original.
+**`inventory.py`** — `InventoryView`, built from the inventory, the node
+sources and the dependency graph, renders the inventory at three resolutions.
+**Level 0** is the tree: directories and files with node counts. **Level 1** is
+file detail:
 
-The order in `Session.plan()` is decompose (+ critique) → validate → review.
+```
+app/billing/service.py  (3 nodes · used by 1 other file)
+  ::module_header::__header__
+  ::function::invoice_total  def invoice_total(items: list[float]) -> Invoice  ← 2 refs · 2 files (app/api/routes.py, this file)
+  ::function::refresh  async def refresh(client, *, timeout: float=...) -> None
+```
+
+A node's full id is its file path plus the suffix. The shape comes from
+`api_digest.node_signature(source, kind)`: `def` / `class` lines with every
+default elided to `=...` (a default can hold a secret or an internal URL),
+decorator names without arguments, no bodies or docstrings, one line capped at
+160 characters, private names included. The `← refs` column is the reverse
+index; `this file` when every referrer is local. **Flat** is the `oneshot`
+listing. Truncation is never silent: `render_tree(max_tokens)` opens directories
+breadth-first while they fit and renders the rest `[collapsed — expand to see]`;
+`render_file(path, max_tokens)` shows a large file's first nodes and one
+`… k more nodes not shown (budget)` line. Renderings are deterministic (sorted,
+no timestamps, no absolute paths), because providers cache the prefix built from
+them. File entries (and their signature parses) are built on first use. Golden
+renderings live in `tests/planner/golden/`.
+
+**`retrieval.py`** — the `Retriever` protocol (`seed(task, view, budget_tokens)
+-> SeedResult`) picks the files a `retrieval` plan starts out seeing in detail.
+`LexicalRetriever` extracts terms from the task (backticked spans, dotted names
+and paths kept whole and split; identifiers split on camelCase, snake_case and
+digits; a short stop-list), scores each node (exact symbol or file path 10, a
+whole path segment 4, each shared sub-token its IDF over all symbol names), sums
+each file's best five, gives the top five files' 1-hop neighbours half their
+score, and takes files by score (then path) while they fit. A task of stop words
+seeds nothing.
+
+**`expansion.py`** — the `retrieval` rounds. A reply is a plan or
+`{"expand": ["pkg/a.py", "pkg/b/"], "why": "…"}` (`parse_reply`; both at once is
+a `ValueError`). A file path returns its level-1 detail; a directory returns its
+contents one level deeper; an already-shown, unknown (with up to three close
+paths) or non-`.py` path is reported — none of these is an error. Rules
+(`RetrievalRounds`, `run_retrieval`):
+
+- **Rounds.** Every expansion or verification spends one of `max_expansions`.
+  When they (or the budget) run out, the prompt ends "Do not ask to expand
+  further. Return the plan now." and a further expand reply is rejected like a
+  malformed one. At most `max_expansions + 1` rounds.
+- **Budget.** `inventory_token_budget` bounds the inventory **cumulatively**
+  across the tree (≤ 25%), the seeds (≤ 35%) and every expansion; one file takes
+  at most 25%. Requests that do not fit are listed "not expanded (inventory budget
+  reached)" and counted.
+- **Verification.** A plan that targets a non-existent id in an existing file the
+  model never saw at level 1 gets one `verify` round showing that file, while
+  rounds remain. An exact existing id is accepted either way; a target in a new
+  file is legitimate.
+
+**`callers.py`** — `find_missing_callers(plan, graph, referrers)` lists the
+graph-visible callers of every `function` / `method` / `class` target of a task
+with `changes_api: true` that no task covers (a caller is covered when a task
+targets it or its whole file). `caller_findings` turns them into findings
+(below). `propose_caller_tasks(plan, graph, referrers, max_tasks=…)` adds **one
+task per caller file** for function and method targets: it targets that file's
+uncovered callers, depends on every changing task whose target they reference,
+reads the changed targets as context, declares `changes_api: false`, and is
+described from the changer's `contract`. Ids are `mak.callers.<n>` in file order
+(suffixed on a clash). A task that would break whole-file ownership or one
+granularity per file is refused (`caller_task_refused`); files beyond the cap get
+one `caller_tasks_capped` finding. Proposing runs only on the planner's path
+(`PlanPreparer.propose`), never in validation, so a task the reviewer drops is
+not re-added at install. `drop_tasks(plan, ids)` removes proposed tasks and any
+validation-added edges into them.
+
+**`telemetry.py`** — `PlannerCall` records one call: `phase` (`plan` /
+`outline` / `detail` / `critique` / `expand` / `verify`), `round`, `attempt`,
+`strategy`, `prompt_chars` and `stable_chars`, the inventory shown and left out
+(`inventory_files_total` / `_shown`, `inventory_nodes_shown`, `inventory_chars`,
+`collapsed_dirs`, `symbols_truncated`, `seed_files`, `expanded_paths`), usage
+(`input_tokens`, `output_tokens`, `cached_input_tokens`, `cache_write_tokens`),
+`outcome` (`plan` / `expand` / `rejected` / `call_failed` / `truncated`) and
+`duration_ms` — sizes and counts only. Calls reach the `observer` as they finish,
+so a plan ending in `PlannerFailedError` still reports every call it paid for.
+`PlanningSummary` folds a plan's calls into `planner_*` metrics; `PlanOutcome`
+carries the plan, the strategy used, `seen_files` (for `retrieval`) and the
+calls.
+
+**`plan_schema.py`** holds `parse_plan` and its helpers (re-exported from
+`planner.py`); **`outline.py`** the outline pass's parsing and assembly;
+**`findings.py`** `PlanFinding` (re-exported from `validation.py`).
 
 **`response.py`** — `loads_json` strips a fence found anywhere, skips framing
 prose, and parses with `raw_decode`. On failure, `repair_truncated` distinguishes
@@ -1289,25 +1418,48 @@ prose, and parses with `raw_decode`. On failure, `repair_truncated` distinguishe
 used as a plan.
 
 **`llm.py`** — `PlannerLLM` backends: Anthropic (streamed), OpenAI, Gemini, and
-`OllamaPlannerLLM`. Each reports a provider-signalled cut as
-`TruncatedResponseError` before parsing; an Anthropic `refusal` raises
-`PlannerFailedError`. `resolve_max_tokens(model)` delegates to
+`OllamaPlannerLLM`; each also implements `complete_parts`. Each reports a
+provider-signalled cut as `TruncatedResponseError` before parsing; an Anthropic
+`refusal` raises `PlannerFailedError`. `resolve_max_tokens(model)` delegates to
 `resolve_output_budget` with a 4096–32000 clamp and 16384 fallback.
-`OllamaPlannerLLM` sizes `num_ctx` like the agent adapter and raises when the
-inventory cannot fit. `build_planner_llm(model, *, backend, base_url, api_key,
-timeout)` picks the backend: explicit `backend` first, then `base_url` →
-OpenAI-compatible, then the model-id prefix. `Planner.token_usage` records what
-each call reported.
+
+- **Caching.** Anthropic sends the prompt as content blocks with
+  `cache_control: {"type": "ephemeral"}` on the first and last stable block (two
+  breakpoints; none with `prompt_cache=False`). OpenAI and Gemini get the
+  concatenation and cache byte-identical prefixes themselves. Ollama gets the
+  concatenation with `num_ctx` sized once per plan — from
+  `prompt_budget_tokens` plus a 4,096-token overhead, rounded up to 8,192 and
+  clamped to the model — so later rounds do not reload the model. A prompt that
+  cannot fit is refused (never silently truncated), suggesting `strategy: auto`
+  and a lower `inventory_token_budget`.
+- **Usage.** `last_usage["input_tokens"]` is every prompt token the provider
+  processed, cached or not; `cached_input_tokens` is the cached subset:
+
+  | Backend | `input_tokens` | `cached_input_tokens` | `cache_write_tokens` |
+  |---|---|---|---|
+  | Anthropic | `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` | `cache_read_input_tokens` | `cache_creation_input_tokens` |
+  | OpenAI | `prompt_tokens` | `prompt_tokens_details.cached_tokens` | — |
+  | Gemini | `prompt_token_count` | `cached_content_token_count` | — |
+  | Ollama | `prompt_eval_count` | — | — |
+
+  `session.max_total_tokens` therefore never under-counts a cached prompt.
+  `Planner.token_usage` totals every call, including a truncated or rejected
+  reply the backend reported usage for.
+- `build_planner_llm(model, *, backend, base_url, api_key, timeout,
+  prompt_cache, prompt_budget_tokens)` picks the backend: explicit `backend`
+  first, then `base_url` → OpenAI-compatible, then the model-id prefix.
 
 **`depgraph.py`** — `build_dep_graph(sources)` produces a `DepGraph` of
 `references` (node → nodes it calls or reads) and `definers` (symbol → defining
 nodes). Resolution is shallow and conservative: same-file calls, and cross-file
 references only through a parsed import table to a uniquely resolvable file.
-Anything ambiguous yields no edge. `dep_graph_from_store` rebuilds it from
-committed state on every `install_plan`; `resolve_module_file` is the strict
+Anything ambiguous yields no edge, so the graph — and `referrers(graph)`, its
+reverse index (node → nodes that reference it) — is a **lower bound**.
+`store_sources` / `dep_graph_from_store` read committed state; the session
+caches one graph per store generation (§11). `resolve_module_file` is the strict
 module resolver the wave-end checks share.
 
-**`validation.py`** — `validate_plan(plan, graph, inventory, semantics=None)`
+**`validation.py`** — `validate_plan(plan, graph, inventory, semantic=None)`
 returns a corrected copy plus `PlanFinding`s. The policy is asymmetric:
 
 | Finding | Action |
@@ -1315,20 +1467,27 @@ returns a corrected copy plus `PlanFinding`s. The policy is asymmetric:
 | `missing_dep` | add the edge if acyclic-safe (mutual pairs are reported, not applied); also added when a task's context names a node another task creates |
 | `corrected_node` | fix a hallucinated id only on one confident match (wrong kind segment, case/underscore variant, missing `Class.` prefix, or `difflib` ratio ≥ 0.9) |
 | `unknown_node` | weak or multiple candidates — suggest, do not change |
+| `unseen_target` | a `retrieval` plan's new id in an existing file the planner never saw (`PlanSemantics.seen_files`) — kept, flagged with same-file suggestions |
 | `spurious_dep` | flag a declared edge with no reference either way; never remove |
 | `context_dropped` | drop an unknown context node — unless another task in the plan targets it |
+| `missing_caller` | a graph-visible caller of a declared API change that no task updates; reworded `added: …` when a proposed task covers it |
+| `undeclared_api_callers` | one per task that changes function or method targets with outside callers without declaring `changes_api` |
+| `caller_task_refused`, `caller_tasks_capped` | from caller proposals (above) |
 | `relaxed_dep`, `declared_api_dep`, `shared_structure`, `ordered_table`, `registry_key_collision` | the declaration-driven rules from §5.3 |
 
-A correction that would violate a `parse_plan` invariant is downgraded to a
+The caller and unseen-target rules run only with `semantic` supplied. A
+correction that would violate a `parse_plan` invariant is downgraded to a
 suggestion.
 
 **`contracts.py`** — `parse_contract`, `contract_stub`, and
 `implementation_mismatch` (§5.3).
 
-**`review.py`** — `display_plan_for_review` renders subtasks, edges, findings,
-and repair obligations, and loops **approve / edit (paste JSON) / abort**
-(`PlanReviewAborted`). I/O is injected. An optional `header` labels cascade waves.
-`--no-review` skips it.
+**`review.py`** — `display_plan_for_review` renders subtasks, edges, findings
+(`is_applied`: ✎ for a change made, ⚠ for advice), and repair obligations, and
+loops **approve / edit (paste JSON) / abort** (`PlanReviewAborted`). With
+MAK-proposed tasks (marked `[proposed by MAK]`) it also offers **[d]rop
+MAK-proposed tasks**, which removes them, re-renders and asks again. I/O is
+injected. An optional `header` labels cascade waves. `--no-review` skips it.
 
 ## 10. Git integration
 
@@ -1372,7 +1531,7 @@ re-exports the public names (`Session`, `SessionResult`, `SessionState`,
 | `events.py` | `EventLog`, `timed_phase` | session-stamped logging; `PHASE_SPAN` timing |
 | `store_view.py`, `workspace.py` | `StoreView`, `Workspace` | read helpers over the store; the work, mak and journal dirs and the safe output path |
 | `reconcile.py` | `WorkTreeReconciler` | `.makignore`, pruning, store ↔ tree reconciliation, the clean-tree and audit-repo preflight |
-| `planning.py` | `PlanPreparer` | unsafe-target refusal, plan validation, agent assignment |
+| `planning.py` | `PlanPreparer`, `PlanningIndex` | the planning index, proposing (planner call, `PLANNER_CALL` events, caller proposals), unsafe-target refusal, plan validation, agent assignment, the planning summary |
 | `dispatch.py`, `cross_file.py`, `grants.py` | `DispatchEnricher`, `CrossFileIndex` | enrichment layers 0–5 (§3.3), read-set capture, the starvation guard, the grant each task holds |
 | `concurrency.py` | `ConcurrentRunner` | fanning agent calls out to the thread pool |
 | `batch.py` | `BatchProcessor` | the completion queue, deterministic batch order, settling a result, staging returned sources, draining in-flight work |
@@ -1390,8 +1549,8 @@ re-exports the public names (`Session`, `SessionResult`, `SessionState`,
 **Per-wave state is created fresh.** Everything a wave accumulates — the
 scheduler and the reference graph it was planned against, the lock policy,
 progress, completions and failures, commit bookkeeping, grants, read sets,
-parked results, post-wave caches and the metric counters — lives in one
-`WaveState`. `install_plan` replaces it with `WaveState.start(...)`, and
+parked results, post-wave caches, the metric counters and the planning
+summary — lives in one `WaveState`. `install_plan` replaces it with `WaveState.start(...)`, and
 `recover` with the restored wave; there is no reset list, so a field added to
 `WaveState` is per-wave by construction. Session-lifetime state — the
 collaborators, the user objective, cascade history, token usage, the symbol
@@ -1427,19 +1586,35 @@ decides: `adopt` (default — the working tree is the newer truth) or `conflict`
 
 ### Plan
 
-`propose_plan(user_task)` runs the planner and deterministic validation and
-returns a `PlanProposal(subtasks, findings)` without reviewing or installing it —
-the public entry point for a front end that reviews the plan its own way (the
-interactive app). `plan()` is `propose_plan` + optional review + `install_plan`.
-Nothing outside `mak/` touches a `Session` private attribute.
+**One index per store generation.** `PlanPreparer.index()` returns a
+`PlanningIndex` — `generation`, the dependency `graph`, its `referrers`, the
+planner's `InventoryView` and `build_ms` — rebuilt only when
+`NodeStore.generation` moves. Proposing, validation and `install_plan` all use it,
+so a planned wave parses the store once. The graph is read-only: the installed
+wave keeps it as its pre-wave graph, and a later generation gets a new index.
+
+`propose_plan(user_task)` (`PlanPreparer.propose`) runs the planner with the
+index's view and an observer that logs each call as `PLANNER_CALL`, validates the
+plan (with `seen_files` for a `retrieval` plan), and — when
+`planner.auto_caller_tasks` and `planner.validate` are on — adds MAK's caller
+tasks (§9) and re-validates the augmented plan. It returns a
+`PlanProposal(subtasks, findings, proposed_task_ids, planning)` without reviewing
+or installing it — the public entry point for a front end that reviews the plan
+its own way (the interactive app). A planner object with only `decompose` still
+works (no telemetry). `plan()` is `propose_plan` + optional review +
+`install_plan`. Nothing outside `mak/` touches a `Session` private attribute.
 **`install_plan` always re-validates** — it is the one entry point shared by
 `plan()`, the interactive app, cascade waves, and edited review plans:
 
 - containment check on every target (`PlanPreparer.reject_unsafe_targets`),
   naming every offender;
-- `validate_plan` against a freshly built dependency graph when
-  `planner.validate` is on; findings go to `session.last_plan_findings` and one
-  `PLAN_VALIDATED` event;
+- `validate_plan` against the index's graph when `planner.validate` is on;
+  findings go to `session.last_plan_findings` and one `PLAN_VALIDATED` event. A
+  proposed task the reviewer dropped comes back as a `missing_caller` finding, not
+  as a task;
+- the last proposal's `PlanningSummary` is handed to the new wave once
+  (`take_planning_summary()`), so a cascade wave or a directly installed plan
+  reports zeros;
 - `agent_type` normalization (`PlanPreparer.assign_agents`): unassigned tasks are
   distributed **round-robin across the healthy agent pool**; an unconfigured type
   is remapped to the pool's first agent (`AGENT_REMAPPED`);
@@ -1508,7 +1683,10 @@ the order first seen.
 `max_concurrency`, `mean_concurrency`, `conflict_rejections`, `redispatches`,
 `tasks_completed`, `tasks_failed`, `tasks_noop`, `dispatches`,
 `context_bytes_total`, `mean_context_bytes`, `starved_dispatches`, `stale_reads`,
-`stale_redispatches`, `adjudicated_accepts`.
+`stale_redispatches`, `adjudicated_accepts`, and what planning the wave cost:
+`planner_calls`, `planner_rounds`, `planner_input_tokens` (cached included),
+`planner_cached_tokens`, `planner_output_tokens` (zeros for a wave the planner
+did not plan).
 
 **Wave bookkeeping** for post-wave analysis, written only past a commit point:
 `WaveState.committed` (old/new source per node, `None` for a superseded
@@ -1620,6 +1798,10 @@ Rules:
 - **`session.max_total_tokens`** is the only spend ceiling (§11). `0` or negative
   is a `ConfigError`.
 - **`node_store.version_retention`** must be `-1` or ≥ 2.
+- **Planner bounds** are checked at load, naming the key: `strategy` is one of
+  `auto` / `oneshot` / `outline` / `full` / `retrieval`;
+  `inventory_token_budget` 2,000–200,000; `max_expansions` 0–10;
+  `max_caller_tasks` 0–200; `auto_caller_tasks` and `prompt_cache` are booleans.
 - **`session.mak_dir`** is anchored to `work_dir` by `config.anchor_mak_dir`, used
   by both front ends. `config.stale_mak_dir` reports a `.mak` left at a
   CWD-relative location that holds run state (`node_store/`, `task_graph.json`
@@ -1789,6 +1971,13 @@ A task: capture HEAD → build and initialize a session → plan (spinner) → s
 plan → optional approval → run (progress bar) → results → per-file `+N -N` diff
 of `{pre_hash}..HEAD`. The token counter reads `Session.total_tokens`.
 
+**Plan review.** `show_plan(console, subtasks, proposed=…, findings=…)` marks the
+caller tasks MAK added (`proposed by MAK`), then prints one summary line ("MAK
+added 3 caller-update tasks for 2 signature changes") and the number of advisory
+findings. With proposed tasks the approval prompt (`MakCli._confirm_proposal`)
+accepts **`y`** (run all), **`o`** (run without MAK's tasks — `drop_tasks`) or
+N; otherwise it is the plain y/N `_confirm_plan`, which cascade waves also use.
+
 | Command | Description |
 |---|---|
 | `/models [spec …]` | select agents with the `--models` grammar; in local/hybrid mode a bare `/models` lists the runtime's models live |
@@ -1890,8 +2079,8 @@ config's agents); `max_agents` — and `config_for(state)` / `build_session(task
 state)` run it through `build_config` and `application.build_session`. New CLI
 state that affects a run belongs in `request_from_state`. `models_display()`
 shows the selection, else `config_roster`. `plan_in_thread` calls
-`session.propose_plan`; `run_session_in_thread` runs `session.run()` on a thread
-and joins it.
+`session.propose_plan` and returns the whole `PlanProposal` (or the error);
+`run_session_in_thread` runs `session.run()` on a thread and joins it.
 
 **Services on the state.** `CliState` is the one object the app passes to every
 handler, the completer, setup and the UI, so it also carries the app's services:
@@ -2019,6 +2208,22 @@ When you change it:
   real-baseline arms.
 - `python benchmark/run_benchmark.py --mode mock` is the keyless self-test;
   `--render-only` regenerates the reports without spending tokens.
+
+## Planner input (offline)
+
+`benchmark/tools/planner_input.py` measures what MAK's real `Planner` sends —
+same inventory view, retrieval, rounds and prompt layout as a session — against a
+recording fake LLM, so it costs nothing. Inputs are MAK's own `mak/`, the four
+benchmark templates and synthetic repositories of 10, 100 and 1,000 files
+(`tests/planner/synthetic_repo.py`); strategies `oneshot` and `auto`. It writes
+`benchmark/results/planner_input.json` and prints a table
+([`benchmark/README.md`](benchmark/README.md) quotes it).
+`tests/test_benchmark_planner_input.py` runs it on synthetic-10. It measures
+prompt size, not plan quality; plan quality with real models is Wave 33's.
+
+```bash
+python benchmark/tools/planner_input.py
+```
 
 ## Semantic conflict corpus
 
@@ -2177,7 +2382,9 @@ mak/
 │                             #   cascade_graph, registry_merge, sources, project_files,
 │                             #   gates, gate_types, type_gate, impact_tests, import_smoke,
 │                             #   overlay, adjudicator
-├── planner/                  # planner, llm, response, review, depgraph, validation, contracts
+├── planner/                  # planner, plan_schema, outline, inventory, retrieval, expansion,
+│                             #   callers, telemetry, llm, response, review, depgraph,
+│                             #   validation, findings, contracts
 ├── agent_runner/
 │   ├── runner.py, registry.py, protocol.py, sandbox.py, stop_signals.py
 │   ├── adapters/             # base, budget, result_schema, repair, anthropic/openai/
@@ -2404,6 +2611,13 @@ Deliberate, fail-safe tradeoffs — not bugs:
   `mak/application/`, which both front ends use to build a run.
 - **PlannerRoute** — the planner's route (hosted, endpoint or local) as one
   complete value.
+- **Planner strategy** — how much of the inventory the planner is shown: `auto`,
+  `full`, `retrieval`, `oneshot` or `outline` (§9).
+- **Inventory view** — the inventory rendered as a tree (level 0), file detail
+  with shapes and callers (level 1), or a flat id list; **expansion** — a
+  `retrieval` round in which the planner asks to see more.
+- **Caller task** — a `mak.callers.<n>` task MAK proposes to update the callers a
+  declared signature change breaks; the reviewer may drop it.
 - **`.mak/`** — the project's MAK directory: its optional `config.yaml`, and
   runtime state (node store, journal, lock table, lease, task graph, session
   log). The user-level config is `~/.config/mak/config.yaml`.

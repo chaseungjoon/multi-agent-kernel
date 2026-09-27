@@ -112,12 +112,17 @@ def build_session(
             backend=_planner_backend(config, route),
             base_url=route.base_url if route is not None else config.planner.base_url,
             api_key=resolve_planner_key(config, env),
+            prompt_cache=config.planner.prompt_cache,
+            prompt_budget_tokens=config.planner.inventory_token_budget,
         ),
         max_retries=config.planner.max_retries,
         agent_types=healthy,
         agent_labels=[a.label() for a in roster if a.id in set(healthy)],
         strategy=config.planner.strategy,
         self_critique=config.planner.self_critique,
+        inventory_token_budget=config.planner.inventory_token_budget,
+        max_expansions=config.planner.max_expansions,
+        auto_caller_tasks=config.planner.auto_caller_tasks,
     )
     session_id = f"mak-{int(time.time())}"
     return Session(

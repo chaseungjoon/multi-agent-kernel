@@ -49,7 +49,19 @@ also reads the tasks' interface declarations:
   are flagged — order is meaning there, and no lock can choose it
   (``ordered_table``);
 - two tasks declaring the same registry key on one table are flagged and ordered
-  — the second would register a duplicate (``registry_key_collision``).
+  — the second would register a duplicate (``registry_key_collision``);
+- every graph-visible caller of a function or method a task declares it is
+  changing, that no task updates, is reported (``missing_caller``), and so is a
+  task that changes targets with outside callers without declaring whether
+  their API changes (``undeclared_api_callers``). Validation only reports these;
+  the caller tasks MAK proposes are added on the planner's path
+  (:mod:`mak.planner.callers`), so a reviewer's removal of one sticks.
+
+**Retrieval plans.** A ``retrieval`` planner is shown only part of the
+inventory. With ``PlanSemantics.seen_files`` set, a target that names a new id
+in an *existing* file the planner never saw in detail is not accepted as a new
+symbol: it is corrected on one confident match, or kept and flagged
+``unseen_target`` with same-file suggestions.
 """
 
 from __future__ import annotations
@@ -61,22 +73,15 @@ from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 
 from mak.core.types import NodeId, SubTask
+from mak.planner.callers import caller_findings
 from mak.planner.depgraph import DepGraph
+from mak.planner.findings import PlanFinding
 from mak.scheduler.lock_policy import api_write_targets
+
+__all__ = ["PlanFinding", "PlanSemantics", "ValidationResult", "validate_plan"]
 
 _STRONG_RATIO = 0.9
 _CLOSE_CUTOFF = 0.8
-
-
-@dataclass(frozen=True, slots=True)
-class PlanFinding:
-    """One deterministic observation about a plan, for review and logging."""
-
-    # missing_dep | spurious_dep | unknown_node | corrected_node | context_dropped
-    kind: str
-    task_id: str
-    message: str
-    suggestions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,10 +91,19 @@ class PlanSemantics:
     ``api_locks`` says whether interface locks are on (edge relaxation is only
     sound when they are). ``registrar_kinds`` maps a targeted node to
     ``"keyed"``/``"ordered"``/``"empty"`` when it is a registrar function.
+
+    ``seen_files`` is the set of files a ``retrieval`` planner was shown in
+    detail (``None`` when the planner saw the whole inventory, or no planner
+    produced the plan): a new id in an existing file outside it is flagged
+    ``unseen_target`` instead of being accepted as a new symbol. ``referrers``
+    is the graph's reverse index when the caller already has it (it is derived
+    from the graph otherwise).
     """
 
     api_locks: bool = False
     registrar_kinds: Mapping[NodeId, str] = field(default_factory=dict)
+    seen_files: frozenset[str] | None = None
+    referrers: Mapping[NodeId, frozenset[NodeId]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +195,26 @@ def _tier_missing_class(
     ]
 
 
+@dataclass(frozen=True, slots=True)
+class _Unseen:
+    """The files a retrieval planner never saw in detail, for grounding."""
+
+    seen: frozenset[str]
+    files: frozenset[str]
+
+    def covers(self, node_id: str) -> bool:
+        """Whether ``node_id`` is in an existing file the planner never saw."""
+        path = _split_id(node_id)[0]
+        return path in self.files and path not in self.seen
+
+
+def _same_file_suggestions(node_id: str, inventory: list[NodeId]) -> tuple[str, ...]:
+    """Up to three ids from ``node_id``'s file, the closest first."""
+    path = _split_id(node_id)[0]
+    same = [str(i) for i in inventory if _split_id(str(i))[0] == path]
+    return tuple(difflib.get_close_matches(node_id, same, n=3, cutoff=0.0))
+
+
 def _ground_ids(
     ids: list[NodeId],
     known: set[NodeId],
@@ -188,6 +222,7 @@ def _ground_ids(
     task_id: str,
     *,
     is_context: bool,
+    unseen: _Unseen | None = None,
 ) -> tuple[list[NodeId], list[PlanFinding]]:
     """Ground one id list; correct/flag/drop per the target vs context policy.
 
@@ -195,6 +230,10 @@ def _ground_ids(
     the inventory *plus every task's targets* for context. ``inventory`` stays the
     real one either way: it is the fuzzy-match candidate list, and correcting an id
     toward a node that does not exist yet would invent one nobody declared.
+
+    With ``unseen`` (a retrieval plan), a target that names a new id in an
+    existing file the planner never saw is kept but never silently accepted: it
+    is corrected on one confident match, or flagged ``unseen_target``.
     """
     kept: list[NodeId] = []
     findings: list[PlanFinding] = []
@@ -208,6 +247,14 @@ def _ground_ids(
             findings.append(PlanFinding(
                 "corrected_node", task_id,
                 f"corrected '{node_id}' -> '{auto}'", (auto,),
+            ))
+        elif not is_context and unseen is not None and unseen.covers(str(node_id)):
+            kept.append(node_id)
+            findings.append(PlanFinding(
+                "unseen_target", task_id,
+                f"target '{node_id}' is not in the inventory, and the planner "
+                f"never saw '{_split_id(str(node_id))[0]}' in detail",
+                suggestions or _same_file_suggestions(str(node_id), inventory),
             ))
         elif is_context:
             findings.append(PlanFinding(
@@ -226,7 +273,9 @@ def _ground_ids(
 
 
 def _ground_plan(
-    plan: list[SubTask], inventory: list[NodeId]
+    plan: list[SubTask],
+    inventory: list[NodeId],
+    seen_files: frozenset[str] | None = None,
 ) -> tuple[list[SubTask], list[PlanFinding]]:
     """Ground every task's targets, then its context against targets *and* inventory.
 
@@ -237,11 +286,16 @@ def _ground_plan(
     forthcoming node.
     """
     inv = set(inventory)
+    unseen = None
+    if seen_files is not None:
+        files = frozenset(_split_id(str(n))[0] for n in inventory)
+        unseen = _Unseen(seen=seen_files, files=files)
     grounded_targets: list[list[NodeId]] = []
     findings: list[PlanFinding] = []
     for task in plan:
         targets, target_findings = _ground_ids(
-            task.target_nodes, inv, inventory, task.task_id, is_context=False
+            task.target_nodes, inv, inventory, task.task_id,
+            is_context=False, unseen=unseen,
         )
         grounded_targets.append(targets)
         findings.extend(target_findings)
@@ -503,8 +557,15 @@ def validate_plan(
     *,
     semantic: PlanSemantics | None = None,
 ) -> ValidationResult:
-    """Validate and augment ``plan`` against the code graph and node inventory."""
-    grounded, findings = _ground_plan(plan, inventory)
+    """Validate and augment ``plan`` against the code graph and node inventory.
+
+    With ``semantic`` supplied, the interface-declaration checks run too, and
+    every graph-visible caller of a declared API change that no task updates is
+    reported (``missing_caller``; see :mod:`mak.planner.callers`). Validation
+    reports missing callers but never adds tasks for them.
+    """
+    seen = semantic.seen_files if semantic is not None else None
+    grounded, findings = _ground_plan(plan, inventory, seen)
     grounded, findings = _guard_whole_file(grounded, findings)
     augmented, edge_findings = _add_missing_edges(
         grounded, graph, api_locks=semantic is not None and semantic.api_locks
@@ -521,6 +582,7 @@ def validate_plan(
             augmented, more = check(augmented)
             findings.extend(more)
         findings.extend(_flag_ordered_tables(augmented, semantic.registrar_kinds))
+        findings.extend(caller_findings(augmented, graph, semantic.referrers))
     findings.extend(_flag_spurious(plan, augmented, graph))
     return ValidationResult(plan=augmented, findings=findings)
 

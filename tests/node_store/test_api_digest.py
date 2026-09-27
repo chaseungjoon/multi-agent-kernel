@@ -57,3 +57,59 @@ def test_unparseable_source_yields_empty() -> None:
 
 def test_empty_class_keeps_a_placeholder_body() -> None:
     assert public_api_digest("class A:\n    pass\n") == "class A:\n    ..."
+
+
+class TestNodeSignature:
+    """The one-line shape the planner's inventory shows beside a node id."""
+
+    def test_defaults_are_elided(self) -> None:
+        from mak.node_store.api_digest import node_signature
+
+        shape = node_signature(
+            'def f(a: int = 5, *, key: str = "sk-live-123") -> int:\n    return a\n',
+            "function",
+        )
+        assert shape == "def f(a: int=..., *, key: str=...) -> int"
+
+    def test_async_and_decorated(self) -> None:
+        from mak.node_store.api_digest import node_signature
+
+        source = '@app.route("/x", methods=["GET"])\nasync def g(q):\n    pass\n'
+        assert node_signature(source, "function") == "@app.route async def g(q)"
+
+    def test_a_method_fragment(self) -> None:
+        from mak.node_store.api_digest import node_signature
+
+        source = "@property\ndef size(self) -> int:\n    return 1\n"
+        assert node_signature(source, "method") == "@property def size(self) -> int"
+        indented = "    def m(self, x=[1]):\n        pass\n"
+        assert node_signature(indented, "method") == "def m(self, x=...)"
+
+    def test_a_class_shell(self) -> None:
+        from mak.node_store.api_digest import node_signature
+
+        # The ingestion class fragment has no body after its attributes.
+        source = (
+            "@dataclass(frozen=True)\nclass A(Base, metaclass=Meta):\n"
+            '    """Doc."""\n    x: int = 3\n'
+        )
+        assert node_signature(source, "class") == (
+            "@dataclass class A(Base, metaclass=...)"
+        )
+        assert node_signature("class B:\n", "class") == "class B"
+
+    def test_capped_at_160_characters(self) -> None:
+        from mak.node_store.api_digest import SIGNATURE_MAX_CHARS, node_signature
+
+        params = ", ".join(f"p{i}: int = {i}" for i in range(40))
+        shape = node_signature(f"def h({params}):\n    pass\n", "function")
+        assert shape is not None
+        assert len(shape) == SIGNATURE_MAX_CHARS
+        assert shape.endswith("…")
+
+    def test_no_shape_for_module_fragments_or_bad_source(self) -> None:
+        from mak.node_store.api_digest import node_signature
+
+        assert node_signature("import os\n", "module_header") is None
+        assert node_signature("x = 1\n", "module_body") is None
+        assert node_signature("def broken(:\n", "function") is None

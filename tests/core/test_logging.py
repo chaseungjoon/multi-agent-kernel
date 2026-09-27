@@ -54,6 +54,8 @@ def test_all_event_type_values_exist() -> None:
         "contract_violation",
         "commit_deferred",
         "phase_span",
+        # Wave 7
+        "planner_call",
     }
     assert {e.value for e in EventType} == expected
 

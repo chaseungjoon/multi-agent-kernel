@@ -1,0 +1,4 @@
+app/billing/service.py  (3 nodes · used by 1 other file)
+  ::module_header::__header__
+  ::function::invoice_total  def invoice_total(items: list[float]) -> Invoice  ← 2 refs · 2 files (app/api/routes.py, this file)
+  ::function::refresh  async def refresh(client, *, timeout: float=...) -> None

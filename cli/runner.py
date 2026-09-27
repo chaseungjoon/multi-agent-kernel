@@ -26,7 +26,7 @@ from mak.application import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mak.config import MakConfig
-    from mak.session import Session
+    from mak.session import PlanProposal, Session
 
 # ── Token counting ─────────────────────────────────────────────────────────────
 # Read from what each provider reported on its own response (Session.token_usage),
@@ -101,20 +101,24 @@ def build_session(task: str, state: CliState) -> Session:
 
 def plan_in_thread(
     session: Session, task: str
-) -> tuple[list[Any], Exception | None]:
-    """Propose a plan for ``task`` in a thread; return (subtasks, error)."""
+) -> tuple[PlanProposal | None, Exception | None]:
+    """Propose a plan for ``task`` in a thread; return (proposal, error).
+
+    The whole proposal, not just its tasks: the review needs to know which
+    tasks MAK added (so they can be declined) and what validation found.
+    """
     result: dict[str, Any] = {}
 
     def _target() -> None:
         try:
-            result["subtasks"] = session.propose_plan(task).subtasks
+            result["proposal"] = session.propose_plan(task)
         except Exception as exc:  # noqa: BLE001
             result["error"] = exc
 
     t = threading.Thread(target=_target, daemon=True)
     t.start()
     t.join()
-    return result.get("subtasks", []), result.get("error")
+    return result.get("proposal"), result.get("error")
 
 
 def run_session_in_thread(session: Session) -> tuple[Any, Exception | None]:

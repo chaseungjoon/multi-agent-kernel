@@ -490,3 +490,186 @@ class TestOllamaPlannerLLM:
         assert "8192" in message
         assert "context window" in message
         assert client.calls == []
+
+
+# --- Wave 7: prompt parts, cache breakpoints, usage normalization -------------
+
+
+class _UsageResp:
+    """A response carrying text and a provider-shaped usage object."""
+
+    def __init__(self, text: str, usage: object, *, attr: str = "usage") -> None:
+        self.content = [_Block(text)]
+        self.text = text
+        self.choices = [_Choice(text)]
+        setattr(self, attr, usage)
+
+
+class _Usage:
+    def __init__(self, **fields: object) -> None:
+        self.__dict__.update(fields)
+
+
+class _UsageAnthropicClient(FakeAnthropicClient):
+    def __init__(self, usage: object) -> None:
+        super().__init__("PLAN")
+        self._usage = usage
+
+    def stream(self, **kwargs: Any) -> _FakeStream:
+        self.calls.append(kwargs)
+        return _FakeStream(_UsageResp("PLAN", self._usage))
+
+
+class TestAnthropicPromptParts:
+    def _blocks(self, *, cache: bool) -> list[dict[str, Any]]:
+        client = FakeAnthropicClient("PLAN")
+        llm = AnthropicPlannerLLM(
+            model="claude-sonnet-5", client=client, prompt_cache=cache
+        )
+        assert llm.complete_parts(["S1", "", "S2", "S3"], "V") == "PLAN"
+        content = client.calls[0]["messages"][0]["content"]
+        assert isinstance(content, list)
+        return content
+
+    def test_breakpoints_on_the_first_and_last_stable_block(self) -> None:
+        blocks = self._blocks(cache=True)
+        assert [b["text"] for b in blocks] == ["S1", "S2", "S3", "V"]
+        marked = [b["text"] for b in blocks if "cache_control" in b]
+        assert marked == ["S1", "S3"]
+        assert len(marked) <= 4
+        assert blocks[0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_prompt_cache_off_sends_no_cache_control(self) -> None:
+        blocks = self._blocks(cache=False)
+        assert all("cache_control" not in b for b in blocks)
+        assert [b["text"] for b in blocks] == ["S1", "S2", "S3", "V"]
+
+    def test_an_empty_volatile_part_sends_no_empty_block(self) -> None:
+        client = FakeAnthropicClient("PLAN")
+        AnthropicPlannerLLM(model="m", client=client).complete_parts(["S1"], "")
+        assert client.calls[0]["messages"][0]["content"] == [
+            {"type": "text", "text": "S1", "cache_control": {"type": "ephemeral"}}
+        ]
+
+    def test_build_passes_the_switch(self) -> None:
+        llm = build_planner_llm("claude-sonnet-5", prompt_cache=False)
+        assert isinstance(llm, AnthropicPlannerLLM)
+        assert llm.prompt_cache is False
+
+
+class TestUsageNormalization:
+    def test_anthropic_input_counts_cache_reads_and_writes(self) -> None:
+        usage = _Usage(input_tokens=100, output_tokens=20,
+                       cache_read_input_tokens=300, cache_creation_input_tokens=50)
+        llm = AnthropicPlannerLLM(model="m", client=_UsageAnthropicClient(usage))
+        llm.complete("p")
+        assert llm.last_usage == {
+            "input_tokens": 450, "output_tokens": 20,
+            "cached_input_tokens": 300, "cache_write_tokens": 50,
+        }
+
+    def test_anthropic_without_cache_fields(self) -> None:
+        usage = _Usage(input_tokens=100, output_tokens=20,
+                       cache_read_input_tokens=None, cache_creation_input_tokens=None)
+        llm = AnthropicPlannerLLM(model="m", client=_UsageAnthropicClient(usage))
+        llm.complete("p")
+        assert llm.last_usage["input_tokens"] == 100
+        assert llm.last_usage["cached_input_tokens"] == 0
+
+    def test_openai_reads_the_nested_cached_subset(self) -> None:
+        usage = _Usage(prompt_tokens=500, completion_tokens=30,
+                       prompt_tokens_details=_Usage(cached_tokens=200))
+
+        class Client(FakeOpenAiClient):
+            def create(self, **kwargs: Any) -> Any:
+                return _UsageResp("PLAN", usage)
+
+        llm = OpenAiPlannerLLM(model="gpt-5", client=Client("PLAN"))
+        llm.complete("p")
+        assert llm.last_usage["input_tokens"] == 500
+        assert llm.last_usage["cached_input_tokens"] == 200
+
+    def test_openai_without_details_reports_zero_cached(self) -> None:
+        usage = {"prompt_tokens": 500, "completion_tokens": 30}
+
+        class Client(FakeOpenAiClient):
+            def create(self, **kwargs: Any) -> Any:
+                return _UsageResp("PLAN", usage)
+
+        llm = OpenAiPlannerLLM(model="gpt-5", client=Client("PLAN"))
+        llm.complete("p")
+        assert llm.last_usage["input_tokens"] == 500
+        assert llm.last_usage["cached_input_tokens"] == 0
+
+    def test_gemini_reads_the_cached_content_count(self) -> None:
+        usage = _Usage(prompt_token_count=400, candidates_token_count=40,
+                       cached_content_token_count=128)
+
+        class Client(FakeGeminiClient):
+            def generate_content(self, **kwargs: Any) -> Any:
+                return _UsageResp("PLAN", usage, attr="usage_metadata")
+
+        llm = GeminiPlannerLLM(model="gemini-3", client=Client("PLAN"))
+        llm.complete("p")
+        assert llm.last_usage["input_tokens"] == 400
+        assert llm.last_usage["cached_input_tokens"] == 128
+
+    @pytest.mark.parametrize("backend", ["openai", "gemini"])
+    def test_concatenating_backends_send_the_joined_prompt(self, backend: str) -> None:
+        seen: list[Any] = []
+
+        class OpenAi(FakeOpenAiClient):
+            def create(self, **kwargs: Any) -> Any:
+                seen.append(kwargs["messages"][0]["content"])
+                return _OpenAiResp("PLAN")
+
+        class Gemini(FakeGeminiClient):
+            def generate_content(self, **kwargs: Any) -> Any:
+                seen.append(kwargs["contents"])
+                return _GeminiResp("PLAN")
+
+        llm: Any = (
+            OpenAiPlannerLLM(model="m", client=OpenAi("PLAN")) if backend == "openai"
+            else GeminiPlannerLLM(model="m", client=Gemini("PLAN"))
+        )
+        assert llm.complete_parts(["A", "B"], "C") == "PLAN"
+        assert seen == ["ABC"]
+
+
+class TestOllamaPlanWindow:
+    def test_one_window_for_every_round_of_a_plan(self) -> None:
+        client = FakeOllamaClient(context_length=131072)
+        llm = OllamaPlannerLLM(
+            model="qwen", client=client, max_tokens=4096, prompt_budget_tokens=12000
+        )
+        stable = ["x" * 8000]
+        for round_block in ("y" * 6000, "z" * 9000, "w" * 12000):
+            stable.append(round_block)
+            llm.complete_parts(stable, "directive")
+        windows = {call["options"]["num_ctx"] for call in client.calls}
+        assert len(client.calls) == 3
+        assert len(windows) == 1
+        assert windows.pop() % 8192 == 0
+
+    def test_the_window_is_clamped_to_the_model(self) -> None:
+        client = FakeOllamaClient(context_length=16384)
+        llm = OllamaPlannerLLM(
+            model="qwen", client=client, max_tokens=2048, prompt_budget_tokens=12000
+        )
+        llm.complete_parts(["small prompt"], "")
+        assert client.calls[0]["options"]["num_ctx"] == 16384
+
+    def test_the_refusal_suggests_bounding_the_inventory(self) -> None:
+        client = FakeOllamaClient(context_length=8192)
+        llm = OllamaPlannerLLM(model="m", client=client, max_tokens=4096)
+        with pytest.raises(PlannerFailedError) as excinfo:
+            llm.complete_parts(["x" * 400_000], "")
+        assert "inventory_token_budget" in str(excinfo.value)
+        assert "'auto'" in str(excinfo.value)
+
+    def test_build_passes_the_budget(self) -> None:
+        llm = build_planner_llm(
+            "qwen2.5-coder:14b", backend="ollama", prompt_budget_tokens=9000
+        )
+        assert isinstance(llm, OllamaPlannerLLM)
+        assert llm.prompt_budget_tokens == 9000

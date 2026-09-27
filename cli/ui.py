@@ -20,6 +20,8 @@ from cli.core.state import CliState, mode_summary
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mak.execution_result import ExecutionResult
 from mak._version import __version_display__
+from mak.planner.review import is_applied
+from mak.planner.validation import PlanFinding
 from mak.teardown import SuiteOutcome, TeardownResult
 
 ACCENT = "#bd93f9"
@@ -166,8 +168,19 @@ def _compute_waves(subtasks: list[Any]) -> list[list[Any]]:
     return waves
 
 
-def show_plan(console: Console, subtasks: list[Any]) -> None:
-    """Render a planner plan as a numbered task list with targets and deps."""
+def show_plan(
+    console: Console,
+    subtasks: list[Any],
+    *,
+    proposed: frozenset[str] = frozenset(),
+    findings: list[PlanFinding] | None = None,
+) -> None:
+    """Render a planner plan as a numbered task list with targets and deps.
+
+    Tasks in ``proposed`` — the caller updates MAK added for the plan's
+    signature changes — are marked, and summarized in one line under the plan
+    together with the number of advisory validation findings.
+    """
     waves = _compute_waves(subtasks)
     n, w = len(subtasks), len(waves)
 
@@ -189,6 +202,8 @@ def show_plan(console: Console, subtasks: list[Any]) -> None:
             line = Text("    ")
             line.append("●", style=ACCENT)
             line.append(f" {st.task_id}", style="bold")
+            if st.task_id in proposed:
+                line.append("  proposed by MAK", style="yellow")
             line.append(f"  {st.description}")
             console.print(line)
 
@@ -207,6 +222,32 @@ def show_plan(console: Console, subtasks: list[Any]) -> None:
                 meta.append(value, style=DIM)
             if parts:
                 console.print(meta)
+        console.print()
+    _show_plan_summary(console, subtasks, proposed, findings or [])
+
+
+def _show_plan_summary(
+    console: Console,
+    subtasks: list[Any],
+    proposed: frozenset[str],
+    findings: list[PlanFinding],
+) -> None:
+    """Say what MAK added to the plan, and how much advice validation left."""
+    added = [t for t in subtasks if t.task_id in proposed]
+    if added:
+        changes = len({str(n) for t in added for n in t.context_nodes})
+        console.print(
+            f"  [yellow]MAK added {len(added)} caller-update "
+            f"task{'s' if len(added) != 1 else ''} for {changes} signature "
+            f"change{'s' if changes != 1 else ''}[/yellow]"
+        )
+    advisory = sum(1 for f in findings if not is_applied(f))
+    if advisory:
+        console.print(
+            f"  [dim]{advisory} advisory validation "
+            f"finding{'s' if advisory != 1 else ''} (see .mak/session.log)[/dim]"
+        )
+    if added or advisory:
         console.print()
 
 

@@ -255,6 +255,50 @@ path. `sim/fit.py` turns that telemetry into a profile. See `sim/README.md` for
 the real-versus-modeled boundary, fitting workflow, calibration command, and
 threats to validity.
 
+## Planner input (Wave 7, offline)
+
+`tools/planner_input.py` measures what MAK's **production planner** sends — the
+same inventory view, retrieval, expansion rounds and prompt layout a session
+uses — against a recording fake LLM, so it makes no model calls. The fake asks
+to expand one file when it is shown a repository tree, then returns a fixed
+one-task plan. Inputs are MAK's own `mak/` package, the four project templates
+and synthetic repositories of 10, 100 and 1,000 files
+(`tests/planner/synthetic_repo.py`); each runs under `oneshot` (the flat id
+listing every earlier version sent) and `auto` (the default).
+
+```bash
+python benchmark/tools/planner_input.py     # writes results/planner_input.json
+```
+
+Token counts are estimates (`len / 4`); the inventory budget is the default
+12,000. "Inventory" is the inventory section of the first call and the largest
+of any call; the stable share is the cacheable prefix of the first prompt.
+
+| Input | Files | Nodes | Strategy | First prompt (tokens) | Inventory (first / max) | Rounds | Stable share | Collapsed dirs | Index build (ms) |
+|---|--:|--:|---|--:|--:|--:|--:|--:|--:|
+| mak | 177 | 1,903 | oneshot | 29,132 | 28,293 / 28,293 | 1 | 100% | 0 | 339 |
+| mak | 177 | 1,903 | auto → retrieval | 6,369 | 5,212 / 5,572 | 2 | 100% | 0 | 333 |
+| template-1 | 6 | 19 | oneshot | 1,055 | 215 / 215 | 1 | 100% | 0 | 1 |
+| template-1 | 6 | 19 | auto → full | 1,236 | 269 / 269 | 1 | 100% | 0 | 1 |
+| template-2 | 12 | 109 | oneshot | 2,077 | 1,238 / 1,238 | 1 | 100% | 0 | 6 |
+| template-2 | 12 | 109 | auto → full | 2,660 | 1,693 / 1,693 | 1 | 100% | 0 | 6 |
+| template-3 | 14 | 91 | oneshot | 1,819 | 980 / 980 | 1 | 100% | 0 | 5 |
+| template-3 | 14 | 91 | auto → full | 2,533 | 1,566 / 1,566 | 1 | 100% | 0 | 5 |
+| template-4 | 12 | 46 | oneshot | 1,386 | 546 / 546 | 1 | 100% | 0 | 3 |
+| template-4 | 12 | 46 | auto → full | 1,917 | 950 / 950 | 1 | 100% | 0 | 3 |
+| synthetic-10 | 10 | 102 | oneshot | 2,116 | 1,276 / 1,276 | 1 | 100% | 0 | 6 |
+| synthetic-10 | 10 | 102 | auto → full | 3,038 | 2,071 / 2,071 | 1 | 100% | 0 | 6 |
+| synthetic-100 | 100 | 1,182 | oneshot | 15,786 | 14,946 / 14,946 | 1 | 100% | 0 | 72 |
+| synthetic-100 | 100 | 1,182 | auto → retrieval | 5,864 | 4,706 / 4,955 | 2 | 100% | 0 | 76 |
+| synthetic-1000 | 1,000 | 11,982 | oneshot | 155,002 | 154,162 / 154,162 | 1 | 100% | 0 | 1,030 |
+| synthetic-1000 | 1,000 | 11,982 | auto → retrieval | 8,263 | 7,097 / 7,349 | 2 | 100% | 57 | 1,027 |
+
+On MAK's own tree, `auto` plans with `retrieval`, and its first prompt is 22% of
+the `oneshot` prompt. The templates are small enough to be shown whole, with
+shapes and callers (`full`). **Measurement scope:** this is prompt size only.
+Whether the smaller prompt still yields a correct plan that covers callers is a
+quality question for real models (Wave 33 in `TASKS.md`).
+
 ## Results
 
 > Model configuration is recorded separately for each target. Use `--models` to

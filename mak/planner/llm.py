@@ -8,6 +8,20 @@ distinct from the agent adapters, which force a structured ``TaskResult``.
 adapters, SDKs are imported lazily and clients are injectable, so constructing a
 planner LLM needs no SDK installed and makes no network call until ``complete`` runs.
 
+**Usage.** Every backend reports ``last_usage`` with one meaning:
+``input_tokens`` is *every* prompt token the provider processed, cached or not,
+and ``cached_input_tokens`` is the subset it served from a prompt cache.
+Anthropic's own ``input_tokens`` excludes cache reads and cache writes, so it is
+normalized here; without that, turning prompt caching on would make both the
+planner's spend and ``session.max_total_tokens`` under-count.
+
+**Prompt parts.** Each backend also implements ``complete_parts(stable,
+volatile)`` (:class:`~mak.planner.planner.CachingPlannerLLM`). Anthropic marks the
+stable blocks as cache breakpoints; OpenAI and Gemini cache byte-identical
+prefixes on their own and get the concatenation; Ollama gets the concatenation
+with a context window sized once per plan, so later rounds do not reload the
+model.
+
 **Output budget.** A plan for a real repository runs to thousands of tokens, and a
 budget too small to hold it truncates the JSON mid-string — a failure that then
 repeats on every retry, because the same request produces the same over-long plan
@@ -20,6 +34,7 @@ planner can ask for a smaller plan instead of blindly retrying.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Any
 
 from mak.agent_runner.adapters.ollama_api_adapter import estimate_tokens
@@ -56,6 +71,67 @@ _BACKENDS = ("anthropic", "openai", "gemini", "ollama")
 # for why over-estimating a context window is the safe direction to err in.
 _CONTEXT_MARGIN = 1.25
 _MIN_NUM_CTX = 4096
+# Planner prompts are sized in steps of this many tokens, so that one plan's
+# rounds request one window: Ollama reloads a model when ``num_ctx`` changes,
+# and a reload throws away the KV cache the rounds' shared prefix would reuse.
+_NUM_CTX_STEP = 8192
+# What a plan prompt carries beside its inventory section — instructions, the
+# agent roster, the task, the round directive — as an estimated token ceiling.
+_PLAN_OVERHEAD_TOKENS = 4096
+
+
+def _usage_int(source: object, name: str) -> int:
+    """Return an integer usage field from an SDK object or dict (0 when absent)."""
+    value = getattr(source, name, None)
+    if value is None and isinstance(source, dict):
+        value = source.get(name)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return 0
+
+
+def anthropic_usage(usage: object) -> dict[str, int]:
+    """Normalize Anthropic usage: ``input_tokens`` counts cache reads and writes.
+
+    Anthropic reports uncached input, cache reads and cache writes as three
+    disjoint numbers. All three were processed (and billed), so all three are
+    input; the read share is also reported as ``cached_input_tokens``.
+    """
+    counts = extract_usage(usage)
+    if usage is None:
+        return counts
+    read = _usage_int(usage, "cache_read_input_tokens")
+    write = _usage_int(usage, "cache_creation_input_tokens")
+    counts["input_tokens"] = counts.get("input_tokens", 0) + read + write
+    counts["cached_input_tokens"] = read
+    counts["cache_write_tokens"] = write
+    return counts
+
+
+def openai_usage(usage: object) -> dict[str, int]:
+    """Normalize OpenAI usage; ``prompt_tokens`` already includes the cached subset."""
+    counts = extract_usage(usage)
+    if usage is None:
+        return counts
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is None and isinstance(usage, dict):
+        details = usage.get("prompt_tokens_details")
+    counts["cached_input_tokens"] = _usage_int(details, "cached_tokens")
+    return counts
+
+
+def gemini_usage(usage: object) -> dict[str, int]:
+    """Normalize Gemini usage; ``prompt_token_count`` already includes the cache."""
+    counts = extract_usage(usage)
+    if usage is None:
+        return counts
+    counts["cached_input_tokens"] = _usage_int(usage, "cached_content_token_count")
+    return counts
+
+
+def _round_up(value: int, step: int = _NUM_CTX_STEP) -> int:
+    """Round ``value`` up to a multiple of ``step``."""
+    return -(-value // step) * step
 
 
 def resolve_max_tokens(model: str) -> int:
@@ -84,12 +160,16 @@ class AnthropicPlannerLLM:
         api_key: str | None = None,
         max_tokens: int | None = None,
         timeout: float | None = _DEFAULT_TIMEOUT_S,
+        prompt_cache: bool = True,
     ) -> None:
         self.model = model
         self.max_tokens = (
             max_tokens if max_tokens is not None else resolve_max_tokens(model)
         )
         self.timeout = timeout
+        # False sends no ``cache_control`` at all: the escape hatch for a
+        # gateway that rejects the field. The prompt layout does not change.
+        self.prompt_cache = prompt_cache
         # Token usage of the most recent completion. Recorded here because the
         # response object is the only place it exists, and the alternative in
         # use — monkeypatching the SDK's own method — silently missed every
@@ -130,13 +210,31 @@ class AnthropicPlannerLLM:
         the planner retries with a compaction instruction instead of re-issuing
         an identical request that would be cut at the identical point.
         """
+        return self._send(prompt)
+
+    def complete_parts(self, stable: Sequence[str], volatile: str) -> str:
+        """Send the prompt as content blocks, the stable ones cache breakpoints.
+
+        ``cache_control`` goes on the first stable block (instructions and
+        inventory, shared by every plan in a session) and on the last one (this
+        plan's prefix so far): two breakpoints, under the API's limit of four. A
+        prefix shorter than the model's minimum cacheable length is simply not
+        cached — the provider's rule, not an error.
+        """
+        blocks = _anthropic_blocks(stable, volatile, cache=self.prompt_cache)
+        if not blocks:
+            return self._send("".join(stable) + volatile)
+        return self._send(blocks)
+
+    def _send(self, content: str | list[dict[str, Any]]) -> str:
+        """Stream one request and return its text (see :meth:`complete`)."""
         with self._get_client().messages.stream(
             model=self.model,
             max_tokens=self.max_tokens,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": content}],
         ) as stream:
             response = stream.get_final_message()
-        self.last_usage = extract_usage(getattr(response, "usage", None))
+        self.last_usage = anthropic_usage(getattr(response, "usage", None))
         stop_reason = getattr(response, "stop_reason", None)
         if stop_reason == "max_tokens":
             raise TruncatedResponseError(
@@ -156,6 +254,22 @@ class AnthropicPlannerLLM:
             if getattr(block, "type", None) == "text"
         ]
         return "".join(parts)
+
+
+def _anthropic_blocks(
+    stable: Sequence[str], volatile: str, *, cache: bool
+) -> list[dict[str, Any]]:
+    """Return the user message's content blocks (empty text is not allowed)."""
+    texts = [text for text in stable if text]
+    blocks: list[dict[str, Any]] = []
+    for index, text in enumerate(texts):
+        block: dict[str, Any] = {"type": "text", "text": text}
+        if cache and index in (0, len(texts) - 1):
+            block["cache_control"] = {"type": "ephemeral"}
+        blocks.append(block)
+    if volatile:
+        blocks.append({"type": "text", "text": volatile})
+    return blocks
 
 
 class OpenAiPlannerLLM:
@@ -216,7 +330,7 @@ class OpenAiPlannerLLM:
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
         )
-        self.last_usage = extract_usage(getattr(response, "usage", None))
+        self.last_usage = openai_usage(getattr(response, "usage", None))
         choices = getattr(response, "choices", None) or []
         if not choices:
             return ""
@@ -227,6 +341,10 @@ class OpenAiPlannerLLM:
                 "plan was complete"
             )
         return choice.message.content or ""
+
+    def complete_parts(self, stable: Sequence[str], volatile: str) -> str:
+        """Send the concatenation: prefix caching needs only byte stability."""
+        return self.complete("".join(stable) + volatile)
 
 
 class GeminiPlannerLLM:
@@ -276,7 +394,7 @@ class GeminiPlannerLLM:
             model=self.model,
             contents=prompt,
         )
-        self.last_usage = extract_usage(getattr(response, "usage_metadata", None))
+        self.last_usage = gemini_usage(getattr(response, "usage_metadata", None))
         reason = _gemini_finish_reason(response)
         if "MAX_TOKENS" in reason:
             raise TruncatedResponseError(
@@ -289,6 +407,10 @@ class GeminiPlannerLLM:
             # surfacing it beats reporting a bare "empty response".
             raise ResponseError(f"gemini returned no text (finish reason: {reason})")
         return text
+
+    def complete_parts(self, stable: Sequence[str], volatile: str) -> str:
+        """Send the concatenation; implicit caching applies where supported."""
+        return self.complete("".join(stable) + volatile)
 
 
 def _gemini_finish_reason(response: Any) -> str:
@@ -316,8 +438,15 @@ class OllamaPlannerLLM:
     adapter does (see its module docstring): a plan prompt lists the whole node
     inventory, Ollama's default window is a few thousand tokens, and an
     over-long prompt is **silently truncated**. A planner given half a repo
-    writes a confident plan for half a repo. Bounding the inventory itself is
-    the real fix; until then this must at least not fail silently.
+    writes a confident plan for half a repo, so a prompt that cannot fit is
+    refused. The planner's ``auto`` strategy bounds the inventory itself
+    (``planner.inventory_token_budget``), which is what makes a local planner
+    usable on a repository larger than its window.
+
+    ``prompt_budget_tokens`` is that inventory budget. With it, ``complete_parts``
+    requests one window for the whole plan — sized to the largest prompt any of
+    its rounds may send — instead of one per round: a changed ``num_ctx``
+    reloads the model and discards the cached prefix the rounds share.
     """
 
     def __init__(
@@ -329,9 +458,11 @@ class OllamaPlannerLLM:
         max_tokens: int | None = None,
         timeout: float | None = _DEFAULT_TIMEOUT_S,
         num_ctx: int | None = None,
+        prompt_budget_tokens: int | None = None,
     ) -> None:
         self.model = model
         self.base_url = base_url or DEFAULT_BASE_URL
+        self.prompt_budget_tokens = prompt_budget_tokens
         self.max_tokens = (
             max_tokens if max_tokens is not None else resolve_max_tokens(model)
         )
@@ -359,9 +490,18 @@ class OllamaPlannerLLM:
                 return None
         return self._model_context
 
-    def _effective_num_ctx(self, prompt: str) -> int:
-        """Return the window to request, or refuse if the inventory cannot fit."""
+    def _effective_num_ctx(self, prompt: str, *, ceiling_tokens: int = 0) -> int:
+        """Return the window to request, or refuse if the inventory cannot fit.
+
+        ``ceiling_tokens`` is the largest prompt the rest of the plan may send;
+        the window is sized to it (in whole steps) so it stays the same across
+        rounds. Only the prompt actually being sent can cause a refusal.
+        """
         needed = math.ceil(estimate_tokens(prompt) * _CONTEXT_MARGIN) + self.max_tokens
+        wanted = needed
+        if ceiling_tokens:
+            planned = math.ceil(ceiling_tokens * _CONTEXT_MARGIN) + self.max_tokens
+            wanted = _round_up(max(needed, planned))
         if self.num_ctx is not None:
             limit: int | None = self.num_ctx
         else:
@@ -373,16 +513,32 @@ class OllamaPlannerLLM:
                 f"{self.max_tokens}-token plan), which does not fit "
                 f"{self.model}'s context window of {limit} tokens. Ollama would "
                 "truncate it silently and plan for part of the repository, so "
-                "MAK refused. Use a model with a larger context window, or raise "
-                "planner num_ctx if the model supports more."
+                "MAK refused. Use a model with a larger context window, raise "
+                "planner num_ctx if the model supports more, or bound the "
+                "inventory: use planner strategy 'auto' and lower "
+                "planner.inventory_token_budget."
             )
         if limit is not None:
-            return max(_MIN_NUM_CTX, min(limit, needed))
-        return max(_MIN_NUM_CTX, needed)
+            return max(_MIN_NUM_CTX, min(limit, wanted))
+        return max(_MIN_NUM_CTX, wanted)
 
     def complete(self, prompt: str) -> str:
         """Return the model's text completion for ``prompt``."""
-        num_ctx = self._effective_num_ctx(prompt)
+        return self._chat(prompt, self._effective_num_ctx(prompt))
+
+    def complete_parts(self, stable: Sequence[str], volatile: str) -> str:
+        """Send the concatenation with a window sized once for the whole plan."""
+        prompt = "".join(stable) + volatile
+        ceiling = (
+            0 if self.prompt_budget_tokens is None
+            else self.prompt_budget_tokens + _PLAN_OVERHEAD_TOKENS
+        )
+        return self._chat(
+            prompt, self._effective_num_ctx(prompt, ceiling_tokens=ceiling)
+        )
+
+    def _chat(self, prompt: str, num_ctx: int) -> str:
+        """Send one ``/api/chat`` request with the given window."""
         response = self._get_client().chat(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
@@ -405,6 +561,8 @@ def build_planner_llm(
     api_key: str | None = None,
     timeout: float | None = _DEFAULT_TIMEOUT_S,
     base_url: str | None = None,
+    prompt_cache: bool = True,
+    prompt_budget_tokens: int | None = None,
 ) -> PlannerLLM:
     """Pick a ``PlannerLLM``: explicit backend, then transport, then model name.
 
@@ -420,6 +578,10 @@ def build_planner_llm(
     Steps 1 and 2 exist for local models: a local model id
     (``qwen2.5-coder:14b``, ``llama3.1``) matches no prefix, so without them a
     local planner would raise ``PlannerFailedError`` before a single call.
+
+    ``prompt_cache`` reaches the Anthropic backend (``False`` sends no
+    ``cache_control``); ``prompt_budget_tokens`` reaches Ollama, which sizes one
+    context window per plan from it.
     """
     if backend is not None:
         if backend not in _BACKENDS:
@@ -428,11 +590,17 @@ def build_planner_llm(
                 f"use one of {', '.join(_BACKENDS)}"
             )
         if backend == "anthropic":
-            return AnthropicPlannerLLM(model=model, api_key=api_key, timeout=timeout)
+            return AnthropicPlannerLLM(
+                model=model, api_key=api_key, timeout=timeout,
+                prompt_cache=prompt_cache,
+            )
         if backend == "gemini":
             return GeminiPlannerLLM(model=model, api_key=api_key, timeout=timeout)
         if backend == "ollama":
-            return OllamaPlannerLLM(model=model, base_url=base_url, timeout=timeout)
+            return OllamaPlannerLLM(
+                model=model, base_url=base_url, timeout=timeout,
+                prompt_budget_tokens=prompt_budget_tokens,
+            )
         return OpenAiPlannerLLM(
             model=model, api_key=api_key, timeout=timeout, base_url=base_url
         )
@@ -442,7 +610,9 @@ def build_planner_llm(
         )
     lowered = model.lower()
     if lowered.startswith("claude"):
-        return AnthropicPlannerLLM(model=model, api_key=api_key, timeout=timeout)
+        return AnthropicPlannerLLM(
+            model=model, api_key=api_key, timeout=timeout, prompt_cache=prompt_cache
+        )
     if lowered.startswith("gemini"):
         return GeminiPlannerLLM(model=model, api_key=api_key, timeout=timeout)
     if lowered.startswith(("gpt", "o1", "o3", "o4")):

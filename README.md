@@ -4,7 +4,7 @@
 
 <img src="https://img.shields.io/badge/3.11-grey?logo=python"/>
 <img src="https://img.shields.io/badge/3.13-grey?logo=python"/>
-<img src="https://img.shields.io/badge/Version-0.9.4 Beta-blue"/> 
+<img src="https://img.shields.io/badge/Version-0.10.0 Beta-blue"/> 
 <img src="https://img.shields.io/badge/CI-Passing-green?logo=github"/> 
 <img src="https://img.shields.io/badge/License-MIT-red"/> 
 
@@ -70,7 +70,8 @@ write locks on and the kernel reassembles the file.
 > The planner is prompted to organizes jobs into **Waves**, maximizing parallelism by grouping jobs that can run concurrently without competing for write locks on the same AST nodes.
 
 Before dispatching the agents, the planner's proposed
-plan is cross-checked against the dependency graph. After a
+plan is cross-checked against the dependency graph, and MAK adds a task for every
+caller a declared signature change would break (you can drop them at review). After a
 wave, MAK re-checks what it left behind and offers any fix-ups as another
 reviewable plan. Generated repairs carry kernel-owned postconditions: MAK checks
 the prospective repository before committing them, and stops instead of asking

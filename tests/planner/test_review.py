@@ -175,3 +175,49 @@ class TestEdit:
         )
         assert len(result) == 2
         assert "Unrecognized choice" in io.text
+
+
+class TestProposedTasks:
+    """Wave 7: MAK-proposed caller tasks are marked and can be dropped."""
+
+    def _with_proposal(self) -> list[SubTask]:
+        return [
+            *_plan(),
+            SubTask(
+                task_id="mak.callers.1", description="update callers",
+                target_nodes=[NodeId("c.py::function::c")], depends_on=["a"],
+            ),
+        ]
+
+    def test_render_marks_proposed_tasks(self) -> None:
+        proposed = frozenset({"mak.callers.1"})
+        text = render_plan(self._with_proposal(), proposed=proposed)
+        assert "[mak.callers.1] [proposed by MAK] update callers" in text
+        assert "[a] do A" in text
+
+    def test_drop_removes_them_and_asks_again(self) -> None:
+        io = ScriptedIO(["d", "a"])
+        result = display_plan_for_review(
+            self._with_proposal(), prompt_fn=io.prompt, printer=io.printer,
+            proposed=frozenset({"mak.callers.1"}),
+        )
+        assert [t.task_id for t in result] == ["a", "b"]
+        assert "[d]rop MAK-proposed tasks" in io.output[1]
+        assert any("Dropped 1 MAK-proposed task(s)" in line for line in io.output)
+        # The second prompt no longer offers the choice.
+        prompts = [line for line in io.output if line.startswith("Approve plan?")]
+        assert "[d]rop" not in prompts[-1]
+
+    def test_drop_is_not_offered_without_proposals(self) -> None:
+        io = ScriptedIO(["d", "a"])
+        display_plan_for_review(_plan(), prompt_fn=io.prompt, printer=io.printer)
+        assert any("Unrecognized choice: 'd'" in line for line in io.output)
+
+    def test_caller_findings_render_as_applied_or_advisory(self) -> None:
+        findings = [
+            PlanFinding("missing_caller", "a", "added: 'mak.callers.1' updates 'x'"),
+            PlanFinding("missing_caller", "a", "'y' calls 'z'; no task updates it"),
+        ]
+        text = render_plan(_plan(), findings)
+        assert "✎ [a] added: 'mak.callers.1'" in text
+        assert "⚠ [a] 'y' calls" in text

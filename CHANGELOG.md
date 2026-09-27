@@ -14,6 +14,56 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.10.0b] — 2026-09-27
+
+The planner no longer receives every node id on every call, and no longer
+guesses callers from names. Its input is bounded by a token budget, it is shown
+signatures and the real call graph, and MAK itself proposes a task for every
+caller a declared signature change breaks.
+
+### Added
+- **Planner strategies `auto` (new default), `full` and `retrieval`.** `full`
+  shows every file with each node's signature and its incoming references.
+  `retrieval` shows the repository tree plus files picked for the task, and the
+  planner may ask to see more files or directories over up to
+  `planner.max_expansions` rounds. `auto` uses `full` when it fits
+  `planner.inventory_token_budget` (default 12,000 tokens) and `retrieval`
+  otherwise. On MAK's own source the first planner prompt is 22% of what it was.
+- **Caller-update tasks.** When a task declares a signature change
+  (`changes_api: true`), MAK adds one task per file of graph-visible callers that
+  no task updates, ordered after the change (`planner.auto_caller_tasks`,
+  capped by `planner.max_caller_tasks`). They are marked in review and can be
+  dropped: `[d]rop` in `mak run`, `o` (run without them) in the app. Dropped
+  ones are reported as `missing_caller` findings instead of being re-added.
+- **New plan findings:** `missing_caller`, `undeclared_api_callers` (a task
+  changes functions other files call without declaring whether their API
+  changes), `unseen_target` (a `retrieval` plan names a new id in a file it never
+  saw), `caller_task_refused` and `caller_tasks_capped`.
+- **Prompt caching.** Planner prompts are built from stable blocks plus a small
+  changing tail. Anthropic requests mark the stable blocks as cache breakpoints
+  (`planner.prompt_cache: false` turns this off). Local Ollama planners keep one
+  context window for the whole plan.
+- **Planner telemetry.** Every planner call is logged as a `planner_call` event
+  (sizes, counts, token usage and outcome — never prompt text), even when
+  planning fails. Run metrics gain `planner_calls`, `planner_rounds`,
+  `planner_input_tokens`, `planner_cached_tokens` and `planner_output_tokens`.
+- `benchmark/tools/planner_input.py`: an offline measurement of what the
+  planner sends, for MAK's own tree, the benchmark templates and synthetic
+  repositories.
+
+### Changed
+- `planner.strategy` defaults to `auto`. `oneshot` still sends the exact prompt
+  earlier versions sent; `outline` is unchanged.
+- Planner token usage counts cached prompt tokens as input, so
+  `session.max_total_tokens` never under-counts a cached prompt, and a truncated
+  or rejected planner reply is now counted too.
+- The dependency graph is built once per store change and shared by planning,
+  validation and plan installation, instead of twice per planned wave.
+- The interactive app's plan view summarizes the caller tasks MAK added and the
+  number of advisory findings.
+- A local planner whose model cannot fit the prompt is told to use strategy
+  `auto` and a lower `planner.inventory_token_budget`.
+
 ## [0.9.4b] — 2026-09-26
 
 An internal refactor of the session, with no change to what a run does. The

@@ -55,6 +55,13 @@ class EventType(StrEnum):
     SESSION_ENDED = "session_ended"
     PLAN_VALIDATED = "plan_validated"
     PLAN_METRICS = "plan_metrics"
+    # One planner LLM call, logged while planning runs (so a plan that ends in
+    # PlannerFailedError still records every call it paid for): its phase,
+    # round and attempt, the prompt's size and cacheable share, how much of the
+    # inventory it showed or left out, the provider's token usage (cached input
+    # included) and the outcome. Sizes and counts only — never prompt text or
+    # source. The first call of a plan also carries ``index_build_ms``.
+    PLANNER_CALL = "planner_call"
     # A task's commit found that a node its bundle carried had been
     # committed by someone else while it was in flight. Logged for *every*
     # stale read, whatever the verdict, with the node, both versions, the kind

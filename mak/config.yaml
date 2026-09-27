@@ -38,7 +38,22 @@ planner:
   # validate: true          # cross-check the plan against the code dependency
   #                         # graph — ground node ids, add missing depends_on edges
   #                         # (default true; set false to disable augmentation)
-  # strategy: "oneshot"     # "oneshot" or "outline" (outline -> per-step detail)
+  # strategy: "auto"        # how much of the repo the planner sees:
+  #                         #   auto      — "full" when it fits the budget below,
+  #                         #               else "retrieval" (the default)
+  #                         #   full      — every file: node ids, signatures, callers
+  #                         #   retrieval — directory tree + files picked for the
+  #                         #               task; the planner may ask to see more
+  #                         #   oneshot   — every node id as a flat list (pre-0.10)
+  #                         #   outline   — outline, then one call per step
+  # inventory_token_budget: 12000  # cap on the inventory part of one plan's
+  #                         # prompts, across all its rounds (2000–200000)
+  # max_expansions: 3       # rounds in which "retrieval" may ask for more (0–10)
+  # auto_caller_tasks: true # add a caller-update task per caller file when the
+  #                         # plan declares a signature change (removable at review)
+  # max_caller_tasks: 25    # at most this many such tasks per plan (0–200)
+  # prompt_cache: true      # mark the stable prompt prefix cacheable (Anthropic);
+  #                         # false if a gateway rejects cache_control
   # self_critique: false    # one extra LLM reflection pass over the produced plan
 
 # The first entry is the default agent: a plan's tasks are distributed across the

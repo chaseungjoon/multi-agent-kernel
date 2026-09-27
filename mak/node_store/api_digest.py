@@ -15,6 +15,8 @@ contract", with the dunder exception (``__init__`` is very much part of it).
 from __future__ import annotations
 
 import ast
+import copy
+import textwrap
 
 _INDENT = "    "
 
@@ -91,6 +93,80 @@ def _bindings(stmt: ast.stmt) -> list[tuple[str, str]]:
             (t.id, f"{t.id} = ...") for t in stmt.targets if isinstance(t, ast.Name)
         ]
     return []
+
+
+# -- the one-line node shape --------------------------------------------------
+#
+# The planner's inventory shows each node's *shape* beside its id, so the model
+# can tell a body-only change from a signature change and see what a caller
+# would have to pass. It is a third question again, with its own answers:
+# private names are shown (the planner may target them), but default values are
+# not — a default can carry a literal secret or an internal URL, and the planner
+# only needs to know a parameter is optional.
+
+SIGNATURE_MAX_CHARS = 160
+_SHAPED_KINDS = frozenset({"function", "method", "class"})
+
+
+def node_signature(source: str, kind: str) -> str | None:
+    """Return a node's shape as one line, or None when it has none.
+
+    ``def``/``async def`` lines with every default elided to ``=...``, and
+    ``class Name(bases)`` headers (keyword values elided too), each prefixed by
+    its decorators' **names** only. No bodies, no docstrings. Capped at
+    :data:`SIGNATURE_MAX_CHARS` with a trailing ``…``. Module and class-body
+    fragments, and sources that do not parse, have no shape.
+    """
+    if kind not in _SHAPED_KINDS:
+        return None
+    tree = _parse_lenient(textwrap.dedent(source))
+    if tree is None:
+        return None
+    for stmt in tree.body:
+        if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            return _cap(_shape(stmt))
+    return None
+
+
+def _shape(stmt: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> str:
+    """Render one definition's shape: decorator names, then its header."""
+    decorators = [f"@{_decorator_name(d)} " for d in stmt.decorator_list]
+    if isinstance(stmt, ast.ClassDef):
+        bases = [ast.unparse(b) for b in stmt.bases]
+        bases += [f"{k.arg}=..." if k.arg else "**..." for k in stmt.keywords]
+        header = f"class {stmt.name}({', '.join(bases)})" if bases else (
+            f"class {stmt.name}"
+        )
+    else:
+        prefix = "async def" if isinstance(stmt, ast.AsyncFunctionDef) else "def"
+        returns = f" -> {ast.unparse(stmt.returns)}" if stmt.returns else ""
+        header = f"{prefix} {stmt.name}({_elided_args(stmt.args)}){returns}"
+    return "".join(decorators) + header
+
+
+def _decorator_name(decorator: ast.expr) -> str:
+    """Return a decorator's name without arguments (``@route("/x")`` → ``route``)."""
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    return ast.unparse(target)
+
+
+def _elided_args(args: ast.arguments) -> str:
+    """Render a parameter list with every default value replaced by ``...``."""
+    elided = copy.deepcopy(args)
+    elided.defaults = [ast.Constant(value=...) for _ in elided.defaults]
+    elided.kw_defaults = [
+        None if default is None else ast.Constant(value=...)
+        for default in elided.kw_defaults
+    ]
+    return ast.unparse(elided)
+
+
+def _cap(text: str) -> str:
+    """Collapse whitespace and cap ``text`` at :data:`SIGNATURE_MAX_CHARS`."""
+    line = " ".join(text.split())
+    if len(line) <= SIGNATURE_MAX_CHARS:
+        return line
+    return line[: SIGNATURE_MAX_CHARS - 1] + "…"
 
 
 # -- the interface fingerprint ----------------------------------------------

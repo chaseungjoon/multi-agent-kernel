@@ -16,6 +16,10 @@ planner:
   model: "qwen2.5-coder:14b"
   backend: "ollama"
   base_url: "http://localhost:11434"
+  # The planner shows the repository within this many (estimated) tokens and
+  # asks to see more when it needs to, so a local model's window is not a wall.
+  # Lower it for a small context window; MAK refuses rather than truncate.
+  # inventory_token_budget: 12000
 
 agents:
   - type: "ollama_api"

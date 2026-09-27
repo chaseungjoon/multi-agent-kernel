@@ -31,7 +31,9 @@ Fields, by what they record:
   (the commit being parked right now, and why) and ``waiting_on_providers``.
 - **post-wave caches** — ``defects_at``, ``cascade_at``, ``gates_at``: findings
   keyed by store generation, because the cascade loop asks twice for one state.
-- **metrics** — the counters :func:`mak.session.results.plan_metrics` reports.
+- **metrics** — the counters :func:`mak.session.results.plan_metrics` reports,
+  and ``planning``: what planning this wave cost (zeros for a wave the planner
+  did not plan).
 
 Session-lifetime state (configuration and collaborators, the user objective,
 cascade history, token usage, the symbol index, ``.makignore``, the executor,
@@ -46,6 +48,7 @@ from mak.conflict_detector.cross_module_check import CrossModuleDefect
 from mak.core.exceptions import SessionError
 from mak.core.types import LockMode, NodeId, SubTask, TaskBundle, TaskResult
 from mak.planner.depgraph import DepGraph
+from mak.planner.telemetry import NO_PLANNING, PlanningSummary
 from mak.planner.validation import PlanFinding
 from mak.scheduler.lock_policy import LEGACY_POLICY, LockPolicy
 from mak.scheduler.scheduler import Scheduler
@@ -124,6 +127,7 @@ class WaveState:
     stale_reads: int = 0
     stale_redispatches: int = 0
     adjudicated_accepts: int = 0
+    planning: PlanningSummary = NO_PLANNING
 
     @classmethod
     def start(
@@ -135,6 +139,7 @@ class WaveState:
         lock_policy: LockPolicy = LEGACY_POLICY,
         progress: dict[str, SubTaskProgress] | None = None,
         read_sets: dict[str, ReadSet] | None = None,
+        planning: PlanningSummary = NO_PLANNING,
     ) -> WaveState:
         """Begin a wave with nothing accumulated yet."""
         return cls(
@@ -144,6 +149,7 @@ class WaveState:
             preexisting_files=set(preexisting_files or ()),
             progress=dict(progress or {}),
             read_sets=dict(read_sets or {}),
+            planning=planning,
         )
 
     def require_scheduler(self) -> Scheduler:

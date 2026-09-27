@@ -332,12 +332,19 @@ class TestPlanValidation:
         assert session.last_plan_findings == []
 
     def test_cascade_tasks_validate_without_findings(self, tmp_path: Path) -> None:
-        # Cascade tasks target real inventory ids, so validation is a clean no-op.
+        # Cascade tasks target real inventory ids, so validation changes nothing.
+        # The one thing it says is advisory: the task does not declare whether
+        # parse_config's API changes, and app.load calls it from outside the plan.
         store = self._project(tmp_path)
         session = self._session_validate(tmp_path, store, validate=True)
         session.initialize()
         session.install_plan([_task("solo", ["util.py::function::parse_config"])])
-        assert session.last_plan_findings == []
+        assert session.wave.task("solo").target_nodes == [
+            NodeId("util.py::function::parse_config")
+        ]
+        assert [f.kind for f in session.last_plan_findings] == [
+            "undeclared_api_callers"
+        ]
 
 
 # --- run: full completion ----------------------------------------------------

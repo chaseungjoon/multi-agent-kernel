@@ -41,7 +41,6 @@ from mak.git_integration.git import GitHelper
 from mak.lock_manager.deadlock_detector import DeadlockDetector
 from mak.lock_manager.project_lease import ProjectLease
 from mak.node_store.store import NodeStore
-from mak.planner.depgraph import dep_graph_from_store
 from mak.planner.planner import Planner, PlannerLLM
 from mak.planner.review import display_plan_for_review
 from mak.planner.validation import PlanFinding
@@ -288,7 +287,8 @@ class Session:
         reviewed = validated
         if review:
             reviewed = display_plan_for_review(
-                validated, findings=findings, prompt_fn=prompt_fn, printer=printer
+                validated, findings=findings, prompt_fn=prompt_fn, printer=printer,
+                proposed=proposal.proposed_task_ids,
             )
         self.install_plan(reviewed)
         if reviewed is validated:
@@ -311,14 +311,10 @@ class Session:
                 "instead, or set a planner model with /planner in the app"
             )
         self._objective = user_task
-        decomposed = self._planner.decompose(
-            user_task, self._node_store.list_nodes()
-        )
         # Ground and augment the plan before review so the reviewer sees the
-        # corrected plan and exactly what validation changed. install_plan()
-        # re-validates (an idempotent no-op on the already-corrected plan).
-        subtasks, findings = self._parts.planning.validate(decomposed)
-        return PlanProposal(subtasks=subtasks, findings=findings)
+        # corrected plan, what validation changed, and the caller tasks MAK
+        # added. install_plan() re-validates (a no-op on the corrected plan).
+        return self._parts.planning.propose(self._planner, user_task)
 
     def install_plan(
         self, subtasks: list[SubTask], *, objective: str | None = None
@@ -348,7 +344,8 @@ class Session:
             preexisting_files={
                 str(node_id).split("::", 1)[0]
                 for node_id in self._node_store.list_nodes()
-            }
+            },
+            planning=self._parts.planning.take_planning_summary(),
         )
         self._parts.adjudicator.start_wave()
         # Validation grounds ids and adds missing edges here, so every way a plan
@@ -357,8 +354,8 @@ class Session:
         self._parts.planning.reject_unsafe_targets(subtasks)
         # Always built: interface locks read callees off it, validation reads
         # references, and post-wave cascade needs the *pre*-wave edges to find
-        # callers of symbols the wave deletes.
-        self._wave.graph = dep_graph_from_store(self._node_store)
+        # callers of symbols the wave deletes. Cached per store generation.
+        self._wave.graph = self._parts.planning.index().graph
         subtasks, findings = self._parts.planning.validate(subtasks, self._wave.graph)
         self._wave.plan_findings = findings
         if findings:

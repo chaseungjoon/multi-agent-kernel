@@ -366,9 +366,20 @@ class PlannerConfig:
 
     ``validate`` (default on) runs deterministic plan validation against the code
     dependency graph after decomposition — grounding node ids and adding missing
-    dependency edges (see ``mak.planner.validation``). ``strategy`` is ``oneshot``
-    (single decomposition call) or ``outline`` (outline → per-step detail).
-    ``self_critique`` adds one LLM reflection pass over a produced plan.
+    dependency edges (see ``mak.planner.validation``). ``self_critique`` adds one
+    LLM reflection pass over a produced plan.
+
+    ``strategy`` decides how much of the inventory the planner is shown:
+    ``auto`` (default) shows every file with shapes and callers (``full``) when
+    that fits ``inventory_token_budget`` and otherwise the repository tree plus
+    pre-selected files, expandable on request (``retrieval``); ``oneshot`` is the
+    flat id listing in one call and ``outline`` an outline then per-step detail.
+    ``inventory_token_budget`` bounds the inventory section of one plan,
+    cumulatively across its rounds; ``max_expansions`` bounds the rounds.
+    ``auto_caller_tasks`` adds a caller-update task per caller file for each
+    signature change the plan declares, up to ``max_caller_tasks``.
+    ``prompt_cache`` sends cache breakpoints to providers that take them
+    (``false`` is an escape hatch for gateways that reject the field).
 
     ``backend`` / ``base_url`` / ``api_key_env`` are how a planner reaches a
     runtime the model id cannot name. Backend resolution is explicit, then
@@ -391,8 +402,13 @@ class PlannerConfig:
     model: str = ""
     max_retries: int = 3
     validate: bool = True
-    strategy: str = "oneshot"
+    strategy: str = "auto"
     self_critique: bool = False
+    inventory_token_budget: int = 12_000
+    max_expansions: int = 3
+    auto_caller_tasks: bool = True
+    max_caller_tasks: int = 25
+    prompt_cache: bool = True
     backend: str | None = None
     base_url: str | None = None
     api_key_env: str | None = None
@@ -646,7 +662,13 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
 
 _EXTERNAL_EDIT_POLICIES = ("adopt", "conflict")
 _TEST_POLICIES = ("require_pass", "allow_skip")
-_PLANNER_STRATEGIES = ("oneshot", "outline")
+_PLANNER_STRATEGIES = ("auto", "oneshot", "outline", "full", "retrieval")
+# Inclusive ranges for the planner's integer settings: (default, low, high).
+_PLANNER_RANGES: dict[str, tuple[int, int, int]] = {
+    "inventory_token_budget": (12_000, 2_000, 200_000),
+    "max_expansions": (3, 0, 10),
+    "max_caller_tasks": (25, 0, 200),
+}
 
 
 # Planner settings an endpoint already decides. Same reasoning as
@@ -659,8 +681,22 @@ _ENDPOINT_OWNED_PLANNER_FIELDS: tuple[str, ...] = (
 )
 
 
+def _planner_int(raw: dict[str, Any], key: str) -> int:
+    """Read one of the planner's bounded integers, naming the key on error."""
+    default, low, high = _PLANNER_RANGES[key]
+    value = raw.get(key, default)
+    if isinstance(value, bool):
+        raise ConfigError(f"planner '{key}' must be an integer, got {value!r}")
+    number = _as_int(raw, key, default)
+    if not low <= number <= high:
+        raise ConfigError(
+            f"planner '{key}' must be between {low:,} and {high:,}, got {number:,}"
+        )
+    return number
+
+
 def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
-    strategy = str(raw.get("strategy", "oneshot"))
+    strategy = str(raw.get("strategy", "auto"))
     if strategy not in _PLANNER_STRATEGIES:
         raise ConfigError(
             f"planner 'strategy' must be one of {_PLANNER_STRATEGIES}, got {strategy!r}"
@@ -683,6 +719,11 @@ def _parse_planner(raw: dict[str, Any]) -> PlannerConfig:
         validate=_as_bool(raw, "validate", True),
         strategy=strategy,
         self_critique=_as_bool(raw, "self_critique", False),
+        inventory_token_budget=_planner_int(raw, "inventory_token_budget"),
+        max_expansions=_planner_int(raw, "max_expansions"),
+        auto_caller_tasks=_as_bool(raw, "auto_caller_tasks", True),
+        max_caller_tasks=_planner_int(raw, "max_caller_tasks"),
+        prompt_cache=_as_bool(raw, "prompt_cache", True),
         backend=_as_choice(raw, "backend", None, _PLANNER_BACKENDS),
         base_url=_opt_url(raw, "base_url"),
         api_key_env=_opt_str(raw, "api_key_env"),

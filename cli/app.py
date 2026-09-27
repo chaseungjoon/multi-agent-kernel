@@ -36,6 +36,7 @@ from cli.setup import run_setup
 from cli.ui import ACCENT, print_banner, show_diff, show_plan, show_results
 from mak.cascade import run_cascade_waves
 from mak.execution_result import ExecutionResult
+from mak.planner.callers import drop_tasks
 from mak.teardown import SuiteOutcome, TeardownResult
 
 _STYLE = Style.from_dict({
@@ -185,13 +186,13 @@ class MakCli:
                 return
 
         # ── 3. Plan ────────────────────────────────────────────────────────────
-        subtasks: list[Any]          = []
+        proposal: Any                = None
         plan_error: Exception | None = None
         plan_done = threading.Event()
 
         def _plan() -> None:
-            nonlocal subtasks, plan_error
-            subtasks, plan_error = plan_in_thread(mak_session, task)
+            nonlocal proposal, plan_error
+            proposal, plan_error = plan_in_thread(mak_session, task)
             plan_done.set()
 
         threading.Thread(target=_plan, daemon=True).start()
@@ -203,18 +204,29 @@ class MakCli:
             console.print(f"  [red]✗[/red] Planning failed: {plan_error}")
             return
 
-        if not subtasks:
+        if proposal is None or not proposal.subtasks:
             console.print("  [yellow]⚠[/yellow] Planner produced an empty plan.")
             return
+        subtasks: list[Any] = proposal.subtasks
+        proposed: frozenset[str] = proposal.proposed_task_ids
 
         # ── 4. Show plan ───────────────────────────────────────────────────────
-        show_plan(console, subtasks)
+        show_plan(console, subtasks, proposed=proposed, findings=proposal.findings)
 
         # ── 5. Human approval ──────────────────────────────────────────────────
         if not state.no_review:
-            if not self._confirm_plan():
+            choice = self._confirm_proposal(bool(proposed))
+            if choice is None:
                 console.print("  [dim]Cancelled.[/dim]\n")
                 return
+            if choice == "without":
+                # install_plan re-validates and reports their callers as
+                # missing_caller findings; it does not add the tasks back.
+                subtasks = drop_tasks(subtasks, proposed)
+                console.print(
+                    f"  [dim]Running without the {len(proposed)} MAK-proposed "
+                    "task(s).[/dim]"
+                )
             console.print()
 
         # ── 6. Run ─────────────────────────────────────────────────────────────
@@ -308,6 +320,36 @@ class MakCli:
             return tasks
 
         return approve
+
+    def _confirm_proposal(self, has_proposed: bool) -> str | None:
+        """Approve a new plan: ``"all"``, ``"without"`` MAK's tasks, or None.
+
+        Without MAK-proposed tasks this is the plain y/N prompt. With them,
+        ``o`` runs the plan without them — the app's way to remove the tasks
+        MAK added, as ``[d]rop`` is in ``mak run``.
+        """
+        if not has_proposed:
+            return "all" if self._confirm_plan() else None
+        from prompt_toolkit import prompt as pt_prompt
+
+        try:
+            ans = pt_prompt(
+                FormattedText([
+                    ("", "  "),
+                    ("bold", "Run this plan?"),
+                    ("class:placeholder",
+                     "  y all · o without MAK's tasks · N cancels  "),
+                    ("class:prompt", "❯ "),
+                ]),
+                style=_STYLE,
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if ans in ("y", "yes"):
+            return "all"
+        if ans in ("o", "only"):
+            return "without"
+        return None
 
     def _confirm_plan(self) -> bool:
         """Single-line plan approval: Enter/y runs, anything else cancels."""
