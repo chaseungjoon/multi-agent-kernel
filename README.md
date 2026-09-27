@@ -381,14 +381,20 @@ python3 benchmark/sweep.py --config benchmark/sweeps/smoke.yaml --fresh
 
 ## Real-life Contention Study
 
-[contention_study](research/contention_study) mined six Python repositories to compare concurrent file and AST-node
-contention in real-life open source systems. 
+[research/contention_study/](research/contention_study) mined six Python repositories to compare concurrent file and AST-node
+contention in real-life open source systems.
 
 Python-node collisions were **2.2–10.3× less frequent** than
-Python-file collisions. 
+Python-file collisions.
 
 All **5,316 shared-node pairs** merged cleanly, and no
 shallow static defect appeared in **2,400 clean merges**.
+
+> Clean merges suggest human teams rarely need MAK's locking, but humans divide
+> work, communicate, and rebase over days. Concurrent **agents** do none of
+> this: a wave forks from one base, runs without coordination, and finishes in
+> minutes. The author expects agents to collide far more often, so these human
+> rates are a lower bound, not a forecast.
 
 ![Collision probability by concurrency and lock granularity.](research/contention_study/plots/01-collision-vs-k.png)
 
