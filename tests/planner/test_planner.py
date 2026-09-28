@@ -126,13 +126,61 @@ class TestParsePlan:
         assert "T03 -> notes" in str(exc.value)
         assert "ok.py" not in str(exc.value)  # the valid .py target is not flagged
 
-    def test_two_tasks_writing_same_whole_file_rejected(self) -> None:
+    def test_two_tasks_writing_same_whole_file_are_merged(self) -> None:
+        plan = parse_plan(json.dumps([
+            {"task_id": "a", "description": "edit it", "target_nodes": ["app.py"],
+             "context_nodes": ["lib.py"]},
+            {"task_id": "other", "description": "z", "target_nodes": ["lib.py"]},
+            {"task_id": "b", "description": "test it",
+             "target_nodes": ["app.py", "extra.py"], "depends_on": ["a", "other"]},
+            {"task_id": "c", "description": "w", "target_nodes": ["c.py"],
+             "depends_on": ["b"]},
+        ]))
+        assert [t.task_id for t in plan] == ["a", "other", "c"]
+        merged = plan[0]
+        assert merged.target_nodes == [NodeId("app.py"), NodeId("extra.py")]
+        assert merged.depends_on == ["other"]  # b's self-edge onto a is dropped
+        assert "edit it" in merged.description and "test it" in merged.description
+        assert plan[2].depends_on == ["a"]  # remapped from b
+
+    def test_merging_is_transitive(self) -> None:
+        plan = parse_plan(json.dumps([
+            {"task_id": "a", "description": "x", "target_nodes": ["x.py"]},
+            {"task_id": "b", "description": "y", "target_nodes": ["x.py", "y.py"]},
+            {"task_id": "c", "description": "z", "target_nodes": ["y.py"]},
+        ]))
+        assert [t.task_id for t in plan] == ["a"]
+        assert plan[0].target_nodes == [NodeId("x.py"), NodeId("y.py")]
+
+    def test_merged_api_declarations_stay_conservative(self) -> None:
+        plan = parse_plan(json.dumps([
+            {"task_id": "a", "description": "x", "target_nodes": ["app.py"],
+             "changes_api": False},
+            {"task_id": "b", "description": "y",
+             "target_nodes": ["app.py", "new.py"]},
+        ]))
+        assert plan[0].changes_api is True
+        assert plan[0].api_targets == [NodeId("app.py"), NodeId("new.py")]
+        body_only = parse_plan(json.dumps([
+            {"task_id": "a", "description": "x", "target_nodes": ["app.py"],
+             "changes_api": False},
+            {"task_id": "b", "description": "y", "target_nodes": ["app.py"],
+             "changes_api": False},
+        ]))
+        assert body_only[0].changes_api is False
+
+    def test_a_merge_that_would_cycle_is_rejected(self) -> None:
         bad = json.dumps([
             {"task_id": "a", "description": "x", "target_nodes": ["app.py"]},
-            {"task_id": "b", "description": "y", "target_nodes": ["app.py"]},
+            {"task_id": "mid", "description": "y", "target_nodes": ["mid.py"],
+             "depends_on": ["a"]},
+            {"task_id": "b", "description": "z", "target_nodes": ["app.py"],
+             "depends_on": ["mid"]},
         ])
-        with pytest.raises(ValueError, match="both write the whole file"):
+        with pytest.raises(ValueError, match="both write the whole file") as exc:
             parse_plan(bad)
+        assert "Merge them into one task" in str(exc.value)
+        assert "new file" not in str(exc.value)
 
     def test_whole_file_and_fragment_of_same_file_rejected(self) -> None:
         bad = json.dumps([

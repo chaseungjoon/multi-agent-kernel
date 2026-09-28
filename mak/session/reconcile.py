@@ -89,7 +89,10 @@ class WorkTreeReconciler:
 
         * every included file on disk is synchronized into the store, and
         * every file the store still holds live nodes for that is **gone** from
-          disk has those nodes retired.
+          disk has those nodes retired, and
+        * every whole-file node an agent created last session is split into
+          symbol fragments, so this session's plan can divide the file across
+          tasks instead of naming its bare path twice.
 
         A file whose content differs from what MAK last materialized was edited
         by someone else. Under the default ``on_external_edit="adopt"`` the disk
@@ -124,7 +127,7 @@ class WorkTreeReconciler:
                 self._on_external_edit(rel, source)
                 adopted.append(rel)
             try:
-                reports.append(self._store.sync_file(rel, source))
+                reports.append(self._store.sync_file(rel, source, refragment=True))
             except (SyntaxError, OSError):
                 continue
         reports.extend(self._retire_missing_files(seen))
@@ -206,13 +209,15 @@ class WorkTreeReconciler:
         """Say what reconciliation changed, when it changed anything."""
         updated = sum(len(r.updated) for r in reports)
         retired = sum(len(r.retired) for r in reports)
-        if not adopted and not retired and not updated:
+        refragmented = sum(len(r.refragmented) for r in reports)
+        if not adopted and not retired and not updated and not refragmented:
             return
         self._log(
             EventType.SESSION_STARTED,
             reconciled_files=len(adopted),
             reconciled_updated=updated,
             reconciled_retired=retired,
+            reconciled_refragmented=refragmented,
         )
         if adopted or retired:
             print(

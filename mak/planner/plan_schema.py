@@ -10,7 +10,8 @@ re-pass the same invariants). :mod:`mak.planner.planner` re-exports
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, replace
 
 from mak.core.exceptions import ContractError
 from mak.core.paths import unsafe_node_id_reason
@@ -18,6 +19,8 @@ from mak.core.task_codec import subtask_to_dict
 from mak.core.types import NodeId, SubTask
 from mak.planner.contracts import parse_contract, symbol_of_node
 from mak.planner.response import loads_json
+
+_logger = logging.getLogger(__name__)
 
 
 def _require(condition: bool, message: str) -> None:
@@ -247,8 +250,11 @@ def parse_plan(raw: str) -> list[SubTask]:
 
     # A *whole-file* target (a bare 'path.py' with no ::kind::name) is the entire
     # file. If two tasks each return a whole file, the second clobbers the first, so
-    # require a whole-file target to be owned by exactly one task. To split work
-    # across a file, target distinct symbols (file.py::kind::name) instead.
+    # a whole-file target must be owned by exactly one task. Tasks sharing one are
+    # merged into a single task rather than bounced back to the planner: a small
+    # model asked to fix it tends to re-send the same plan until retries run out.
+    # Only a merge that would create a dependency cycle is still refused.
+    subtasks = _merge_whole_file_owners(subtasks)
     whole_file_owner: dict[str, str] = {}
     fragment_files: dict[str, str] = {}  # file path -> a task targeting its fragments
     for task in subtasks:
@@ -257,12 +263,9 @@ def parse_plan(raw: str) -> list[SubTask]:
                 fragment_files.setdefault(target_file(node), task.task_id)
                 continue
             if node in whole_file_owner:
-                raise ValueError(
-                    f"tasks '{whole_file_owner[node]}' and '{task.task_id}' both write "
-                    f"the whole file '{node}'; a new file must be created by exactly "
-                    "one task. Give each file its own task, or split a file across "
-                    "tasks by targeting individual symbols (file.py::kind::name)."
-                )
+                raise ValueError(_whole_file_conflict(
+                    whole_file_owner[node], task.task_id, node
+                ))
             whole_file_owner[node] = task.task_id
 
     # A file cannot be edited at *both* granularities in one plan: a whole-file commit
@@ -281,6 +284,151 @@ def parse_plan(raw: str) -> list[SubTask]:
             "or only 'file.py::kind::name' symbol tasks."
         )
     return subtasks
+
+
+def _whole_file_conflict(first: str, second: str, node: str) -> str:
+    """Return the retry feedback for two tasks writing the whole file ``node``."""
+    return (
+        f"tasks '{first}' and '{second}' both write the whole file '{node}', and "
+        "a whole file can have only one writer. Merge them into one task that "
+        f"targets '{node}', or, if the inventory lists symbols for that file, "
+        "split the work by targeting individual symbols (file.py::kind::name)."
+    )
+
+
+def _merge_whole_file_owners(subtasks: list[SubTask]) -> list[SubTask]:
+    """Fold tasks that share a whole-file target into one task per group.
+
+    Groups are transitive (a shares ``x.py`` with b, b shares ``y.py`` with c:
+    one task). The merged task keeps the first member's id and position; every
+    other task's ``depends_on`` is remapped onto it. Raises ``ValueError`` when
+    the merge would close a dependency cycle — some task outside the group both
+    depends on one member and is depended on by another.
+    """
+    parent = list(range(len(subtasks)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    owners: dict[str, list[int]] = {}
+    for i, task in enumerate(subtasks):
+        for node in dict.fromkeys(str(n) for n in task.target_nodes):
+            if "::" not in node:
+                owners.setdefault(node, []).append(i)
+    for indices in owners.values():
+        for i in indices[1:]:
+            parent[find(i)] = find(indices[0])
+    groups: dict[int, list[int]] = {}
+    for i in range(len(subtasks)):
+        groups.setdefault(find(i), []).append(i)
+    if all(len(members) == 1 for members in groups.values()):
+        return subtasks
+
+    head = {
+        subtasks[i].task_id: subtasks[min(members)].task_id
+        for members in groups.values()
+        for i in members
+    }
+    merged: list[SubTask] = []
+    for i, task in enumerate(subtasks):
+        members = groups[find(i)]
+        if i != min(members):
+            continue
+        group = [subtasks[m] for m in members]
+        combined = _combine(group) if len(group) > 1 else task
+        deps = [head[d] for d in combined.depends_on if head[d] != combined.task_id]
+        merged.append(replace(combined, depends_on=list(dict.fromkeys(deps))))
+
+    graph = {t.task_id: t.depends_on for t in merged}
+    for root, members in groups.items():
+        if len(members) > 1 and _reaches_itself(graph, subtasks[min(members)].task_id):
+            node, indices = next(
+                (node, indices) for node, indices in owners.items()
+                if len(indices) > 1 and find(indices[0]) == root
+            )
+            first, second = (subtasks[m].task_id for m in indices[:2])
+            raise ValueError(
+                _whole_file_conflict(first, second, node)
+                + " They cannot be merged automatically: another task sits "
+                "between them in the dependency order."
+            )
+    for members in groups.values():
+        if len(members) > 1:
+            _logger.info(
+                "merged tasks %s into '%s': they write the same whole file",
+                ", ".join(repr(subtasks[m].task_id) for m in members),
+                subtasks[min(members)].task_id,
+            )
+    return merged
+
+
+def _combine(group: list[SubTask]) -> SubTask:
+    """One task doing the work of ``group``, which shares whole-file targets."""
+    first = group[0]
+    ids = ", ".join(f"'{t.task_id}'" for t in group)
+    description = (
+        f"This task combines {ids}, which write the same file(s). Do all of:\n\n"
+        + "\n\n".join(f"[{t.task_id}] {t.description}" for t in group)
+    )
+
+    def union(lists: list[list[NodeId]]) -> list[NodeId]:
+        return list(dict.fromkeys(n for nodes in lists for n in nodes))
+
+    targets = union([t.target_nodes for t in group])
+    context = [n for n in union([t.context_nodes for t in group]) if n not in targets]
+    contract: dict[NodeId, str] = {}
+    registry_keys: dict[NodeId, list[str]] = {}
+    for t in group:
+        contract.update(t.contract)
+        for node, keys in t.registry_keys.items():
+            merged_keys = [*registry_keys.get(node, []), *keys]
+            registry_keys[node] = list(dict.fromkeys(merged_keys))
+
+    # changes_api is tri-state; the merge must stay at least as conservative as
+    # every member. All False: a body-only promise holds. All None: still
+    # unknown. Otherwise a declared change, narrowed to the targets each member
+    # could change (None or a bare True means all of its targets).
+    flags = {t.changes_api for t in group}
+    changes_api: bool | None
+    api_targets: list[NodeId] = []
+    if flags == {False}:
+        changes_api = False
+    elif flags == {None}:
+        changes_api = None
+    else:
+        changes_api = True
+        api_targets = union([
+            (t.api_targets or t.target_nodes) if t.changes_api is not False else []
+            for t in group
+        ])
+    return replace(
+        first,
+        description=description,
+        target_nodes=targets,
+        context_nodes=context,
+        depends_on=[d for t in group for d in t.depends_on],
+        changes_api=changes_api,
+        api_targets=api_targets,
+        contract=contract,
+        registry_keys=registry_keys,
+    )
+
+
+def _reaches_itself(deps: dict[str, list[str]], start: str) -> bool:
+    """Whether ``start`` transitively depends on itself."""
+    seen: set[str] = set()
+    stack = list(deps.get(start, ()))
+    while stack:
+        tid = stack.pop()
+        if tid == start:
+            return True
+        if tid not in seen:
+            seen.add(tid)
+            stack.extend(deps.get(tid, ()))
+    return False
 
 
 def _plan_to_json(tasks: list[SubTask]) -> str:

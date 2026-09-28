@@ -185,6 +185,21 @@ class TestInitialize:
         assert any("good.py" in str(n) for n in inventory)
         assert not any("bad.py" in str(n) for n in inventory)
 
+    def test_splits_a_whole_file_node_from_a_previous_session(
+        self, tmp_path: Path
+    ) -> None:
+        # A file an agent created last session is one bare-path node; left whole,
+        # no later plan could divide it between two tasks.
+        (tmp_path / "mod.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        nid = NodeId("mod.py")
+        store.put_node(nid, NodeFragment(nid, "module", _TWO_FUNCS, 1))
+        store.commit_node(nid)
+        session = _session(tmp_path, runner=StagingRunner(store), node_store=store)
+        inventory = {str(n) for n in session.initialize()}
+        assert "mod.py" not in inventory
+        assert {"mod.py::function::a", "mod.py::function::b"} <= inventory
+
     def test_double_initialize_raises(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         session = _session(tmp_path, runner=StagingRunner(store), node_store=store)

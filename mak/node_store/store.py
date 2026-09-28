@@ -102,6 +102,9 @@ class FileSyncReport:
     updated: tuple[NodeId, ...] = ()
     retired: tuple[NodeId, ...] = ()
     unchanged: tuple[NodeId, ...] = ()
+    # The whole-file node split into ``added`` — not a deleted symbol, so it is
+    # reported apart from ``retired``.
+    refragmented: tuple[NodeId, ...] = ()
 
     @property
     def live(self) -> list[NodeId]:
@@ -111,7 +114,7 @@ class FileSyncReport:
     @property
     def changed(self) -> bool:
         """Whether the store's picture of the file moved at all."""
-        return bool(self.added or self.updated or self.retired)
+        return bool(self.added or self.updated or self.retired or self.refragmented)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -504,7 +507,13 @@ class NodeStore:
 
     def _next_version(self, node_id: NodeId) -> int:
         committed = self._nodes.get(node_id)
-        return committed.version + 1 if committed is not None else 1
+        if committed is not None:
+            return committed.version + 1
+        # A retired id re-created (a split whole-file node rewritten whole again)
+        # continues its history instead of overwriting ``v1.py``.
+        retired = self._metadata.get(node_id, {})
+        version = retired.get("version") if retired.get("retired") else None
+        return version + 1 if isinstance(version, int) else 1
 
     def _order(self, node_id: NodeId) -> int:
         value = self._metadata.get(node_id, {}).get("order", 0)
@@ -965,7 +974,9 @@ class NodeStore:
         """
         return self.sync_file(file_path, source).live
 
-    def sync_file(self, file_path: str, source: str | None) -> FileSyncReport:
+    def sync_file(
+        self, file_path: str, source: str | None, *, refragment: bool = False
+    ) -> FileSyncReport:
         r"""Make the store's picture of ``file_path`` match ``source``.
 
         Re-ingestion used to be write-only and version-blind: it wrote whatever
@@ -981,9 +992,9 @@ class NodeStore:
         leaves the store exactly as the previous session left it:
 
         * **file unknown** — fresh ingestion, versions start at 1 (unchanged).
-        * **whole-file node** — if ``source`` differs, commit it as the next
-          version of that node. The node stays whole-file: re-fragmenting it
-          would create the stale siblings the old early return was avoiding.
+        * **whole-file node** — with ``refragment``, split it into symbol
+          fragments (:meth:`_refragment_whole_file`); otherwise, if ``source``
+          differs, commit it as the next version of that node.
         * **fragment nodes** — diff the new parse against the committed set.
           Changed fragments advance to ``_next_version``; identical ones are left
           untouched (no version churn for an unedited file); committed ids the
@@ -993,12 +1004,22 @@ class NodeStore:
 
         ``source`` is never re-read from disk here: the caller has already read
         it, and a second read is a second answer.
+
+        ``refragment`` is for session start (reconciliation) only. A whole-file
+        node is how an agent creates a file, and left whole it can never be split
+        across tasks: every later plan must name the bare path, so two tasks
+        touching the file are rejected outright. Mid-session the bare id may be a
+        live task's target, so it is only ever split between sessions.
         """
         with self._lock, self.transaction():
             if source is None:
                 return self._sync_deleted_file(file_path)
             whole_file_nid = NodeId(file_path)
             if whole_file_nid in self._nodes:
+                if refragment:
+                    report = self._refragment_whole_file(whole_file_nid, source)
+                    if report is not None:
+                        return report
                 return self._sync_whole_file(whole_file_nid, source)
             if self._live_ids_for(file_path):
                 return self._sync_fragments(file_path, source)
@@ -1042,6 +1063,27 @@ class NodeStore:
         )
         self.commit_node(node_id)
         return FileSyncReport(file_path=str(node_id), updated=(node_id,))
+
+    def _refragment_whole_file(
+        self, node_id: NodeId, source: str
+    ) -> FileSyncReport | None:
+        """Replace a whole-file node with the symbol fragments ``source`` parses to.
+
+        The whole-file node is retired, not removed, so its version history stays
+        addressable. Its fragments were already dropped when it was committed
+        (:meth:`_supersede_fragments`), so the fresh parse has no stale siblings
+        to collide with. Returns ``None`` — leave the node whole — when
+        ``source`` does not parse or yields no fragments (an empty file).
+        """
+        try:
+            fragments = parse_file_into_fragments(str(node_id), source)
+        except SyntaxError:
+            return None
+        if not fragments:
+            return None
+        self.retire_node(node_id)
+        report = self._ingest_new_file(str(node_id), source)
+        return dataclasses.replace(report, refragmented=(node_id,))
 
     def _sync_fragments(self, file_path: str, source: str) -> FileSyncReport:
         """Diff a file's committed fragments against a fresh parse."""

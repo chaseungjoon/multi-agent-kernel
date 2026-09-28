@@ -15,6 +15,7 @@ import pytest
 from mak.core.exceptions import NodeStoreError
 from mak.core.types import NodeFragment, NodeId
 from mak.node_store import store as store_mod
+from mak.node_store.reconstruction import assemble_fragments
 from mak.node_store.store import NodeStore
 
 _TWO_FUNCS = "def a():\n    return 1\n\n\ndef b():\n    return 2\n"
@@ -286,7 +287,7 @@ class TestSyncWholeFile:
         assert report.unchanged == (nid,)
         assert store.get_node(nid).version == 1
 
-    def test_it_stays_whole_file_rather_than_re_fragmenting(
+    def test_it_stays_whole_file_without_refragment(
         self, tmp_path: Path
     ) -> None:
         store = _store(tmp_path)
@@ -294,8 +295,81 @@ class TestSyncWholeFile:
         store.put_node(nid, NodeFragment(nid, "module", "def a():\n    return 1\n", 1))
         store.commit_node(nid)
         store.sync_file("m.py", _TWO_FUNCS)
-        # Re-fragmenting would create the stale siblings the old early return
-        # was (badly) avoiding: the whole-file node remains authoritative.
+        # Mid-session the bare id may be a live task's target: it stays whole.
+        assert store.list_nodes("m.py") == [nid]
+
+
+class TestRefragment:
+    def _whole(self, store: NodeStore, source: str) -> NodeId:
+        nid = NodeId("m.py")
+        store.put_node(nid, NodeFragment(nid, "module", source, 1))
+        store.commit_node(nid)
+        return nid
+
+    def test_a_whole_file_node_is_split_into_symbols(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        nid = self._whole(store, _TWO_FUNCS)
+
+        report = store.sync_file("m.py", _TWO_FUNCS, refragment=True)
+
+        assert report.refragmented == (nid,)
+        assert report.retired == ()  # no symbol was deleted
+        assert [str(n) for n in store.list_nodes("m.py")] == [
+            "m.py::function::a", "m.py::function::b",
+        ]
+        assert "m.py" not in {str(n) for n in store.list_nodes()}
+        # Exactly what a first-time ingestion of the same source would hold.
+        fresh = NodeStore(tmp_path / "fresh")
+        fresh.sync_file("m.py", _TWO_FUNCS)
+        assert assemble_fragments(
+            store.get_committed_fragments("m.py")
+        ) == assemble_fragments(fresh.get_committed_fragments("m.py"))
+
+    def test_it_takes_the_working_tree_source(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        self._whole(store, "def a():\n    return 1\n")
+        store.sync_file("m.py", _TWO_FUNCS, refragment=True)
+        assert "return 2" in store.get_node(NodeId("m.py::function::b")).source
+
+    def test_the_split_survives_a_reopen(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        self._whole(store, _TWO_FUNCS)
+        store.sync_file("m.py", _TWO_FUNCS, refragment=True)
+        reopened = _reopen(store)
+        assert len(reopened.list_nodes("m.py")) == 2
+        assert reopened.is_retired(NodeId("m.py"))
+
+    def test_history_stays_addressable(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        nid = self._whole(store, _TWO_FUNCS)
+        store.sync_file("m.py", _TWO_FUNCS, refragment=True)
+        assert store.get_node(nid, version=1).source == _TWO_FUNCS
+
+    def test_a_later_whole_file_rewrite_continues_the_history(
+        self, tmp_path: Path
+    ) -> None:
+        store = _store(tmp_path)
+        nid = self._whole(store, _TWO_FUNCS)
+        store.sync_file("m.py", _TWO_FUNCS, refragment=True)
+
+        store.put_node(nid, NodeFragment(nid, "module", "x = 1\n", 1))
+        store.commit_node(nid)
+
+        assert store.get_node(nid).version == 2
+        assert store.get_node(nid, version=1).source == _TWO_FUNCS
+        assert store.list_nodes("m.py") == [nid]
+
+    def test_unparseable_source_stays_whole(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        nid = self._whole(store, _TWO_FUNCS)
+        report = store.sync_file("m.py", "def (:\n", refragment=True)
+        assert report.refragmented == ()
+        assert store.list_nodes("m.py") == [nid]
+
+    def test_an_empty_file_stays_whole(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        nid = self._whole(store, "x = 1\n")
+        store.sync_file("m.py", "", refragment=True)
         assert store.list_nodes("m.py") == [nid]
 
 

@@ -378,8 +378,12 @@ whole-file node **supersedes** the file's fragments: `commit_node` drops every
 `path::…` node for that file, `list_nodes(file_path)` returns only the whole-file
 node, `list_nodes()` omits the superseded fragments from the planner inventory,
 and `parse_file_into_nodes` keeps a committed whole-file node whole (a differing
-source becomes its next version). Mixing whole-file and fragment targets for the
-same file in one plan is rejected at plan time (§9).
+source becomes its next version). A whole-file node lives for one session only:
+reconciliation at the next session start (`sync_file(..., refragment=True)`)
+retires it and ingests the file as symbol fragments, so later plans can divide
+the file across tasks. Two tasks that both target the same bare path are merged
+into one by `parse_plan`; mixing whole-file and fragment targets for the same
+file in one plan is rejected at plan time (§9).
 
 ### On-disk layout
 
