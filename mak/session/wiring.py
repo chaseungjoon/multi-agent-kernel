@@ -166,7 +166,10 @@ def _commit_path(
         log=log,
     )
     retry = RetryPolicy(
-        registry=inputs.registry, max_attempts=inputs.max_attempts, log=log
+        registry=inputs.registry,
+        view=view,
+        max_attempts=inputs.max_attempts,
+        log=log,
     )
     batches = BatchProcessor(
         view=view,

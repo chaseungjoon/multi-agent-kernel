@@ -1571,6 +1571,120 @@ class TestSourceTransport:
         assert result.failed == ("extend",)
         assert "output-token limit" in result.failure_reasons["extend"]
 
+    def test_an_unchanged_echo_does_not_complete(self, tmp_path: Path) -> None:
+        # The viber run: an agent handed a function returned it byte for byte, and
+        # the task was reported complete with the work never done.
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        a = "m.py::function::a"
+        runner = WireRunner({a: "def a():\n    return 0\n"})
+        session = _session(tmp_path, runner=runner, node_store=store, max_attempts=2)
+        session.initialize()
+        session.install_plan([_task("impl", [a])])
+        result = session.run()
+        assert result.failed == ("impl",)
+        assert "unchanged" in result.failure_reasons["impl"]
+        assert store.get_node(NodeId(a)).version == 1  # no version churn
+
+    def test_an_unchanged_echo_with_an_assertion_is_a_noop(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        a = "m.py::function::a"
+
+        class EchoNoOpRunner:
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                source = "def a():\n    return 0\n"
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=True,
+                    no_changes_required=True,
+                    modified_nodes=[NodeId(a)],
+                    new_sources={NodeId(a): source},
+                )
+
+        session = _session(tmp_path, runner=EchoNoOpRunner(), node_store=store)
+        session.initialize()
+        session.install_plan([_task("audit", [a])])
+        result = session.run()
+        assert result.completed == ("audit",)
+        assert result.noop == ("audit",)
+
+    def test_an_unchanged_node_beside_real_work_commits(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        a, b = "m.py::function::a", "m.py::function::b"
+        runner = WireRunner({
+            a: "def a():\n    return 0\n",
+            b: "def b():\n    return 2\n",
+        })
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("impl", [a, b])])
+        result = session.run()
+        assert result.completed == ("impl",)
+        assert "return 2" in (tmp_path / "m.py").read_text()
+
+    def test_a_retry_names_a_target_that_does_not_exist_yet(
+        self, tmp_path: Path
+    ) -> None:
+        # The viber run: handed no source for a new file, the agent asked for the
+        # "existing" source three times over.
+        store = _store(tmp_path)
+
+        class RefusingRunner:
+            def __init__(self) -> None:
+                self.bundles: list[TaskBundle] = []
+
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                self.bundles.append(task)
+                return TaskResult(
+                    task_id=task.task_id,
+                    success=False,
+                    error="the context is empty; provide the existing source",
+                )
+
+        runner = RefusingRunner()
+        session = _session(tmp_path, runner=runner, node_store=store, max_attempts=2)
+        session.initialize()
+        session.install_plan([_task("create", ["new.py"])])
+        session.run()
+        assert runner.bundles[0].retry_note is None
+        note = runner.bundles[1].retry_note or ""
+        assert "'new.py' does not exist yet" in note
+        assert "from scratch" in note
+
+    def test_a_whole_file_target_ships_its_assembled_source(
+        self, tmp_path: Path
+    ) -> None:
+        # A bare-path target on a file stored as fragments has no node of its own;
+        # without its assembled source the agent would be told it is new.
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+
+        class CapturingRunner:
+            def __init__(self) -> None:
+                self.bundles: list[TaskBundle] = []
+
+            def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
+                self.bundles.append(task)
+                return TaskResult(
+                    task_id=task.task_id, success=True, no_changes_required=True
+                )
+
+        runner = CapturingRunner()
+        session = _session(tmp_path, runner=runner, node_store=store)
+        session.initialize()
+        session.install_plan([_task("rewrite", ["m.py"])])
+        session.run()
+        context = runner.bundles[0].context
+        assert "def a" in context["write_source:m.py"]
+        assert "def b" in context["write_source:m.py"]
+        assert not any(k.startswith("read_source:m.py::") for k in context)
+
     def test_a_retry_after_truncation_differs_from_the_first_attempt(
         self, tmp_path: Path
     ) -> None:

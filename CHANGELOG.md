@@ -14,6 +14,27 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.10.2b] — 2026-09-29
+
+### Fixed
+- **An agent that returns code unchanged no longer completes its task.** If every
+  source in a reply equals the committed source, the reply is rolled back
+  instead of committed as a new version, and the attempt counts as an empty
+  reply: it completes as a no-op only with `no_changes_required` set, and is
+  otherwise retried with a note saying the target came back unchanged. Each
+  rolled-back node is logged as `source_dropped` ("identical to the committed
+  source"). An unchanged node returned beside real changes still commits.
+- **Agents are told when a target is new.** A target with no existing source
+  (a new file or symbol) reached the agent with no `write_source` entry and no
+  explanation, and a model could refuse with "the context is empty, provide the
+  existing source" on every attempt. Every API system prompt now states
+  `NEW_TARGET_CONTRACT`, the CLI prompt marks the target as new, and a retry
+  note names any target that does not exist yet.
+- **A whole-file target on an existing file carries its source.** A bare-path
+  target whose file is stored as fragments now gets the assembled file as its
+  `write_source`, instead of one read-only entry per fragment. Without it, the
+  new-target rule above would have told the agent the file did not exist.
+
 ## [0.10.1b] — 2026-09-29
 
 ### Fixed

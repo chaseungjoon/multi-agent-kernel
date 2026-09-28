@@ -369,7 +369,7 @@ class TestInterfaceEnforcement:
                 LOAD: "def load(uid, extra=None):\n    return {}\n",
                 HELPER: "def helper():\n    return 5\n",
             }],
-            "r": [{SHOW: "def show(uid):\n    return load(uid)\n"}],
+            "r": [{SHOW: "def show(uid):\n    return load(uid) or {}\n"}],
         })
         # Validation would order R after W (R's target calls what W writes);
         # this test is about the lock level, so the plan is taken as given.

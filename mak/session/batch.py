@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import queue
 from collections import Counter
 
@@ -146,6 +147,13 @@ class BatchProcessor:
             accepted = self._stage_returned_sources(
                 task_id, progress.target_nodes, result.new_sources
             )
+            if accepted and self._drop_if_all_unchanged(progress, accepted):
+                # Nothing came back but the current source: the reply carries no
+                # work, so it is judged like one that returned nothing at all.
+                accepted = []
+                result = dataclasses.replace(
+                    result, modified_nodes=[], new_sources={}
+                )
         elif result.error:
             # The agent call itself failed (API error, or a truncated/malformed
             # structured response). Keep the reason so the run can report it.
@@ -261,6 +269,38 @@ class BatchProcessor:
             repairs=result.repairs,
             error=result.error,
         )
+
+    def _drop_if_all_unchanged(
+        self, progress: SubTaskProgress, staged: list[NodeId]
+    ) -> bool:
+        """Roll back ``staged`` when every source equals the committed one.
+
+        A reply that echoes each target's current source verbatim did not do the
+        task, but committing it would advance every version and report the task
+        complete. It is instead refused like an empty reply: accepted only as an
+        asserted no-op (``no_changes_required``), otherwise retried with a note
+        that says what came back. A reply that changed *any* target is work, and
+        its unchanged siblings commit alongside it.
+        """
+        store = self._view.store
+        for node_id in staged:
+            fragment = store.get_staged(node_id)
+            current = self._view.dependency_source(node_id)
+            if fragment is None or current is None or fragment.source != current:
+                return False
+        for node_id in staged:
+            fragment = store.get_staged(node_id)
+            store.rollback_node(node_id)
+            self._log(
+                EventType.SOURCE_DROPPED,
+                task_id=progress.task_id,
+                node_id=str(node_id),
+                granted=[str(n) for n in progress.target_nodes],
+                source_length=len(fragment.source) if fragment is not None else 0,
+                reason="identical to the committed source",
+            )
+        progress.unchanged_returns = list(staged)
+        return True
 
     def _stage_returned_sources(
         self, task_id: str, grant: list[NodeId], new_sources: dict[NodeId, str]

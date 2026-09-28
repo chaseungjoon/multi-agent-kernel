@@ -70,6 +70,38 @@ class TestBuildPrompt:
         assert "read-only" in prompt.lower()
         assert "def bar():" in prompt
 
+    def test_a_target_with_no_source_is_named_as_new(self) -> None:
+        bundle = TaskBundle(
+            task_id="t",
+            description="create the TUI",
+            target_nodes=[NodeId("app.py"), NodeId("m.py::function::foo")],
+            context={"write_source:m.py::function::foo": "def foo():\n    pass\n"},
+        )
+        prompt = build_prompt(bundle)
+        new_block = prompt.split("### app.py\n", 1)[1].split("###", 1)[0]
+        assert "does not exist yet" in new_block
+        assert "from scratch" in new_block
+        existing = prompt.split("### m.py::function::foo\n", 1)[1]
+        assert existing.startswith("def foo():")
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "anthropic_api_adapter",
+        "gemini_api_adapter",
+        "ollama_api_adapter",
+        "openai_api_adapter",
+    ],
+)
+def test_every_api_system_prompt_explains_new_targets(module: str) -> None:
+    import importlib
+
+    from mak.agent_runner.protocol import NEW_TARGET_CONTRACT
+
+    adapter = importlib.import_module(f"mak.agent_runner.adapters.{module}")
+    assert NEW_TARGET_CONTRACT in adapter._SYSTEM_PROMPT
+
 
 def _fake_run(
     stdout: str = "", returncode: int = 0

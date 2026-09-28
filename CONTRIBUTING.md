@@ -220,7 +220,7 @@ The concurrency gate is `tests/test_concurrency_integration.py`.
 
 ## Current status
 
-MAK **0.10.1 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
+MAK **0.10.2 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
 endpoint support, local runtimes, and the interactive app are all implemented.
 
 | Gate | State |
@@ -520,9 +520,12 @@ layers:
    (and the task itself) declared, rendered with a role: "implement this" or
    "build against this fixed signature" (§5.3).
 1. **Write targets** — committed source of every node the agent will write
-   (`write_source:<id>`).
+   (`write_source:<id>`). A whole-file target whose file is stored as fragments
+   gets the assembled file. Only a target that does not exist yet has no entry,
+   and the agent is told that means "create it" (`NEW_TARGET_CONTRACT`).
 2. **Planner context nodes** — read-only source (`read_source:<id>`).
-3. **Same-file siblings** — every other committed node in the target files.
+3. **Same-file siblings** — every other committed node in the target files,
+   skipped for a file that is itself a whole-file write target.
 4. **Cross-file callers** — nodes elsewhere whose source references a target's
    symbol. A whole-file target contributes the symbols of its committed nodes.
 5. **Dependency outputs** — the committed source of every target of every task
@@ -558,6 +561,11 @@ captured on the dispatching thread right after enrichment (§5.3).
    grant; anything else is refused and logged as `SOURCE_DROPPED`. Folded
    fragments are ordered: a `module_header` first, then the store's recorded
    `order`, then emission order.
+   If **every** staged source equals its committed source, the reply carries no
+   work: the fragments are rolled back, each logged as `SOURCE_DROPPED`
+   ("identical to the committed source"), and the attempt is judged as an empty
+   reply (§Run, no-op acceptance). An unchanged node beside a changed one
+   commits with it.
 2. **`compile()` each fragment** — not `ast.parse()`, because `compile()`
    enforces every compile-time rule, including `from __future__` placement.
 3. **The commit pipeline** (§5, §11).
@@ -996,10 +1004,13 @@ never make a real call. `result_schema.py` renders the one `TaskResult` schema i
 four dialects (`anthropic`, `gemini`, `openai` strict, `ollama`), so the schema
 exists once.
 
-Every system prompt states three contracts from `protocol.py`:
+Every system prompt states four contracts from `protocol.py`:
 
 - `NODE_ID_CONTRACT` — copy ids verbatim from `target_nodes`; return a bare-path
   target as one complete file.
+- `NEW_TARGET_CONTRACT` — a target with no `write_source` entry does not exist
+  yet; write it from scratch rather than asking for its source. The CLI bridge
+  prompt (`build_prompt`) says the same inside that target's block.
 - `NO_CHANGE_CONTRACT` — a no-op counts only when `no_changes_required` is set.
 - `RETRY_NOTE_CONTRACT` — follow a bundle's `retry_note` rather than repeating
   the failed attempt.
@@ -1661,7 +1672,9 @@ narrowed task (`SubTaskProgress`, bounded by `max_attempts`).
 
 **No-op acceptance.** A no-op is accepted only when the agent **set**
 `no_changes_required` — a truncated reply never contains it — and the targets
-exist and the assembled file compiles (`NoopPolicy.is_asserted`). `NoopPolicy`
+exist and the assembled file compiles (`NoopPolicy.is_asserted`). A reply that
+returns every target's current source verbatim counts as returning nothing, so
+it too completes only with the flag set. `NoopPolicy`
 additionally refuses the assertion when it cannot be true: for a target absent
 when the wave was installed, if a task this one directly depends on targets the
 same file, or if it is a whole-file grant on the first attempt. An accepted no-op
@@ -1671,13 +1684,15 @@ logs `ACCEPTED_NOOP` and counts in `tasks_noop`, never inflating
 **Retries differ from the attempt they follow.** `RetryPolicy` chooses a
 note by `error_kind`: a truncation asks for the same work in less output; a
 protocol slip restates the schema in full; a stale read carries the diff; anything
-else names the reason and asks not to repeat it. A result with `retryable=False`
+else names the reason and asks not to repeat it, and names any remaining target
+that does not exist yet as new, to be written from scratch. A result with `retryable=False`
 fails the task immediately rather than spending the remaining attempts.
 
 **Empty results are explained.** `NoopPolicy.describe_empty_result` names the
 actual cause:
-a truncation stop reason, ids outside the grant, ids with no source, a missing
-target, a file still invalid after "no changes", or an unasserted empty success.
+a truncation stop reason, ids outside the grant, ids with no source, targets
+returned unchanged without the flag, a missing target, a file still invalid
+after "no changes", or an unasserted empty success.
 
 **The spend ceiling.** `session.max_total_tokens` is checked between run-loop
 iterations. On a breach MAK stops dispatching, lets in-flight work finish and

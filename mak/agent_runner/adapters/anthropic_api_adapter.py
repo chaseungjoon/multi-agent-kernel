@@ -35,6 +35,7 @@ from mak.agent_runner.adapters.result_schema import (
     result_schema,
 )
 from mak.agent_runner.protocol import (
+    NEW_TARGET_CONTRACT,
     NO_CHANGE_CONTRACT,
     NODE_ID_CONTRACT,
     PROTOCOL_VERSION,
@@ -71,7 +72,8 @@ _SYSTEM_PROMPT = (
     "same task_id. For every node you changed, put its id and its FULL rewritten "
     "source in 'modified_fragments' — return complete node source, never a diff, "
     "and only for nodes you were authorized to modify. "
-    f"{NODE_ID_CONTRACT} {NO_CHANGE_CONTRACT} {RETRY_NOTE_CONTRACT} "
+    f"{NODE_ID_CONTRACT} {NEW_TARGET_CONTRACT} {NO_CHANGE_CONTRACT} "
+    f"{RETRY_NOTE_CONTRACT} "
     "Do not reply with prose."
 )
 

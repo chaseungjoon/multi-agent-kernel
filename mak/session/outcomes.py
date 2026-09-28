@@ -32,9 +32,15 @@ class RetryPolicy:
     """Close, retry, or fail a task once its attempt has been settled."""
 
     def __init__(
-        self, *, registry: AdapterRegistry, max_attempts: int, log: EventLog
+        self,
+        *,
+        registry: AdapterRegistry,
+        view: StoreView,
+        max_attempts: int,
+        log: EventLog,
     ) -> None:
         self._registry = registry
+        self._view = view
         self.max_attempts = max_attempts
         self._log = log
 
@@ -101,9 +107,8 @@ class RetryPolicy:
             reason=reason,
         )
 
-    @staticmethod
     def _retry_note(
-        wave: WaveState, progress: SubTaskProgress, result: TaskResult | None
+        self, wave: WaveState, progress: SubTaskProgress, result: TaskResult | None
     ) -> str | None:
         """Return the instruction to attach to the next attempt at this task.
 
@@ -115,7 +120,10 @@ class RetryPolicy:
           "that failed, try again": re-sending an identical request produces an
           identically-cut reply;
         - a **schema slip** gets the schema restated, because the generic note
-          says the previous answer was unusable but never what shape was wanted.
+          says the previous answer was unusable but never what shape was wanted;
+        - a remaining target that **does not exist yet** is named as new: a model
+          handed no source for it tends to refuse and ask for the "existing"
+          source, and a note that only echoes that refusal earns the same one.
         """
         if progress.kernel_note is not None:
             note, progress.kernel_note = progress.kernel_note, None
@@ -147,11 +155,22 @@ class RetryPolicy:
             )
         if reason is None:
             return None
-        return (
+        note = (
             f"Your previous attempt at this task produced nothing usable: {reason}. "
             "Do not repeat it — return the full source of every node you change, "
             "under the exact node ids in target_nodes."
         )
+        new = [
+            str(n) for n in progress.remaining
+            if self._view.dependency_source(n) is None
+        ]
+        if new:
+            note += (
+                f" {', '.join(repr(n) for n in new)} does not exist yet: it is new, "
+                "so there is no existing source to provide or ask for. Write its "
+                "complete source from scratch."
+            )
+        return note
 
     def submit_partials(
         self, wave: WaveState, runner_factory: Callable[[], ConcurrentRunner]
@@ -342,6 +361,15 @@ class NoopPolicy:
         """
         if noop_refusals:
             return "; ".join(noop_refusals)
+        if progress.unchanged_returns:
+            unchanged = ", ".join(str(n) for n in progress.unchanged_returns)
+            progress.unchanged_returns = []
+            return (
+                f"agent returned the current source of {unchanged} unchanged, "
+                "without asserting that no change was required; returning a "
+                "target as it stands is not doing the task — make the change it "
+                "asks for, or set no_changes_required if the code already does it"
+            )
         granted = ", ".join(str(n) for n in progress.target_nodes)
         reported = dict.fromkeys([*result.modified_nodes, *result.new_sources])
         returned = [str(n) for n in reported]

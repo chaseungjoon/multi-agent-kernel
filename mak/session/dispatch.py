@@ -160,10 +160,17 @@ class DispatchEnricher:
     def _add_write_targets(
         self, target_nodes: list[NodeId], context: dict[str, str]
     ) -> list[str]:
-        """Layer 1: the current source of every node the agent will modify."""
+        """Layer 1: the current source of every node the agent will modify.
+
+        A whole-file target whose file is stored as fragments has no node of its
+        own, so its source is assembled from them. A target left without a
+        ``write_source`` entry is one the agent is told to create from scratch
+        (``NEW_TARGET_CONTRACT``), so only a target that really does not exist
+        yet may lack one.
+        """
         added: list[str] = []
         for node_id in target_nodes:
-            source = self._view.source(node_id)
+            source = self._view.dependency_source(node_id)
             if source is not None:
                 key = f"write_source:{node_id}"
                 context[key] = source
@@ -196,6 +203,8 @@ class DispatchEnricher:
         added: list[str] = []
         for node_id in target_nodes:
             file_path = str(node_id).split("::", 1)[0]
+            if f"write_source:{file_path}" in context:
+                continue  # the whole file is already a write target
             for sibling_id in self._view.store.list_nodes(file_path):
                 if context_has(context, sibling_id):
                     continue

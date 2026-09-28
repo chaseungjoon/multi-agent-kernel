@@ -96,6 +96,10 @@ class SubTaskProgress:
     # must act on, and ``error_kind`` says which it was.
     kernel_note: str | None = None
     error_kind: str | None = None
+    # Targets whose returned source was byte-identical to the committed one on
+    # the last attempt: no work, so the attempt is judged as an empty reply and
+    # the failure reason names what came back.
+    unchanged_returns: list[NodeId] = field(default_factory=list)
 
     @property
     def remaining(self) -> list[NodeId]:

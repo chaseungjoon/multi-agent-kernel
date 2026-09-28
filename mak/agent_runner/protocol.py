@@ -40,6 +40,16 @@ NODE_ID_CONTRACT = (
     "source under that exact id, not one entry per function."
 )
 
+# A target the store has no source for yet (a new file, or a new symbol in an
+# existing one) arrives with no 'write_source' entry at all. Without saying what
+# that means, a model reads the gap as missing input and refuses — "the context
+# is empty, please provide the existing source" — and every retry repeats it.
+NEW_TARGET_CONTRACT = (
+    "A target with no 'write_source' entry does not exist yet: it is a new file "
+    "or symbol for you to create. There is no existing source to ask for — write "
+    "its complete source from scratch under that exact id."
+)
+
 # The no-op half of the contract. MAK used to accept *any* successful result with
 # no fragments as "the agent audited this and found nothing to change" — which is
 # also exactly what a reply cut off at the output-token limit looks like, so

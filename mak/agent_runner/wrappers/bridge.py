@@ -84,7 +84,14 @@ def build_prompt(bundle: TaskBundle) -> str:
     """Compose the CLI prompt from a task bundle's targets and context."""
     targets = []
     for node_id in bundle.target_nodes:
-        source = bundle.context.get(f"write_source:{node_id}", "")
+        source = bundle.context.get(f"write_source:{node_id}")
+        if source is None:
+            # An empty block reads as missing input and draws a refusal asking
+            # for the "existing" source; say outright that there is none.
+            source = (
+                "(new — this does not exist yet; there is no existing source. "
+                "Write its complete source from scratch.)"
+            )
         targets.append(f"### {node_id}\n{source}")
     # Every read-only context kind the kernel ships, labelled by what it is:
     # full source, an API digest (a dependency past the byte budget), or a

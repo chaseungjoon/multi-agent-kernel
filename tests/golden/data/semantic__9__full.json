@@ -85,26 +85,26 @@
        "nodes": []
       },
       "same_file": {
-       "bytes": 52,
-       "count": 1,
-       "nodes": [
-        "crm/users.py::function::create_user"
-       ]
-      },
-      "write_targets": {
        "bytes": 0,
        "count": 0,
        "nodes": []
+      },
+      "write_targets": {
+       "bytes": 52,
+       "count": 1,
+       "nodes": [
+        "crm/users.py"
+       ]
       }
      },
      "read_apis": 0,
-     "read_sources": 1,
+     "read_sources": 0,
      "starved": false,
      "targets": [
       "crm/users.py"
      ],
      "task_id": "a",
-     "write_sources": 0
+     "write_sources": 1
     }
    ],
    [
@@ -166,26 +166,26 @@
        "nodes": []
       },
       "same_file": {
-       "bytes": 52,
-       "count": 1,
-       "nodes": [
-        "crm/contacts.py::function::add_contact"
-       ]
-      },
-      "write_targets": {
        "bytes": 0,
        "count": 0,
        "nodes": []
+      },
+      "write_targets": {
+       "bytes": 52,
+       "count": 1,
+       "nodes": [
+        "crm/contacts.py"
+       ]
       }
      },
      "read_apis": 0,
-     "read_sources": 1,
+     "read_sources": 0,
      "starved": false,
      "targets": [
       "crm/contacts.py"
      ],
      "task_id": "b",
-     "write_sources": 0
+     "write_sources": 1
     }
    ],
    [
