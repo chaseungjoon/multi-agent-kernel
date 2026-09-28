@@ -14,6 +14,28 @@ for packaging metadata and `mak.__version__`.
 
 Nothing yet.
 
+## [0.10.1b] — 2026-09-29
+
+### Fixed
+- **A file MAK created can be split across tasks in later sessions.** An agent
+  creates a file as one whole-file node, and that node used to stay whole
+  forever: every later plan had to target the bare path, so any plan with two
+  tasks touching the file was rejected and planning failed after its retries.
+  Reconciliation at session start now splits a whole-file node into symbol
+  nodes (`sync_file(..., refragment=True)`). The whole-file node is retired, not
+  deleted, so its history stays readable. A file that does not parse, or is
+  empty, stays whole. The session log's `reconciled_refragmented` counts the
+  files split.
+- **Two tasks writing the same whole file are merged instead of rejected.**
+  `parse_plan` combines them into one task (first task's id and position,
+  union of targets and context, both descriptions) and remaps other tasks'
+  dependencies onto it. A merged task keeps a body-only (`changes_api: false`)
+  promise only if every member made it. A plan is still rejected when the merge
+  would create a dependency cycle, and the retry feedback now tells the planner
+  to merge the tasks instead of wrongly calling the file new.
+- Re-creating a retired node continues its version numbering instead of
+  restarting at `v1` and overwriting its first stored version.
+
 ## [0.10.0b] — 2026-09-27
 
 The planner no longer receives every node id on every call, and no longer

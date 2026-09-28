@@ -220,7 +220,7 @@ The concurrency gate is `tests/test_concurrency_integration.py`.
 
 ## Current status
 
-MAK **0.10.0 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
+MAK **0.10.1 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
 endpoint support, local runtimes, and the interactive app are all implemented.
 
 | Gate | State |
@@ -786,8 +786,9 @@ end, and resolves by re-dispatch or fix-up. The taxonomy MAK is measured against
 
 - **Read-set versioning (`read_set.py`).** For **every** context key a bundle
   carries, a `ReadMark` records the node's committed version and a **content
-  digest** — the digest is the identity that matters, because an uncommitted or
-  retired-and-recreated node restarts at version 1 with different content.
+  digest** — the digest is the identity that matters, because a version number
+  can recur with different content (an uncommitted node, or the nodes of a
+  deleted file ingested again, restart at version 1).
   `build_read_set` derives the set from the enriched context, so a new
   enrichment layer is covered automatically. It is captured on the dispatching
   thread and persisted with the task graph (`Scheduler.annotations`).
@@ -1301,14 +1302,22 @@ plan create. With `auto_caller_tasks: false` the paragraph asks the model to add
 every caller itself. `oneshot` keeps its original "cascade prevention"
 paragraph.
 
-**Target rules** (`plan_schema.py`; each raises `ValueError`, which is fed back
-to the model on retry):
+**Target rules** (`plan_schema.py`; a violation raises `ValueError`, which is
+fed back to the model on retry):
 
 - **Containment** first — a target must resolve inside the work dir
   (`unsafe_node_id_reason`).
 - **Python-only targets** (`is_python_target`) — MAK has no AST node for other
   files.
-- **One whole file, one task** — a whole-file target is owned by exactly one task.
+- **One whole file, one task** — a whole-file target is owned by exactly one
+  task. Tasks sharing a bare-path target are merged, not rejected
+  (`_merge_whole_file_owners`): the group (transitive over shared files) becomes
+  one task with the first member's id and position, the union of targets and
+  context, every member's description, and other tasks' `depends_on` remapped
+  onto it. `changes_api` stays `false` only if every member promised it; mixed
+  declarations become `true` over the targets each member could change. Only a
+  merge that would close a dependency cycle raises, telling the model to merge
+  the tasks itself.
 - **One granularity per file** — a file is targeted whole or by symbols, never
   both.
 - **Declarations** (`_coerce_subtask`) — `api_targets` / `contract` /
@@ -1580,7 +1589,10 @@ Four ordered steps, then ingestion:
    is no longer ingestable (reported as `pruned_nodes`), and synchronize the store
    with the working tree via `NodeStore.sync_file`: changed fragments advance to
    their next version, unchanged ones are left alone, symbols that disappeared
-   are **retired**, and a file gone from disk retires all its nodes.
+   are **retired**, and a file gone from disk retires all its nodes. A
+   whole-file node (a file an agent created) is split into symbol fragments
+   (`refragment=True`): the bare-path node is retired, its history kept, and the
+   file ingested fresh; one that does not parse or is empty stays whole.
 
 MAK's own `mak_dir` is skipped unconditionally (`Workspace.is_store_path`), independent
 of `exclude_patterns`. A file whose content differs from the digest MAK recorded
