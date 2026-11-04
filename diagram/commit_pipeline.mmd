@@ -1,0 +1,73 @@
+%% Commit pipeline: from a returned TaskResult to a durable commit (§3.4, §5.3, §11 Run).
+flowchart TB
+    result([TaskResult from an agent])
+
+    subgraph collect["COLLECTION · §3.4"]
+        direction TB
+        map["Map returned ids onto the lock grant<br/>protocol.map_returned_sources"]
+        dropped["Refuse ids outside the grant<br/>SOURCE_DROPPED"]
+        compile["compile() each fragment"]
+        stage["Stage fragments in the node store"]
+        batch["Batch concurrent completions<br/>deterministic topological order"]
+        map --> compile --> stage --> batch
+        map -. out of grant .-> dropped
+    end
+
+    subgraph checks["CommitPipeline · DEFAULT_CHECKS, in order · mak/session/commit/"]
+        direction TB
+        c1["1 · ProvidersCommitted<br/>contract providers have committed"]
+        c2["2 · RegistrarMerge<br/>replay keyed appends onto the current table"]
+        c3["3 · ReadSetCurrent<br/>stale-read policy over read-set digests"]
+        c4["4 · StructuralConflicts<br/>signatures · imports · names · registry keys"]
+        c5["5 · ContractsHold<br/>committed signature matches its declaration"]
+        c6["6 · InterfaceGranted<br/>API change needs #api WRITE or is sent back"]
+        c7["7 · PreviewCompiles<br/>every touched file assembles and compiles"]
+        c8["8 · ProspectiveSemantics<br/>no new repo-wide defect · obligations resolved"]
+        c9["9 · LeaseStillHeld<br/>every lease is still owned"]
+        c1 --> c2 --> c3 --> c4 --> c5 --> c6 --> c7 --> c8 --> c9
+    end
+
+    verdict{"First verdict<br/>that is not accept"}
+
+    subgraph handlers["ONE HANDLER PER VERDICT"]
+        direction LR
+        reject["reject<br/>log CONFLICT_DETECTED · roll back"]
+        defer["defer<br/>ParkedCommits.park · COMMIT_DEFERRED"]
+        resend["resend<br/>roll back · re-dispatch with retry_note"]
+        fail["fail<br/>roll back · spend the task's attempts"]
+    end
+
+    subgraph apply["CommitApplier · one transaction · §11 Run"]
+        direction TB
+        txn["NodeStore.transaction()<br/>commit_node per staged id"]
+        install["install_files<br/>render · journal prior content · atomic replace"]
+        point["Metadata save<br/>THE COMMIT POINT"]
+        after["Record wave writes · [MAK-id] audit commit<br/>release grants · unblock dependents"]
+        rollback["Restore store snapshot and files<br/>rollback_node · failure recorded"]
+        txn --> install --> point --> after
+        install -. SyntaxError / OSError / store error .-> rollback
+    end
+
+    retry(["Scheduler: retry within max_attempts,<br/>narrow a partial result, or mark failed"])
+    resume(["After each batch: ParkedCommits.resume<br/>re-enter the pipeline"])
+
+    result --> map
+    batch --> c1
+    c9 -->|all accept| txn
+    checks -. any check returns not accept .-> verdict
+    verdict --> reject & defer & resend & fail
+    reject & resend & fail --> retry
+    rollback --> retry
+    defer --> resume
+    resume -.-> c1
+
+    classDef io fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+    classDef check fill:#fce7f3,stroke:#db2777,color:#831843
+    classDef handler fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef data fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef commit fill:#bbf7d0,stroke:#15803d,color:#14532d,stroke-width:3px
+    class result,map,dropped,compile,stage,batch,retry,resume io
+    class c1,c2,c3,c4,c5,c6,c7,c8,c9,verdict check
+    class reject,defer,resend,fail,rollback handler
+    class txn,install,after data
+    class point commit

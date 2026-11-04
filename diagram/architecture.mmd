@@ -2,73 +2,88 @@
 config:
   layout: elk
 ---
-%% Component architecture. Arrows show calls or data flow; dotted lines show support.
+%% Component architecture. Solid arrows show calls or data flow; dotted lines show support.
 flowchart TB
     user([Developer / task])
 
-    subgraph entry["ENTRY POINTS AND CONFIGURATION"]
+    subgraph entry["FRONT ENDS AND COMPOSITION · §12–§16"]
         direction LR
-        cli["Interactive CLI / scripted CLI<br/>cli/ · mak/__main__.py"]
-        setup["Configuration + adapter factories<br/>mak/config.py · mak/bootstrap.py"]
-        models["Model catalog + local discovery<br/>mak/models/ · mak/local/"]
-        cli --> setup
-        models -. model selection .-> setup
+        cli["Interactive app · mak run<br/>cli/ · mak/__main__.py"]
+        app["Application API<br/>mak/application/<br/>RunRequest · build_config · PlannerRoute<br/>planner key · build_session"]
+        boot["Composition root<br/>mak/bootstrap.py · mak/config.py<br/>Adapter registry · health preflight"]
+        catalog["Model catalog + local discovery<br/>mak/models/ · mak/local/"]
+        endpoints["Endpoints<br/>mak/endpoints/<br/>Profiles · credentials by name<br/>structured-output ladder"]
+        cli -->|same RunRequest from both| app
+        app --> boot
+        catalog -. model choice + capability seed .-> boot
+        endpoints -. endpoint + capability cache .-> boot
     end
 
     subgraph kernel["MAK KERNEL · one Python process"]
-        session["Session state machine + collaborators<br/>mak/session/<br/>Ownership · commit pipeline · recovery · token budget"]
-        planner["Planner + plan validation + review<br/>mak/planner/<br/>Code dependency graph → subtask DAG"]
-        scheduler["DAG scheduler<br/>mak/scheduler/<br/>Ready queue · bounded concurrency"]
-        locks["Symbol reader / writer locks<br/>mak/lock_manager/<br/>Atomic grants · leases · deadlock checks"]
-        runner["Agent runner + adapter registry<br/>mak/agent_runner/<br/>TaskBundle → TaskResult"]
-        detector["Conflict detector<br/>mak/conflict_detector/<br/>Compile · names · imports · signatures"]
-        store[("Versioned AST node store<br/>mak/node_store/<br/>Committed + staged fragments")]
-        materialize["Reconstruction + transaction journal<br/>mak/node_store/<br/>Render · validate · atomic file replacement"]
-        cascade["Post-wave fix-up loop<br/>mak/cascade.py<br/>Detect defects → review another plan"]
-        teardown["Tests + aggregate outcome + push gate<br/>mak/test_runner.py · mak/teardown.py<br/>mak/execution_result.py"]
-        core["Shared types · exceptions · budget · event log<br/>mak/core/"]
+        session["Session state machine · §11<br/>mak/session/<br/>Lifecycle · run loop · WaveState<br/>spend ceiling · heartbeat + watchdog"]
+        planner["Planner · §9<br/>mak/planner/<br/>Inventory view · retrieval rounds<br/>validation · caller tasks · review"]
+        scheduler["Scheduler + lock policy · §6<br/>mak/scheduler/<br/>DAG · atomic lock pre-allocation"]
+        locks["Lock manager · §4<br/>mak/lock_manager/<br/>RW + intent locks · #api / key resources<br/>project lease"]
+        dispatch["Dispatch enrichment · §3.3<br/>mak/session/dispatch.py<br/>Context layers 0–5 · read-set capture"]
+        runner["Agent runner + adapters · §7<br/>mak/agent_runner/<br/>TaskBundle → TaskResult<br/>stop signals · repair turn"]
+        pipeline["Commit pipeline · §5.3<br/>mak/session/commit/<br/>Nine ordered checks → one verdict"]
+        semantic["Semantic layer · §5.3<br/>mak/semantic/<br/>Read sets · contracts · registrar merge<br/>cascade graph · optional gates"]
+        detector["Structural + wave-end checks · §5.1–5.2<br/>mak/conflict_detector/"]
+        store[("Versioned AST node store · §2<br/>mak/node_store/<br/>Committed + staged fragments")]
+        txn["Transaction + journal · §3.5<br/>mak/node_store/<br/>Render · compile · atomic install"]
+        cascade["Cascade loop · §11<br/>mak/cascade.py<br/>Fix-up waves · repair obligations<br/>stall / oscillation stop"]
+        teardown["Teardown + outcome · §11<br/>mak/teardown.py · mak/execution_result.py<br/>Test policy · push gate"]
+        core["Shared types · exceptions · event log · §1<br/>mak/core/"]
 
-        session --> planner
-        planner -->|validated plan| scheduler
-        scheduler -->|acquire all grants before dispatch| locks
-        scheduler -->|dispatch ready tasks| runner
-        store -->|target source + read context| runner
-        session -->|validate staged edits| detector
-        session -->|stage / commit / roll back| store
-        store -->|validated versions| materialize
+        session -->|propose / install plan| planner
+        planner -->|validated SubTask DAG| scheduler
+        scheduler -->|try_acquire_all| locks
+        scheduler -->|ready tasks| dispatch
+        store -->|targets + read context| dispatch
+        dispatch -->|enriched bundle| runner
+        runner -->|TaskResult| pipeline
+        pipeline --> semantic
+        pipeline --> detector
+        pipeline -->|stage / commit / roll back| store
+        store -->|accepted versions| txn
+        session -->|wave end| cascade
+        cascade -->|fix-up plan| planner
+        cascade --> semantic
         session --> teardown
-        session -->|post-wave checks| cascade
         session -. shared support .-> core
     end
 
     subgraph backends["AGENT AND PLANNER BACKENDS"]
-        api["Hosted APIs<br/>Anthropic · OpenAI · Gemini"]
-        local["Local APIs<br/>Native Ollama · OpenAI-compatible server"]
-        subprocess["Agent CLI subprocesses<br/>Claude Code · Codex · Copilot<br/>Optional Docker sandbox"]
+        hosted["Hosted APIs<br/>Anthropic · OpenAI · Gemini"]
+        compat["OpenAI-compatible endpoints<br/>OpenRouter · NVIDIA · DeepSeek · Z.ai · custom"]
+        local["Local runtimes<br/>Native Ollama · OpenAI-compatible server"]
+        subprocess["Agent CLI subprocesses<br/>Claude Code · Codex · Copilot<br/>optional Docker sandbox"]
     end
 
     subgraph project["ONE SHARED PROJECT DIRECTORY"]
-        files["Python source files<br/>Ingested at startup; reconstructed after edits"]
-        state[(".mak/ runtime state<br/>Node versions · task graph · lock state<br/>Commit journal · session logs")]
-        git["Git audit history<br/>mak/git_integration/<br/>Optional per-task commits and gated push"]
+        files["Python source files<br/>Ingested at startup · reconstructed after commits"]
+        state[(".mak/ runtime state<br/>Node versions · journal · lock table<br/>lease · task graph · session log")]
+        git["Git audit history · §10<br/>mak/git_integration/<br/>Per-task [MAK-id] commits · gated push"]
     end
 
     user --> cli
-    setup --> session
-    runner --> api & local & subprocess
-    planner -. planning calls .-> api & local
-    materialize -->|derived output| files
+    boot -->|wired session| session
+    runner --> hosted & compat & local & subprocess
+    planner -. planning calls .-> hosted & compat & local
+    txn -->|derived output| files
     session -. persistence / recovery .-> state
-    session -->|after successful transaction| git
-    teardown -->|push only if configured and gates pass| git
+    txn -->|after the commit point| git
+    teardown -->|push only if satisfied and tests pass| git
 
     classDef entry_style fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
     classDef control fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    classDef check fill:#fce7f3,stroke:#db2777,color:#831843
     classDef data fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef external fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef support fill:#f1f5f9,stroke:#64748b,color:#334155
-    class user,cli,setup,models entry_style
-    class session,planner,scheduler,locks,runner,detector,cascade,teardown control
-    class store,materialize,files,state data
-    class api,local,subprocess,git external
+    class user,cli,app,boot,catalog,endpoints entry_style
+    class session,planner,scheduler,locks,dispatch,runner,cascade,teardown control
+    class pipeline,semantic,detector check
+    class store,txn,files,state data
+    class hosted,compat,local,subprocess,git external
     class core support
