@@ -404,8 +404,20 @@ shallow static defect appeared in **2,400 clean merges**.
 
 ## Contribute
 
-[**CONTRIBUTING.md**](CONTRIBUTING.md) is the full guide — architecture, every
-subsystem in depth, setup, the quality gates, coding standards, and where to help.
+Start with [**CONTRIBUTING.md**](CONTRIBUTING.md). It is the entry point to the
+developer documentation in [`docs/`](docs/), suggests what to read for the change
+you have in mind, and lists where help is wanted.
+
+| Guide | What it covers |
+|---|---|
+| [Overview](docs/overview.md) | What MAK is, why not worktrees, the architecture and the end-to-end data flow |
+| [Subsystems](CONTRIBUTING.md#subsystems) | Sixteen references, one per subsystem, from the node store to the interactive app |
+| [Getting started](docs/getting-started.md) | Development setup and the annotated project layout |
+| [Testing](docs/testing.md) | The three quality gates, golden event logs, and the guard test for each area |
+| [Workflow](docs/workflow.md) | Coding standards, branches and PRs, and which doc to update |
+| [Benchmarks and research](docs/benchmarks-and-research.md) | How each benchmark and the contention study work, and how to change them |
+
+Planned work is tracked as waves in [TASKS.md](TASKS.md).
 
 Everyone participating in this project is expected to follow the
 [Code of Conduct](CODE_OF_CONDUCT.md).
