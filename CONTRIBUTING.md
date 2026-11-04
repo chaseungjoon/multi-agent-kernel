@@ -126,7 +126,6 @@ as `CONTRIBUTING §N` or `§N.M`, and this table resolves them.
 | [`mak/config.yaml`](mak/config.yaml), [`mak/examples/`](mak/examples/) | The reference for every config key |
 | [`TASKS.md`](TASKS.md) | Planned work, as waves |
 | [`CHANGELOG.md`](CHANGELOG.md) | Every release |
-| [`AGENTS.md`](AGENTS.md) | Rules for coding agents working in this repository |
 | [`SECURITY.md`](SECURITY.md) | Supported versions, how to report a vulnerability privately, and what is in scope |
 | [`benchmark/README.md`](benchmark/README.md), [`research/contention_study/`](research/contention_study/) | Full method and results of each benchmark and the study |
 

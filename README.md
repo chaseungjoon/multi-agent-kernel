@@ -156,7 +156,7 @@ mak
 * `/local` - Overview of this machine's runtimes and connected remote hosts; `/local url <host:port>` connects (and remembers) one (see [Local Models](#local-models))
 * `/mode [cloud|local|hybrid]` - Show or switch how this session gets its models
 * `/max-agents <int>` - Set number of concurrently running agents
-* `/config` - Returns to auto-discovery from the work dir (see [Configuration and API keys](#configuration-and-api-keys))
+* `/config` - Returns to auto-discovery from the work dir (see [Configuration](#configuration))
 * `/config /path/to/config.yaml` - Point to a custom config
 * `/no-review true` - Omit user review of planner
 * `/clear` - clears the screen, `/exit` (or `/quit`, Ctrl+C) quits, Ctrl+J inserts a newline for multi-line tasks.

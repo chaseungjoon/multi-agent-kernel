@@ -9,7 +9,8 @@ that, the packaged default.
 Declining writes nothing. The run creates ``.mak/`` for its state on demand,
 exactly as before, and the config keeps coming from the user-level file.
 Nothing here overwrites an existing file: MAK's standing rule is that it never
-writes a config without an explicit yes (CONTRIBUTING §11).
+writes a config without an explicit yes (docs/subsystems/14-interactive-app.md,
+"Session-only configuration").
 """
 from __future__ import annotations
 

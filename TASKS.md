@@ -158,7 +158,8 @@ that the header should be targeted only for non-import changes. Metrics:
   helper name"; the false-positive corpus must stay at zero.
 - **28.9** Benchmark: a synthetic workload where every task needs an import in
   a shared file; record realized concurrency before/after.
-- **28.10** Gates and docs (CONTRIBUTING §3.4, §4.5, §5, §7.6; CHANGELOG).
+- **28.10** Gates and docs (`docs/subsystems/03-ast-pipeline.md` §3.4, `04-lock-manager.md` §4.5,
+  `05-conflict-detection.md`, `07-agent-runner.md` §7.6; CHANGELOG).
 
 ### Required test matrix
 
@@ -220,7 +221,7 @@ processes so a hung call can actually be stopped.
   parse_result` (`adapters/base_adapter.py`). The Anthropic adapter pins
   `tool_choice` to `submit_task_result` (`anthropic_api_adapter.py:144-145`), so
   the model's only action is to answer.
-- **Blind and untested.** Agents see only the bundle (CONTRIBUTING §3.3) and
+- **Blind and untested.** Agents see only the bundle (`docs/subsystems/03-ast-pipeline.md` §3.3) and
   cannot import the module they edit or run a test. Retry notes replace
   feedback after the fact, at the cost of a whole attempt.
 - **The machinery for "the repo if this landed" exists.** The prospective view
@@ -309,8 +310,8 @@ which retires the "cooperative abandonment" limitation for `process` mode.
 - **29.6** Observability (D29.6).
 - **29.7** Benchmark: Template 4 with `tools: none` vs `read_test` on one model
   (recorded, not CI); a keyless mock run in CI.
-- **29.8** Gates and docs (CONTRIBUTING §7, §12, known limitations; README
-  agent section; CHANGELOG).
+- **29.8** Gates and docs (`docs/subsystems/07-agent-runner.md`, `12-configuration.md`,
+  `docs/known-limitations.md`; README agent section; CHANGELOG).
 
 ### Required test matrix
 
@@ -482,7 +483,8 @@ dirty tree because audit commits contain only MAK's files on top of HEAD.
   back to the PEP 8 default, and the first sync of each file records them.
 - **30.7** Gates; manual check on a Black-formatted repo and a hand-formatted
   one; docs (README safety section loses the separate-branch warning;
-  CONTRIBUTING §3.5, §10, §11, §12; CHANGELOG with an upgrade note that the
+  `docs/subsystems/03-ast-pipeline.md` §3.5, `10-git-integration.md`,
+  `11-session-lifecycle.md`, `12-configuration.md`; CHANGELOG with an upgrade note that the
   default formatter and branch mode changed).
 
 ### Required test matrix
@@ -539,7 +541,8 @@ dirty tree because audit commits contain only MAK's files on top of HEAD.
 
 ### R.0 Decisions to make before any code changes
 
-Record each answer in `CHANGELOG.md` or CONTRIBUTING before starting.
+Record each answer in `CHANGELOG.md` or the relevant page under `docs/` before
+starting.
 
 - **R.0.1 Version number.** Currently `0.9.2b0` (`mak/_version.py:14`). Decide
   the first PyPI version (e.g. `0.10.0b1` or `1.0.0b1`). Keep the `bN` suffix:
@@ -562,16 +565,16 @@ Record each answer in `CHANGELOG.md` or CONTRIBUTING before starting.
 
 ### R.1 Version and identity
 
-- **R.1.1 Bump the version** per R.0.1 in `mak/_version.py:14-15` and README
-  line 6.
+- **R.1.1 Bump the version** per R.0.1 in `mak/_version.py:14-15` and the README
+  `Version` badge.
 - **R.1.2 Audit every consumer of the version string.** `mak/__init__.py`
   re-exports both; `cli/__main__.py:286-289` prints `__version__`; `cli/ui.py`
   renders `__version_display__` lowercased in the banner. Confirm the banner
   reads well.
 - **R.1.3 Version-consistency test** asserting
   `importlib.metadata.version("multi-agent-kernel") == mak.__version__`, that
-  the display string describes the same release, and that README line 6
-  matches.
+  the display string describes the same release, and that the README
+  `Version` badge matches.
 
 ### R.2 Package metadata (`pyproject.toml`)
 
@@ -583,7 +586,7 @@ keywords**. On PyPI that renders as an anonymous, unlicensed package.
   which requires `setuptools>=77`; bump `[build-system] requires`
   (`pyproject.toml:2`, currently `>=69`).
 - **R.2.3 `[project.urls]`** — Homepage, Repository, Issues, Changelog,
-  Documentation (CONTRIBUTING until real docs exist).
+  Documentation (`CONTRIBUTING.md`, the index of `docs/`).
 - **R.2.4 `classifiers`** — Development Status :: 4 - Beta; License :: OSI
   Approved :: MIT License; the Python versions from R.0.4; Operating System per
   R.0.3; Intended Audience :: Developers; Topic :: Software Development :: Code
@@ -788,8 +791,9 @@ the output for the release notes.
 
 ### Deliberately deferred
 
-- Docker / GHCR image, Homebrew, signed tags / full SLSA beyond attestations,
-  splitting CONTRIBUTING into `docs/`.
+- Docker / GHCR image, Homebrew, signed tags / full SLSA beyond attestations.
+- ~~Splitting CONTRIBUTING into `docs/`~~ — done: `CONTRIBUTING.md` is now the
+  index of `docs/`.
 
 ### Acceptance
 
@@ -901,7 +905,8 @@ project lease still guarantees a single process.
 - **31.6** Migration (D31.4) with verification and `gc --drop-migrated`.
 - **31.7** The `symbols` table and a switch of the dispatch symbol index to it.
 - **31.8** Gates, benchmarks recorded in `benchmark/README.md`, docs
-  (CONTRIBUTING §2 layout and API, §4.2, §11; CHANGELOG with the migration note).
+  (`docs/subsystems/02-node-store.md` layout and API, `04-lock-manager.md` §4.2,
+  `11-session-lifecycle.md`; CHANGELOG with the migration note).
 
 ### Required test matrix
 
@@ -951,7 +956,7 @@ a plan, a human sees its predicted contention, serialization and token cost.
   walks `ready_queue` in insertion order and dispatches every task whose
   all-or-nothing acquisition succeeds. No priority, aging or reservation.
 - **Wide locks can starve.** A whole-file or whole-class WRITE conflicts with
-  every INTENT_WRITE below it (CONTRIBUTING §4.5). A steady stream of narrow
+  every INTENT_WRITE below it (`docs/subsystems/04-lock-manager.md` §4.5). A steady stream of narrow
   fragment writers of that file keeps at least one INTENT_WRITE held, so the wide
   task can be skipped on every tick indefinitely.
 - **No critical path.** Ready tasks are not ordered by how much work depends on
@@ -1026,7 +1031,7 @@ warning).
 - **32.6** Benchmark: a synthetic workload with one whole-file task and 20
   fragment writers of that file; record the wide task's wait before/after; a
   deep-DAG workload for makespan.
-- **32.7** Gates and docs (CONTRIBUTING §6, §9; CHANGELOG).
+- **32.7** Gates and docs (`docs/subsystems/06-scheduler.md`, `09-planner.md`; CHANGELOG).
 
 ### Required test matrix
 
@@ -1062,7 +1067,7 @@ warning).
 
 - **Planned.** Implement on **`feat/33-honest-evaluation`**. The harness can be
   built at any time; numbers are meaningful after Waves 7 and 28 land.
-- **Review items S11, Q2.** Also CONTRIBUTING's open issue "extend the
+- **Review items S11, Q2.** Also the long-standing open issue "extend the
   benchmark".
 
 ### Goal
@@ -1148,7 +1153,8 @@ every new arm.
 - **33.5** Report generation (`--render-only` support) and README/STATS sections.
 - **33.6** A recorded campaign: every arm × every task × three models, with
   budgets agreed before running.
-- **33.7** Docs: CONTRIBUTING Part III rewritten around arms and labels.
+- **33.7** Docs: `docs/benchmarks-and-research.md` rewritten around arms and
+  labels.
 
 ### Required test matrix
 
@@ -1328,7 +1334,7 @@ agent model. Reposition the project around that strength.
   routes around B.
 - **Positioning (Q1).** The contention study found zero change-versus-change
   textual conflicts across 124,473 concurrent human PR pairs, so "no merge
-  conflicts" is a weak lead. README and CONTRIBUTING's "Why not Git worktrees?"
+  conflicts" is a weak lead. README and `docs/overview.md`'s "Why not Git worktrees?"
   still lead with it. The strong claims are safe fan-out into shared hot spots
   and commit-time semantic checking.
 
@@ -1349,8 +1355,9 @@ project.post_wave_check() -> list[Defect]
 project.close()
 ```
 
-Versioned separately from internals, documented in CONTRIBUTING, with its own
-test suite. `Session` is rebuilt on top of the facade (D34.3).
+Versioned separately from internals, documented in its own page under `docs/` (listed
+in the `CONTRIBUTING.md` map), with its own test suite. `Session` is rebuilt on
+top of the facade (D34.3).
 
 #### D34.2 — An MCP server
 
@@ -1370,7 +1377,7 @@ proving parity and preventing two commit paths from drifting.
 README "What/Why" leads with safe, validated fan-out of many small agent edits
 into shared hot spots, and with commit-time semantic checking; it cites the
 contention study honestly, including its negative results. "Why not Git
-worktrees?" in CONTRIBUTING is rewritten on the same basis.
+worktrees?" in `docs/overview.md` is rewritten on the same basis.
 
 #### D34.5 — A worked integration
 

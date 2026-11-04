@@ -16,7 +16,8 @@ Two rules govern the whole module:
 - **Nothing is written to disk without an explicit yes.** The wizard ends by
   *offering* to save to the project's ``.mak/config.yaml``, defaulting to
   **no**. MAK's standing rule is that it never writes a config file except
-  when the user explicitly changes a model (CONTRIBUTING §11); an interactive
+  when the user explicitly changes a model (docs/subsystems/14-interactive-app.md,
+  "Session-only configuration"); an interactive
   "Save this setup? [y/N]" is that rule, not an exception to it. Declining
   leaves a session-only setting, which is all ``CliState`` ever was.
   The one thing remembered without asking is *which hosts* were connected

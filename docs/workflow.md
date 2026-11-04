@@ -42,10 +42,6 @@ document to update when a change makes one of them wrong.
   your own commits follow ordinary practice.
 - **Behaviour changes need tests** ([Testing](testing.md)).
 
-Coding agents working in this repository also follow
-[`AGENTS.md`](../AGENTS.md), which defines the wave lifecycle (plan, execute,
-document, version) and the hotfix rules in detail.
-
 ## Keeping the docs true
 
 Each fact is documented in exactly one place. When your change makes a document
