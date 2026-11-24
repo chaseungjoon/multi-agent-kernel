@@ -10,7 +10,11 @@ API is not yet stable and minor versions may carry breaking changes.
 Versions are defined in `mak/_version.py`, which is the single source of truth
 for packaging metadata and `mak.__version__`.
 
-## [Unreleased]
+## [Official Release]
+
+Nothing yet.
+
+## [0.11.0b] — 2026-11-24
 
 ### Added
 - **Write sets can grow at commit (Wave 28).** A task's locks are still taken
@@ -50,10 +54,6 @@ for packaging metadata and `mak.__version__`.
 - `map_returned_sources` returns a third bucket, `additive`, and the CLI bridge
   now forwards out-of-grant ids to the session instead of failing the reply, so
   they can be escalated or refused with a logged reason.
-
-## [Official Release]
-
-Nothing yet.
 
 ## [0.10.2b] — 2026-09-29
 

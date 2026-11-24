@@ -17,7 +17,7 @@ documentation itself lives in [`docs/`](docs/).
 
 ## Current status
 
-MAK **0.10.2 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
+MAK **0.11.0 Beta** (`mak/_version.py`). The kernel, the semantic-conflict layer,
 endpoint support, local runtimes, and the interactive app are all implemented.
 
 | Gate | State |
