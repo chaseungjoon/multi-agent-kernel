@@ -133,19 +133,54 @@ class TestRunTask:
             "def foo():\n    return 42\n"
         )
 
-    def test_out_of_scope_edits_are_dropped(
+    def test_out_of_scope_edits_are_forwarded_for_the_session(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(bridge.shutil, "which", lambda _b: "/bin/claude")
-        # CLI returns a node the task was not authorized to touch → ignored.
+        # A node outside the grant is not the bridge's to refuse: the session
+        # escalates it, or refuses it with a logged reason (Wave 28).
         out = json.dumps({"other.py::function::x": "def x(): ..."})
         monkeypatch.setattr(bridge.subprocess, "run", _fake_run(stdout=out))
         result = run_task(_SPEC, self._bundle(), None)
+        assert result.success is True
+        assert result.new_sources == {NodeId("other.py::function::x"): "def x(): ..."}
+
+    def test_imports_and_needs_are_decoded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bridge.shutil, "which", lambda _b: "/bin/claude")
+        out = json.dumps({
+            "m.py::function::foo": "def foo():\n    return json.dumps(1)\n",
+            "imports": ["import json"],
+            "needs_nodes": [
+                {"node_id": "m.py::function::bar", "mode": "read", "reason": "why"}
+            ],
+        })
+        monkeypatch.setattr(bridge.subprocess, "run", _fake_run(stdout=out))
+        result = run_task(_SPEC, self._bundle(), None)
+        assert result.success is True
+        assert result.imports == ["import json"]
+        assert [(n.node_id, n.mode) for n in result.needs_nodes] == [
+            ("m.py::function::bar", "read")
+        ]
+        # Reserved keys are not node ids.
+        assert set(result.new_sources) == {NodeId("m.py::function::foo")}
+
+    def test_imports_alone_are_work(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(bridge.shutil, "which", lambda _b: "/bin/claude")
+        out = json.dumps({"imports": ["import json"]})
+        monkeypatch.setattr(bridge.subprocess, "run", _fake_run(stdout=out))
+        assert run_task(_SPEC, self._bundle(), None).success is True
+
+    def test_a_malformed_import_fails_the_reply(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(bridge.shutil, "which", lambda _b: "/bin/claude")
+        out = json.dumps({"imports": ["x = 1"]})
+        monkeypatch.setattr(bridge.subprocess, "run", _fake_run(stdout=out))
+        result = run_task(_SPEC, self._bundle(), None)
         assert result.success is False
-        assert result.new_sources == {}
-        # Wave 11: refused, but named — the error says what was ignored, so the
-        # failure is not indistinguishable from "the CLI returned nothing".
-        assert "other.py::function::x" in (result.error or "")
+        assert "imports" in (result.error or "")
 
     def test_symbol_ids_fold_into_a_whole_file_grant(
         self, monkeypatch: pytest.MonkeyPatch

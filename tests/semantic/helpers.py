@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from mak.config import (
     GitConfig,
@@ -16,7 +18,7 @@ from mak.config import (
     SessionConfig,
 )
 from mak.core.logging import EventType, LogEntry, SessionLogger
-from mak.core.types import NodeId, SubTask, TaskBundle, TaskResult
+from mak.core.types import NodeId, NodeNeed, SubTask, TaskBundle, TaskResult
 from mak.lock_manager.lock_table import LockTable
 from mak.node_store.store import NodeStore
 from mak.session import Session
@@ -41,6 +43,10 @@ class ScriptRunner:
     last attempt repeats. ``hold[task_id]`` is a predicate the agent call waits
     on before answering — this is how a test forces "B was dispatched before A
     committed": B holds until A's commit is visible in the store.
+
+    ``growth[task_id]`` is a parallel list of per-attempt Wave 28 fields —
+    ``imports`` (list of str), ``needs_nodes`` (list of ``(id, mode)``) and
+    ``placements`` (``{id: after}``) — attached to the result.
     """
 
     def __init__(
@@ -49,8 +55,10 @@ class ScriptRunner:
         hold: dict[str, Callable[[], bool]] | None = None,
         *,
         timeout_s: float = 10.0,
+        growth: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self._script = script
+        self._growth = growth or {}
         self._hold = hold or {}
         self._timeout = timeout_s
         self._lock = threading.Lock()
@@ -71,11 +79,24 @@ class ScriptRunner:
             NodeId(node): (resp(task) if callable(resp) else resp)
             for node, resp in responses.items()
         }
+        extra = self._growth.get(task.task_id, [{}])
+        fields = extra[min(attempt, len(extra) - 1)]
+        imports = list(fields.get("imports", []))
+        needs = [
+            NodeNeed(NodeId(node), mode, "scripted")
+            for node, mode in fields.get("needs_nodes", [])
+        ]
+        placements = {
+            NodeId(k): NodeId(v) for k, v in fields.get("placements", {}).items()
+        }
         return TaskResult(
             task_id=task.task_id,
-            success=bool(sources),
+            success=bool(sources or imports or needs),
             modified_nodes=list(sources),
             new_sources=sources,
+            imports=imports,
+            needs_nodes=needs,
+            placements=placements,
         )
 
     def bundles_for(self, task_id: str) -> list[TaskBundle]:
@@ -128,6 +149,7 @@ def make_session(
     validate: bool = True,
     gate_runner: object | None = None,
     adjudicator_llm: object | None = None,
+    session_overrides: dict[str, Any] | None = None,
 ) -> tuple[Session, NodeStore, SessionLogger]:
     """Return a session over ``tmp_path``, with a logger and this config."""
     store = NodeStore(tmp_path / ".mak" / "store")
@@ -143,6 +165,10 @@ def make_session(
         node_store=NodeStoreConfig(),
         semantic=semantic or SemanticConfig(),
     )
+    if session_overrides:
+        config = dataclasses.replace(
+            config, session=dataclasses.replace(config.session, **session_overrides)
+        )
     session = Session(
         session_id="w20",
         config=config,

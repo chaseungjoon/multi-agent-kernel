@@ -366,3 +366,103 @@ class TestPreviewFragments:
         preview = store.get_preview_fragments("mod.py", {target: staged})
         assert len(preview) == len(store.list_nodes("mod.py"))
         assert any("return 'hi'" in f.source for f in preview)
+
+
+class TestInsertNode:
+    """Wave 28 (D28.5): a new node lands where it is placed, not at the end."""
+
+    SOURCE = "import os\n\n\ndef a():\n    return 1\n\n\ndef b():\n    return 2\n"
+    A = NodeId("m.py::function::a")
+    B = NodeId("m.py::function::b")
+    NEW = NodeId("m.py::function::_new")
+
+    def _store(self, tmp_path: Path) -> NodeStore:
+        store = NodeStore(tmp_path / "ns")
+        store.parse_file_into_nodes("m.py", self.SOURCE)
+        return store
+
+    def _ids_in_order(self, store: NodeStore) -> list[str]:
+        return [
+            str(n).rsplit("::", 1)[-1]
+            for n in sorted(store.list_nodes("m.py"), key=store.node_order)  # type: ignore[arg-type,return-value]
+        ]
+
+    def test_insert_after_shifts_later_nodes(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        store.insert_node(self.NEW, _frag(self.NEW, "def _new(): ..."), after=self.A)
+        store.commit_node(self.NEW)
+        assert self._ids_in_order(store) == ["__header__", "a", "_new", "b"]
+        orders = [store.node_order(n) for n in store.list_nodes("m.py")]
+        assert len(set(orders)) == len(orders)
+
+    def test_after_none_places_first(self, tmp_path: Path) -> None:
+        store = NodeStore(tmp_path / "ns")
+        store.parse_file_into_nodes("n.py", "def a():\n    return 1\n")
+        header = NodeId("n.py::module_header::__header__")
+        store.insert_node(
+            header,
+            NodeFragment(
+                node_id=header, kind="module_header", source="import os\n", version=1
+            ),
+            after=None,
+        )
+        store.commit_node(header)
+        assert store.node_order(header) < store.node_order(  # type: ignore[operator]
+            NodeId("n.py::function::a")
+        )
+
+    def test_a_known_id_keeps_its_place(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        before = store.node_order(self.B)
+        store.insert_node(self.B, _frag(self.B, "def b(): ..."), after=None)
+        store.commit_node(self.B)
+        assert store.node_order(self.B) == before
+
+    def test_put_node_still_appends(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        store.put_node(self.NEW, _frag(self.NEW, "def _new(): ..."))
+        store.commit_node(self.NEW)
+        assert self._ids_in_order(store)[-1] == "_new"
+
+    def test_rollback_forgets_the_placement(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        store.insert_node(self.NEW, _frag(self.NEW, "def _new(): ..."), after=self.A)
+        assert store.staged_placement(self.NEW) == (True, self.A)
+        store.rollback_node(self.NEW)
+        assert store.staged_placement(self.NEW) == (False, None)
+        store.put_node(self.NEW, _frag(self.NEW, "def _new(): ..."))
+        store.commit_node(self.NEW)
+        assert self._ids_in_order(store)[-1] == "_new"
+
+    def test_a_failed_transaction_restores_every_order(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        before = {n: store.node_order(n) for n in store.list_nodes("m.py")}
+        store.insert_node(self.NEW, _frag(self.NEW, "def _new(): ..."), after=self.A)
+        with pytest.raises(RuntimeError), store.transaction():
+            store.commit_node(self.NEW)
+            raise RuntimeError("crash mid-commit")
+        assert {n: store.node_order(n) for n in store.list_nodes("m.py")} == before
+        assert store.node_order(self.NEW) is None
+
+    def test_the_preview_puts_a_staged_node_where_commit_will(
+        self, tmp_path: Path
+    ) -> None:
+        store = self._store(tmp_path)
+        one, two = NodeId("m.py::function::_one"), NodeId("m.py::function::_two")
+        frag_one = _frag(one, "def _one(): ...")
+        frag_two = _frag(two, "def _two(): ...")
+        store.insert_node(one, frag_one, after=self.A)
+        store.insert_node(two, frag_two, after=one)
+        preview = store.get_preview_fragments("m.py", {one: frag_one, two: frag_two})
+        names = [str(f.node_id).rsplit("::", 1)[-1] for f in preview]
+        assert names == ["__header__", "a", "_one", "_two", "b"]
+        store.commit_node(one)
+        store.commit_node(two)
+        assert self._ids_in_order(store) == names
+
+    def test_placement_survives_a_reopen(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        store.insert_node(self.NEW, _frag(self.NEW, "def _new(): ..."), after=self.A)
+        store.commit_node(self.NEW)
+        reopened = NodeStore(tmp_path / "ns")
+        assert self._ids_in_order(reopened) == ["__header__", "a", "_new", "b"]

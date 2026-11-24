@@ -128,10 +128,24 @@ against the shapes models actually produce:
 No malformed shape escapes as a raw `TypeError` or `KeyError` — every one is an
 `AgentProtocolError`, which keeps the provider's `stop_reason` and `usage`.
 
+Three optional fields let a reply grow past its grant (Wave 28). All three are
+in every structured-output dialect's schema, and the version stays `"1.0"`
+because a reply without them means what it always did:
+
+- `imports` — an array of single import statements, optionally prefixed with
+  `<file>.py::` when the task targets more than one file. Each entry must parse
+  as exactly one `import` / `from … import`, or the reply is malformed.
+- `needs_nodes` — `[{node_id, mode: "read"|"write", reason}]`, nodes the agent
+  found it needs and was not given.
+- `insert_after` on a fragment — where a new helper should go.
+
 `map_returned_sources(grant, new_sources, order_key=None)` enforces the
 node-granularity contract for both the session and the CLI bridge ([§3.4](03-ast-pipeline.md#34-collection-agent-output--node-store)). A
 whole-file rewrite returned under a fragment grant is refused, because it would
-touch nodes owned by other tasks.
+touch nodes owned by other tasks. Ids it cannot place are reported, not
+decided: the session sorts them ([§3.4](03-ast-pipeline.md#34-collection-agent-output--node-store)).
+The CLI bridge forwards them to the session too, rather than failing the reply,
+so an out-of-grant edit can become an escalation.
 
 ## 7.7 The runner and sandbox
 

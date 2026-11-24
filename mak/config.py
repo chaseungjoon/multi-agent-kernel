@@ -70,6 +70,14 @@ def _opt_str(raw: dict[str, Any], key: str) -> str | None:
     return None if value is None else str(value)
 
 
+def _non_negative_int(raw: dict[str, Any], key: str, default: int) -> int:
+    """Return an integer setting that may be zero but not negative."""
+    number = _as_int(raw, key, default)
+    if number < 0:
+        raise ConfigError(f"'{key}' must be 0 or greater, got {number}")
+    return number
+
+
 def _opt_positive_int(raw: dict[str, Any], key: str) -> int | None:
     """Return an optional positive integer setting, or None when unset."""
     value = raw.get(key)
@@ -335,6 +343,11 @@ class SessionConfig:
     because "no tests ran" is not "the tests passed". ``"allow_skip"`` is the
     deliberate opt-out for a project that has no suite and wants ``auto_push``
     anyway.
+
+    ``max_additive_symbols`` caps how many new top-level functions or classes
+    one reply may add beside its targets without asking (``0`` refuses them
+    all). ``max_escalations`` caps how many times one task may ask, at commit,
+    for nodes it was not granted (``0`` turns escalation off).
     """
 
     work_dir: str = "."
@@ -348,6 +361,8 @@ class SessionConfig:
     max_total_tokens: int | None = None
     on_external_edit: str = "adopt"
     test_policy: str = "require_pass"
+    max_additive_symbols: int = 5
+    max_escalations: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -657,6 +672,8 @@ def _parse_session(raw: dict[str, Any]) -> SessionConfig:
         test_policy=_require_choice(
             raw, "test_policy", "require_pass", _TEST_POLICIES
         ),
+        max_additive_symbols=_non_negative_int(raw, "max_additive_symbols", 5),
+        max_escalations=_non_negative_int(raw, "max_escalations", 2),
     )
 
 

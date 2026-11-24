@@ -16,7 +16,7 @@ from semantic.evaluate import (  # noqa: E402
     single_states,
     validate,
 )
-from semantic.scenarios import SCENARIOS, Scenario  # noqa: E402
+from semantic.scenarios import GROWTH_SCENARIOS, SCENARIOS, Scenario  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -94,3 +94,57 @@ def test_extra_calls_stay_bounded(results: dict[int, ScenarioResult]) -> None:
     # Detection must not cost a re-dispatch storm: at most one extra agent call
     # per scenario across the corpus.
     assert all(0 <= r.extra_calls <= 1 for r in results.values())
+
+
+# -- Wave 28: write sets that grow at commit ----------------------------------
+
+
+@pytest.fixture(scope="module")
+def growth_results() -> dict[int, ScenarioResult]:
+    return {s.shape: evaluate(s) for s in GROWTH_SCENARIOS}
+
+
+@pytest.mark.parametrize("scenario", GROWTH_SCENARIOS, ids=lambda s: f"shape{s.shape}")
+def test_growth_scenario_is_a_valid_test_case(scenario: Scenario) -> None:
+    a_only, b_only = single_states(scenario)
+    assert validate(scenario, a_only, b_only) == []
+
+
+def test_the_same_import_twice_runs_side_by_side_and_lands_once(
+    growth_results: dict[int, ScenarioResult]
+) -> None:
+    result = growth_results[11]
+    # "clean", not "prevented": the two importers were not serialized.
+    assert result.mak.outcome == "clean", result.mak.mechanisms
+    assert result.extra_calls == 0
+    assert result.mak.files["stats.py"].count("from fractions import Fraction") == 1
+
+
+def test_one_name_bound_two_ways_is_sent_back_and_fixed_in_the_wave(
+    growth_results: dict[int, ScenarioResult]
+) -> None:
+    result = growth_results[12]
+    assert result.mak.outcome == "detected (commit)"
+    assert result.mak.mechanisms == ("commit:import_conflict",)
+    assert result.mak.resolved and result.extra_calls == 1
+    assert result.worktree.outcome == "detected (textual conflict)"
+
+
+def test_two_helpers_of_one_name_keep_both_callers_right(
+    growth_results: dict[int, ScenarioResult]
+) -> None:
+    result = growth_results[13]
+    assert result.mak.outcome == "detected (commit)"
+    assert result.mak.mechanisms == ("commit:escalation",)
+    assert result.mak.resolved and result.extra_calls == 1
+    assert result.mak.files["pricing.py"].count("def _round(") == 1
+
+
+def test_growth_raises_no_false_positives(
+    growth_results: dict[int, ScenarioResult]
+) -> None:
+    # A lone import or helper is merged or added without any rejection,
+    # re-dispatch or escalation.
+    assert {s: r.false_positives for s, r in growth_results.items()} == dict.fromkeys(
+        growth_results, 0
+    )

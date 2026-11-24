@@ -17,7 +17,9 @@ transition so a crashed session can be recovered.
 
 from __future__ import annotations
 
+import dataclasses
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -190,6 +192,58 @@ class Scheduler:
             if task not in self.ready_queue:
                 self.ready_queue.append(task)
         self._save()
+
+    def widen_task(
+        self,
+        task_id: str,
+        *,
+        targets: Sequence[NodeId] = (),
+        context: Sequence[NodeId] = (),
+    ) -> SubTask:
+        """Add targets and context nodes to a task's definition, and persist it.
+
+        The lock set a re-dispatch acquires, and what ``--recover`` restores,
+        are both read off the DAG's task, so a grant that grows at commit time
+        has to grow there too. A task that declared an API change narrowed to
+        ``api_targets`` keeps that declaration for the targets it gains.
+        """
+        task = self._dag.get_task(task_id)
+        api_targets = task.api_targets
+        if task.changes_api is True and api_targets:
+            api_targets = list(dict.fromkeys([*api_targets, *targets]))
+        widened = dataclasses.replace(
+            task,
+            target_nodes=list(dict.fromkeys([*task.target_nodes, *targets])),
+            context_nodes=list(dict.fromkeys([*task.context_nodes, *context])),
+            api_targets=api_targets,
+        )
+        self._dag.replace_task(widened)
+        self.ready_queue = [
+            widened if t.task_id == task_id else t for t in self.ready_queue
+        ]
+        self._save()
+        return widened
+
+    def requeue_with_targets(
+        self,
+        task_id: str,
+        *,
+        targets: Sequence[NodeId] = (),
+        context: Sequence[NodeId] = (),
+    ) -> SubTask:
+        """Give back every lock, widen the task, and queue it to run again.
+
+        For a task that asked at commit for nodes another task holds: holding
+        its own grant while it waits could deadlock, so it starts over and the
+        scheduler acquires the whole widened set atomically, as for any task.
+        """
+        self._lock_manager.release_all(task_id)
+        self._dispatched.discard(task_id)
+        widened = self.widen_task(task_id, targets=targets, context=context)
+        if not self._dag.is_complete(task_id) and widened not in self.ready_queue:
+            self.ready_queue.append(widened)
+        self._save()
+        return widened
 
     def wait_for_dependencies(self, task_id: str) -> None:
         """Release a dispatched task's locks and re-gate it on its dependencies.

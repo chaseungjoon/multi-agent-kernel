@@ -1,6 +1,6 @@
 """The ``TaskResult`` wire schema, rendered in each provider's dialect.
 
-Every structured-output backend has to describe the same contract — the five
+Every structured-output backend has to describe the same contract — the seven
 ``TaskResult`` keys an agent may return — and every one of them spells it
 slightly differently. Before this module the schema was written out twice
 verbatim (Anthropic's ``input_schema``, Gemini's ``parameters``), differing only
@@ -63,6 +63,26 @@ NO_CHANGES_DESCRIPTION = (
 
 ERROR_DESCRIPTION = "Failure reason when success is false, else null."
 
+INSERT_AFTER_DESCRIPTION = (
+    "Only for a new symbol: the id of the node it should follow in its file. "
+    "Omit or null otherwise."
+)
+
+IMPORTS_DESCRIPTION = (
+    "Import statements to merge into the module header, one per entry "
+    "(e.g. 'from typing import Any'). Prefix with '<file>::' when your targets "
+    "span several files. Never edit the header just to add an import."
+)
+
+NEEDS_NODES_DESCRIPTION = (
+    "Nodes you need but were not given: each with its node_id, mode ('read' or "
+    "'write') and a short reason."
+)
+
+NEED_MODE_DESCRIPTION = "'read' to see the node, 'write' to change it."
+
+NEED_REASON_DESCRIPTION = "Why the task needs this node."
+
 # The two fields a result is meaningless without: which task this answers, and
 # whether it worked. Everything else is optional by design — a successful no-op
 # carries no fragments and no error.
@@ -74,6 +94,8 @@ PROPERTY_NAMES: tuple[str, ...] = (
     "task_id",
     "success",
     "modified_fragments",
+    "imports",
+    "needs_nodes",
     "no_changes_required",
     "error",
 )
@@ -81,8 +103,9 @@ PROPERTY_NAMES: tuple[str, ...] = (
 DIALECTS: tuple[str, ...] = ("anthropic", "gemini", "openai", "ollama")
 
 
-def _fragment_item(*, strict: bool) -> dict[str, Any]:
+def _fragment_item(dialect: str) -> dict[str, Any]:
     """Return the schema for one ``modified_fragments`` entry."""
+    strict = dialect == "openai"
     item: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -91,27 +114,53 @@ def _fragment_item(*, strict: bool) -> dict[str, Any]:
                 "type": "string",
                 "description": NEW_SOURCE_DESCRIPTION,
             },
+            "insert_after": _nullable_string(dialect, INSERT_AFTER_DESCRIPTION),
         },
-        "required": ["node_id", "new_source"],
+        "required": (
+            ["node_id", "new_source", "insert_after"]
+            if strict
+            else ["node_id", "new_source"]
+        ),
     }
     if strict:
         item["additionalProperties"] = False
     return item
 
 
-def _error_property(dialect: str) -> dict[str, Any]:
-    """Return the ``error`` property in ``dialect``'s spelling of 'nullable'."""
+def _need_item(*, strict: bool) -> dict[str, Any]:
+    """Return the schema for one ``needs_nodes`` entry."""
+    item: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "node_id": {"type": "string", "description": NODE_ID_DESCRIPTION},
+            "mode": {
+                "type": "string",
+                "enum": ["read", "write"],
+                "description": NEED_MODE_DESCRIPTION,
+            },
+            "reason": {"type": "string", "description": NEED_REASON_DESCRIPTION},
+        },
+        "required": ["node_id", "mode", "reason"],
+    }
+    if strict:
+        item["additionalProperties"] = False
+    return item
+
+
+def _nullable_string(dialect: str, description: str) -> dict[str, Any]:
+    """Return an optional string property in ``dialect``'s spelling of 'nullable'."""
     if dialect == "gemini":
-        return {
-            "type": "string",
-            "nullable": True,
-            "description": ERROR_DESCRIPTION,
-        }
+        return {"type": "string", "nullable": True, "description": description}
     if dialect == "ollama":
         # llama.cpp's grammar converter rejects a type union, and an optional
-        # field is expressed by leaving it out of ``required`` — which it is.
-        return {"type": "string", "description": ERROR_DESCRIPTION}
-    return {"type": ["string", "null"], "description": ERROR_DESCRIPTION}
+        # field is expressed by leaving it out of ``required``.
+        return {"type": "string", "description": description}
+    return {"type": ["string", "null"], "description": description}
+
+
+def _error_property(dialect: str) -> dict[str, Any]:
+    """Return the ``error`` property in ``dialect``'s spelling of 'nullable'."""
+    return _nullable_string(dialect, ERROR_DESCRIPTION)
 
 
 def result_schema(dialect: str) -> dict[str, Any]:
@@ -135,7 +184,17 @@ def result_schema(dialect: str) -> dict[str, Any]:
             "modified_fragments": {
                 "type": "array",
                 "description": FRAGMENTS_DESCRIPTION,
-                "items": _fragment_item(strict=strict),
+                "items": _fragment_item(dialect),
+            },
+            "imports": {
+                "type": "array",
+                "description": IMPORTS_DESCRIPTION,
+                "items": {"type": "string"},
+            },
+            "needs_nodes": {
+                "type": "array",
+                "description": NEEDS_NODES_DESCRIPTION,
+                "items": _need_item(strict=strict),
             },
             "no_changes_required": {
                 "type": "boolean",

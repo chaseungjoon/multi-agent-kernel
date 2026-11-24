@@ -9,11 +9,15 @@ import pytest
 
 from mak.agent_runner.protocol import (
     PROTOCOL_VERSION,
+    additive_candidate,
+    decode_imports,
+    decode_needs,
     decode_task_bundle,
     decode_task_result,
     encode_task_bundle,
     encode_task_result,
     map_returned_sources,
+    split_import_entry,
 )
 from mak.core.exceptions import AgentProtocolError
 from mak.core.types import (
@@ -298,14 +302,14 @@ class TestMapReturnedSources:
 
     def test_granted_ids_pass_through(self) -> None:
         grant = [NodeId("m.py::function::a")]
-        accepted, dropped = map_returned_sources(
+        accepted, dropped, _additive = map_returned_sources(
             grant, {NodeId("m.py::function::a"): "def a(): ...\n"}
         )
         assert accepted == {NodeId("m.py::function::a"): "def a(): ...\n"}
         assert dropped == []
 
     def test_symbol_ids_fold_into_a_whole_file_grant(self) -> None:
-        accepted, dropped = map_returned_sources(
+        accepted, dropped, _additive = map_returned_sources(
             [NodeId("editor/motions.py")],
             {
                 NodeId("editor/motions.py::function::word"): "def word():\n    ...\n",
@@ -318,7 +322,7 @@ class TestMapReturnedSources:
 
     def test_explicit_whole_file_source_wins_over_fragments(self) -> None:
         whole = "def only():\n    return 1\n"
-        accepted, _dropped = map_returned_sources(
+        accepted, _dropped, _additive = map_returned_sources(
             [NodeId("editor/motions.py")],
             {
                 NodeId("editor/motions.py"): whole,
@@ -328,7 +332,7 @@ class TestMapReturnedSources:
         assert accepted == {NodeId("editor/motions.py"): whole}
 
     def test_foreign_ids_are_reported_not_silently_dropped(self) -> None:
-        accepted, dropped = map_returned_sources(
+        accepted, dropped, _additive = map_returned_sources(
             [NodeId("m.py::function::a")],
             {NodeId("other.py::function::x"): "def x(): ...\n"},
         )
@@ -340,7 +344,7 @@ class TestMapReturnedSources:
     def test_a_fragment_grant_does_not_absorb_a_whole_file_rewrite(self) -> None:
         # The reverse mismatch is a real over-reach: other nodes in that file
         # belong to other tasks and are not write-locked here.
-        accepted, dropped = map_returned_sources(
+        accepted, dropped, _additive = map_returned_sources(
             [NodeId("m.py::function::a")], {NodeId("m.py"): "def a(): ...\n"}
         )
         assert accepted == {}
@@ -468,3 +472,97 @@ class TestRejectionExcerpts:
         data = {"task_id": "t1", "success": True, "modified_fragments": 42}
         with pytest.raises(AgentProtocolError, match="42"):
             decode_task_result(json.dumps(data))
+
+
+class TestGrowthChannels:
+    """Wave 28: imports, needs_nodes and insert_after on the result."""
+
+    def test_imports_are_validated_and_deduplicated(self) -> None:
+        assert decode_imports(["import os", " import os ", "m.py::import re"]) == [
+            "import os", "m.py::import re",
+        ]
+        assert decode_imports(None) == []
+
+    @pytest.mark.parametrize(
+        ("raw", "needle"),
+        [
+            ("import os", "array"),
+            ([1], "string"),
+            (["x = 1"], "not an import"),
+            (["import os; import re"], "2 statements"),
+            (["import"], "not valid Python"),
+        ],
+    )
+    def test_a_bad_import_is_a_protocol_error(self, raw: object, needle: str) -> None:
+        with pytest.raises(AgentProtocolError, match=needle):
+            decode_imports(raw)
+
+    def test_a_file_prefix_is_split_off(self) -> None:
+        assert split_import_entry("pkg/m.py::from x import y") == (
+            "pkg/m.py", "from x import y",
+        )
+        assert split_import_entry("import os") == (None, "import os")
+
+    def test_needs_default_to_write_and_reject_bad_modes(self) -> None:
+        (need,) = decode_needs([{"node_id": " m.py::function::a "}])
+        assert (need.node_id, need.mode, need.reason) == (
+            "m.py::function::a", "write", "",
+        )
+        with pytest.raises(AgentProtocolError, match="'read' or 'write'"):
+            decode_needs([{"node_id": "m.py", "mode": "own"}])
+        with pytest.raises(AgentProtocolError, match="non-empty"):
+            decode_needs([{"mode": "read"}])
+
+    def test_insert_after_becomes_a_placement(self) -> None:
+        raw = json.dumps({
+            "task_id": "t", "success": True,
+            "modified_fragments": [
+                {"node_id": "m.py::function::_h", "new_source": "def _h(): ...\n",
+                 "insert_after": "m.py::function::a"},
+            ],
+            "imports": ["import os"],
+            "needs_nodes": [{"node_id": "m.py::function::b", "mode": "read"}],
+        })
+        result = decode_task_result(raw)
+        assert result.placements == {
+            NodeId("m.py::function::_h"): NodeId("m.py::function::a")
+        }
+        assert result.imports == ["import os"]
+        assert result.needs_nodes[0].mode == "read"
+
+    def test_growth_fields_survive_a_round_trip(self) -> None:
+        raw = json.dumps({
+            "task_id": "t", "success": True,
+            "modified_fragments": [
+                {"node_id": "m.py::function::_h", "new_source": "def _h(): ...\n",
+                 "insert_after": "m.py::function::a"},
+            ],
+            "imports": ["import os"],
+            "needs_nodes": [{"node_id": "m.py::function::b", "mode": "read",
+                             "reason": "r"}],
+        })
+        first = decode_task_result(raw)
+        again = decode_task_result(encode_task_result(first))
+        assert again.imports == first.imports
+        assert again.needs_nodes == first.needs_nodes
+        assert again.placements == first.placements
+
+    def test_additive_candidates_are_new_symbols_in_a_target_file(self) -> None:
+        grant = [NodeId("m.py::function::a")]
+        assert additive_candidate(NodeId("m.py::function::_h"), grant)
+        assert additive_candidate(NodeId("m.py::class::Helper"), grant)
+        assert not additive_candidate(NodeId("m.py::method::C.x"), grant)
+        assert not additive_candidate(NodeId("o.py::function::_h"), grant)
+        # A whole-file grant folds symbols in instead.
+        assert not additive_candidate(NodeId("w.py::function::_h"), [NodeId("w.py")])
+
+    def test_map_returned_sources_buckets_additive_ids(self) -> None:
+        grant = [NodeId("m.py::function::a")]
+        accepted, dropped, additive = map_returned_sources(grant, {
+            NodeId("m.py::function::a"): "def a(): ...\n",
+            NodeId("m.py::function::_h"): "def _h(): ...\n",
+            NodeId("o.py::function::z"): "def z(): ...\n",
+        })
+        assert list(accepted) == [NodeId("m.py::function::a")]
+        assert list(additive) == [NodeId("m.py::function::_h")]
+        assert [n for n, _ in dropped] == [NodeId("o.py::function::z")]

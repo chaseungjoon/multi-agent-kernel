@@ -28,7 +28,10 @@ Fields, by what they record:
   commit re-validation checks those *modes*), ``read_sets`` (every node a
   task's latest bundle carried, at the version it carried it), ``parked``
   (finished results waiting on a lock or a contract provider), ``deferring``
-  (the commit being parked right now, and why) and ``waiting_on_providers``.
+  (the commit being parked right now, and why), ``waiting_on_providers``,
+  ``growth`` (what each task's latest reply asked for beyond its grant:
+  imports, new helpers, more nodes) and ``restarted`` (tasks a commit-time
+  escalation sent back to the ready queue, so settling skips them).
 - **post-wave caches** — ``defects_at``, ``cascade_at``, ``gates_at``: findings
   keyed by store generation, because the cascade loop asks twice for one state.
 - **metrics** — the counters :func:`mak.session.results.plan_metrics` reports,
@@ -55,7 +58,7 @@ from mak.scheduler.scheduler import Scheduler
 from mak.semantic.cascade_graph import CascadeItem
 from mak.semantic.gate_types import GateFinding
 from mak.semantic.read_set import ReadSet
-from mak.session.types import SubTaskProgress
+from mak.session.types import Growth, SubTaskProgress
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +116,8 @@ class WaveState:
     parked: dict[str, Parked] = field(default_factory=dict)
     deferring: dict[str, str] = field(default_factory=dict)
     waiting_on_providers: set[str] = field(default_factory=set)
+    growth: dict[str, Growth] = field(default_factory=dict)
+    restarted: set[str] = field(default_factory=set)
     # -- post-wave caches, keyed by store generation
     defects_at: tuple[int, list[CrossModuleDefect]] | None = None
     cascade_at: tuple[int, list[CascadeItem]] | None = None
@@ -127,6 +132,11 @@ class WaveState:
     stale_reads: int = 0
     stale_redispatches: int = 0
     adjudicated_accepts: int = 0
+    import_merges: int = 0
+    additive_symbols: int = 0
+    escalations_requested: int = 0
+    escalations_granted: int = 0
+    escalation_restarts: int = 0
     planning: PlanningSummary = NO_PLANNING
 
     @classmethod

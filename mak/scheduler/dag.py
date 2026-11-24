@@ -60,6 +60,21 @@ class DAG:
             raise SchedulingError(f"unknown task id: {task_id}")
         return self._tasks[task_id]
 
+    def replace_task(self, task: SubTask) -> None:
+        """Swap in a new definition of an existing task (a widened lock set).
+
+        Only the task's own fields change: its id and ``depends_on`` must stay
+        the same, so the graph's shape, order and completion state hold.
+        """
+        current = self._tasks.get(task.task_id)
+        if current is None:
+            raise SchedulingError(f"cannot replace unknown task: {task.task_id}")
+        if list(task.depends_on) != list(current.depends_on):
+            raise SchedulingError(
+                f"replacing task {task.task_id} may not change its dependencies"
+            )
+        self._tasks[task.task_id] = task
+
     def _validate_dependencies(self) -> None:
         for task in self._tasks.values():
             for dep in task.depends_on:

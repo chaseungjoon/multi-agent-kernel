@@ -96,6 +96,11 @@ def plan_metrics(wave: WaveState) -> dict[str, float]:
         "stale_reads": float(wave.stale_reads),
         "stale_redispatches": float(wave.stale_redispatches),
         "adjudicated_accepts": float(wave.adjudicated_accepts),
+        "import_merges": float(wave.import_merges),
+        "additive_symbols": float(wave.additive_symbols),
+        "escalations_requested": float(wave.escalations_requested),
+        "escalations_granted": float(wave.escalations_granted),
+        "escalation_restarts": float(wave.escalation_restarts),
         **wave.planning.as_metrics(),
     }
 

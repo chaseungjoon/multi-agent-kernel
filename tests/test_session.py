@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import time
 from pathlib import Path
@@ -1867,11 +1868,8 @@ class TestSourceTransport:
         assert store.get_node(NodeId("m.py::function::a")).version == 1
         assert (tmp_path / "m.py").read_text() == "def a():\n    return 0\n"
 
-    def test_out_of_scope_source_is_ignored(self, tmp_path: Path) -> None:
-        # An agent for task 'a' also tries to rewrite node 'b', outside its grant.
-        (tmp_path / "m.py").write_text(_TWO_FUNCS)
-        store = _store(tmp_path)
-
+    @staticmethod
+    def _overreach_runner() -> object:
         class OverreachRunner:
             def assign(self, adapter: object, task: TaskBundle) -> TaskResult:
                 return TaskResult(
@@ -1884,9 +1882,38 @@ class TestSourceTransport:
                     },
                 )
 
-        session = _session(tmp_path, runner=OverreachRunner(), node_store=store)
+        return OverreachRunner()
+
+    def test_out_of_scope_source_escalates_when_free(self, tmp_path: Path) -> None:
+        # Task 'a' also rewrites 'b', outside its grant. 'b' is free and the
+        # agent saw its current source (same-file context), so the grant grows
+        # at commit and the edit lands in the same attempt (Wave 28).
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        session = _session(tmp_path, runner=self._overreach_runner(), node_store=store)
         session.initialize()
         session.install_plan([_task("a", ["m.py::function::a"])])  # only 'a' granted
+        result = session.run()
+        assert result.ok
+        assert "return 1" in store.get_node(NodeId("m.py::function::a")).source
+        assert "666" in (tmp_path / "m.py").read_text()
+        task = session._wave.require_scheduler().dag.get_task("a")
+        assert NodeId("m.py::function::b") in task.target_nodes
+
+    def test_out_of_scope_source_is_ignored_past_the_cap(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "m.py").write_text(_TWO_FUNCS)
+        store = _store(tmp_path)
+        config = _config(tmp_path)
+        config = dataclasses.replace(
+            config, session=dataclasses.replace(config.session, max_escalations=0)
+        )
+        session = _session(
+            tmp_path, runner=self._overreach_runner(), node_store=store, config=config
+        )
+        session.initialize()
+        session.install_plan([_task("a", ["m.py::function::a"])])
         result = session.run()
         assert result.ok
         assert "return 1" in store.get_node(NodeId("m.py::function::a")).source

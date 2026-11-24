@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -376,4 +377,57 @@ class TestPersistence:
         lm = FakeLockManager()
         restored = Scheduler.from_persisted(path, lm, FakeAgentRunner(), FakeRegistry())
         # The in-flight task is re-queued for another attempt after a crash.
+        assert [t.task_id for t in restored.ready_queue] == ["a"]
+
+
+class TestGrowingATask:
+    """Wave 28: a grant that grows at commit grows in the DAG, and persists."""
+
+    def test_widen_task_adds_targets_and_context_once(self, tmp_path: Path) -> None:
+        path = tmp_path / "task_graph.json"
+        sched, _, _, _ = _make([_task("a")], persist_path=path)
+        extra, ctx = NodeId("file.py::function::x"), NodeId("file.py::function::y")
+        sched.widen_task("a", targets=[extra], context=[ctx])
+        widened = sched.widen_task("a", targets=[extra])
+        assert widened.target_nodes == [NodeId("file.py::function::a"), extra]
+        assert widened.context_nodes == [ctx]
+        assert sched.dag.get_task("a") == widened
+        assert sched.ready_queue == [widened]
+        saved = json.loads(path.read_text("utf-8"))
+        (task,) = saved["tasks"]
+        assert extra in task["target_nodes"]
+
+    def test_narrowed_api_declarations_cover_new_targets(self) -> None:
+        base = _task("a")
+        declared = dataclasses.replace(
+            base, changes_api=True, api_targets=list(base.target_nodes)
+        )
+        sched, _, _, _ = _make([declared])
+        extra = NodeId("file.py::function::x")
+        assert extra in (sched.widen_task("a", targets=[extra]).api_targets or [])
+
+    def test_requeue_with_targets_holds_nothing_while_it_waits(self) -> None:
+        sched, lm, _, _ = _make([_task("a")])
+        sched.tick()
+        assert lm._held and sched.ready_queue == []
+        extra = NodeId("file.py::function::x")
+        widened = sched.requeue_with_targets("a", targets=[extra])
+        assert "a" in lm.released and not lm._held
+        assert sched.ready_queue == [widened]
+        assert extra in widened.target_nodes
+        sched.tick()  # the next dispatch takes the whole widened set at once
+        assert lm.acquired[-1][0] == "a"
+        assert "file.py::function::x" in lm.acquired[-1][1]
+
+    def test_the_widened_task_is_what_recovery_restores(self, tmp_path: Path) -> None:
+        path = tmp_path / "task_graph.json"
+        sched, _, _, _ = _make([_task("a")], persist_path=path)
+        sched.tick()
+        sched.annotations["escalations"] = {"a": [["file.py::function::x"]]}
+        sched.requeue_with_targets("a", targets=[NodeId("file.py::function::x")])
+        restored = Scheduler.from_persisted(
+            path, FakeLockManager(), FakeAgentRunner(), FakeRegistry()
+        )
+        assert NodeId("file.py::function::x") in restored.dag.get_task("a").target_nodes
+        assert restored.annotations["escalations"] == {"a": [["file.py::function::x"]]}
         assert [t.task_id for t in restored.ready_queue] == ["a"]
