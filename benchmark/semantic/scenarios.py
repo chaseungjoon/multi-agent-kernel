@@ -32,6 +32,10 @@ class Edit:
     retry: Mapping[str, Response] = field(default_factory=dict)
     context: tuple[str, ...] = ()
     declarations: Mapping[str, object] = field(default_factory=dict)
+    # Wave 28: import statements returned in the reply's ``imports`` channel
+    # (first attempt, then any retry; ``None`` repeats the first).
+    imports: tuple[str, ...] = ()
+    retry_imports: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,9 @@ class Scenario:
     oracle: str  # defines ``check()``; raising means the combined code is wrong
     # Gates MAK needs to detect this shape ("impact_tests"); empty = defaults.
     needs: tuple[str, ...] = ()
+    # False for a growth scenario whose naive merge is harmless (the same
+    # import twice): it checks that MAK does not trip over it either.
+    naive_breaks: bool = True
 
 
 def _append(node: str, line: str) -> Response:
@@ -431,3 +438,124 @@ _S9 = Scenario(
 )
 
 SCENARIOS: tuple[Scenario, ...] = (_S1, _S2, _S3, _S4, _S5, _S6, _S7, _S8, _S9)
+
+
+# -- Wave 28: write sets that grow at commit ----------------------------------
+#
+# Each edit targets one function and grows past it: an import in the module
+# header, or a new helper beside the function. Neither was granted up front.
+
+_S11 = Scenario(
+    shape=11,
+    name="same import twice",
+    summary=(
+        "A and B each need 'from fractions import Fraction' in one file. The "
+        "header gets it once and neither task waits for the other."
+    ),
+    files={
+        "stats.py": (
+            '"""Small stats helpers."""\nimport math\n\n\n'
+            "def mean(xs):\n    return sum(xs) / len(xs)\n\n\n"
+            "def spread(xs):\n    return max(xs) - min(xs)\n"
+        ),
+    },
+    a=Edit("a", "Exact mean", ("stats.py::function::mean",),
+           {"stats.py::function::mean": (
+               "def mean(xs):\n    return float(Fraction(sum(xs), len(xs)))\n")},
+           imports=("from fractions import Fraction",)),
+    b=Edit("b", "Exact spread", ("stats.py::function::spread",),
+           {"stats.py::function::spread": (
+               "def spread(xs):\n"
+               "    return float(Fraction(max(xs)) - Fraction(min(xs)))\n")},
+           imports=("from fractions import Fraction",)),
+    oracle=(
+        "def check():\n"
+        "    import pathlib, stats\n"
+        "    assert stats.mean([1, 2, 3, 4]) == 2.5\n"
+        "    assert stats.spread([1, 5, 2]) == 4\n"
+        "    text = pathlib.Path('stats.py').read_text()\n"
+        "    assert text.count('from fractions import Fraction') <= 1, text\n"
+    ),
+    # git merges two identical added lines into one, so the naive merge is
+    # fine here; the scenario checks MAK neither duplicates nor serializes.
+    naive_breaks=False,
+)
+
+_S12 = Scenario(
+    shape=12,
+    name="one name, two imports",
+    summary=(
+        "A imports json.loads as 'parse' and B imports ast.parse, into one "
+        "file. Whichever import comes second silently breaks the other task."
+    ),
+    files={
+        "text.py": (
+            '"""Parsing helpers."""\n\n\n'
+            "def load_config(text):\n    raise NotImplementedError\n\n\n"
+            "def parse_tree(source):\n    raise NotImplementedError\n"
+        ),
+    },
+    a=Edit("a", "Load JSON config", ("text.py::function::load_config",),
+           {"text.py::function::load_config": (
+               "def load_config(text):\n    return parse(text)\n")},
+           imports=("from json import loads as parse",)),
+    b=Edit("b", "Parse source", ("text.py::function::parse_tree",),
+           {"text.py::function::parse_tree": (
+               "def parse_tree(source):\n    return parse(source)\n")},
+           # Told 'parse' is taken, a competent agent imports the module.
+           retry={"text.py::function::parse_tree": (
+               "def parse_tree(source):\n    return ast.parse(source)\n")},
+           imports=("from ast import parse",),
+           retry_imports=("import ast",)),
+    oracle=(
+        "def check():\n"
+        "    import ast, text\n"
+        "    try:\n"
+        "        assert text.load_config('{\"a\": 1}') == {'a': 1}\n"
+        "    except NotImplementedError:\n"
+        "        pass\n"
+        "    try:\n"
+        "        assert isinstance(text.parse_tree('x = 1'), ast.Module)\n"
+        "    except NotImplementedError:\n"
+        "        pass\n"
+    ),
+)
+
+_S13 = Scenario(
+    shape=13,
+    name="same helper name",
+    summary=(
+        "A and B each add a private _round beside their function, with "
+        "different precision. The later definition wins for both callers."
+    ),
+    files={
+        "pricing.py": (
+            '"""Prices and ratios."""\n\n\n'
+            "def price(net):\n    return round(net * 1.2, 2)\n\n\n"
+            "def ratio(a, b):\n    return round(a / b)\n"
+        ),
+    },
+    a=Edit("a", "Share price rounding", ("pricing.py::function::price",),
+           {"pricing.py::function::price": (
+               "def price(net):\n    return _round(net * 1.2)\n"),
+            "pricing.py::function::_round": (
+               "def _round(value):\n    return round(value, 2)\n")}),
+    b=Edit("b", "Share ratio rounding", ("pricing.py::function::ratio",),
+           {"pricing.py::function::ratio": (
+               "def ratio(a, b):\n    return _round(a / b)\n"),
+            "pricing.py::function::_round": (
+               "def _round(value):\n    return round(value)\n")},
+           # Shown the existing _round, a competent agent renames its own.
+           retry={"pricing.py::function::ratio": (
+               "def ratio(a, b):\n    return _round_whole(a / b)\n"),
+            "pricing.py::function::_round_whole": (
+               "def _round_whole(value):\n    return round(value)\n")}),
+    oracle=(
+        "def check():\n"
+        "    import pricing\n"
+        "    assert pricing.price(1.111) == 1.33\n"
+        "    assert pricing.ratio(7, 2) == 4\n"
+    ),
+)
+
+GROWTH_SCENARIOS: tuple[Scenario, ...] = (_S11, _S12, _S13)

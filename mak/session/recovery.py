@@ -10,7 +10,7 @@ from mak.agent_runner.registry import AdapterRegistry
 from mak.config import MakConfig
 from mak.core.exceptions import SchedulingError
 from mak.core.logging import EventType
-from mak.core.types import SubTask
+from mak.core.types import NodeId, SubTask
 from mak.git_integration.git import GitHelper
 from mak.node_store.store import NodeStore
 from mak.node_store.transaction import recover as recover_commit
@@ -171,6 +171,10 @@ class RecoveryManager:
 def _restore_progress(scheduler: Scheduler, task: SubTask) -> SubTaskProgress:
     """Grant accounting for a restored task: all done if it had completed."""
     progress = SubTaskProgress(task.task_id, list(task.target_nodes))
+    history = scheduler.annotations.get("escalations")
+    rounds = history.get(task.task_id, []) if isinstance(history, dict) else []
+    escalated = {NodeId(n) for batch in rounds for n in batch}
+    progress.optional_nodes = escalated & set(task.target_nodes)
     if scheduler.dag.is_complete(task.task_id):
         progress.completed_nodes = set(task.target_nodes)
     return progress

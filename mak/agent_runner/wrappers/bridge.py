@@ -29,11 +29,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from mak.agent_runner.protocol import (
+    GROWTH_CONTRACT,
+    IMPORTS_CONTRACT,
     NODE_ID_CONTRACT,
+    decode_imports,
+    decode_needs,
     decode_task_bundle,
     encode_task_result,
     map_returned_sources,
 )
+from mak.core.exceptions import AgentProtocolError
 from mak.core.types import NodeId, TaskBundle, TaskResult
 
 _DEFAULT_TIMEOUT_S = 240.0
@@ -75,6 +80,9 @@ above to the COMPLETE rewritten Python source of that node (never a diff). Use \
 exactly these keys:
 {ids}
 {contract}
+Two optional extra keys: "imports", an array of import statements to merge \
+into the module header, and "needs_nodes", an array of {{"node_id", "mode", \
+"reason"}} objects for nodes you need but were not given.
 {retry}If you cannot complete the task, respond with the JSON object \
 {{"error": "<why>"}}.
 """
@@ -117,7 +125,7 @@ def build_prompt(bundle: TaskBundle) -> str:
         targets="\n".join(targets) or "(none)",
         context=context,
         ids=ids or "(none)",
-        contract=NODE_ID_CONTRACT,
+        contract=f"{NODE_ID_CONTRACT} {IMPORTS_CONTRACT} {GROWTH_CONTRACT}",
         retry=retry,
     )
 
@@ -223,22 +231,42 @@ def run_task(spec: CliSpec, bundle: TaskBundle, cli_override: str | None) -> Tas
     # the error rather than dropped in silence — an id MAK ignored without saying
     # so is indistinguishable from an agent that returned nothing at all.
     returned: dict[NodeId, str] = {
-        NodeId(k): v for k, v in obj.items() if isinstance(v, str)
+        NodeId(k): v
+        for k, v in obj.items()
+        if isinstance(v, str) and k not in _RESERVED_KEYS
     }
-    new_sources, dropped = map_returned_sources(bundle.target_nodes, returned)
+    try:
+        imports = decode_imports(obj.get("imports"))
+        needs = decode_needs(obj.get("needs_nodes"))
+    except AgentProtocolError as exc:
+        return TaskResult(task_id=bundle.task_id, success=False, error=str(exc))
+    mapped = map_returned_sources(bundle.target_nodes, returned)
+    # Ids outside the grant are forwarded, not dropped: the session decides
+    # whether each is a new helper, an escalation, or a refusal — and logs it.
+    new_sources = {
+        **mapped.accepted,
+        **mapped.additive,
+        **{node_id: returned[node_id] for node_id, _reason in mapped.dropped},
+    }
+    # An out-of-grant id counts as work too: it may be an escalation the
+    # session grants, and if not, the session logs why it was refused.
+    has_work = bool(new_sources or imports or needs)
     error: str | None = None
-    if not new_sources:
+    if not has_work:
         error = f"{spec.cli_name} returned no source for any target node"
-        if dropped:
-            ignored = ", ".join(str(node_id) for node_id, _reason in dropped)
-            error += f" (ignored ids outside its grant: {ignored})"
     return TaskResult(
         task_id=bundle.task_id,
-        success=bool(new_sources),
+        success=has_work,
         modified_nodes=list(new_sources),
         new_sources=new_sources,
         error=error,
+        imports=imports,
+        needs_nodes=needs,
     )
+
+
+# Keys of the CLI's reply object that are not node ids.
+_RESERVED_KEYS = frozenset({"imports", "needs_nodes", "error"})
 
 
 def _parse_argv(argv: Sequence[str]) -> tuple[bool, str | None]:

@@ -10,6 +10,47 @@ API is not yet stable and minor versions may carry breaking changes.
 Versions are defined in `mak/_version.py`, which is the single source of truth
 for packaging metadata and `mak.__version__`.
 
+## [Unreleased]
+
+### Added
+- **Write sets can grow at commit (Wave 28).** A task's locks are still taken
+  all at once at dispatch, but a reply can now add to them instead of losing
+  the extra output:
+  - **Imports.** A reply lists new imports in `imports`. The kernel merges them
+    into the module header as it is at commit time, under a shared `#imports`
+    lock plus one lock per bound name, so tasks importing different things into
+    one file run side by side. The same import twice lands once; one name bound
+    two ways is sent back with a note naming it. Editing the header text
+    directly still works: an ungranted header whose only change is new imports
+    is treated the same way.
+  - **New helpers.** A new top-level function or class written beside a target
+    is committed after the target (or after `insert_after`), up to
+    `session.max_additive_symbols` per reply (default 5). If another task took
+    the name first, the reply is sent back to rename it.
+  - **Escalation.** A reply that writes an existing node outside its grant, or
+    lists one in `needs_nodes`, gets it if the lock is free (sent back first if
+    the agent never saw its source). If the lock is busy, the task gives back
+    everything and is re-queued with the node in its targets, so it never waits
+    while holding locks. `session.max_escalations` (default 2, 0 disables)
+    bounds the rounds per task. Escalated targets are optional, and a widened
+    task keeps its own `changes_api`.
+  - New events `import_merged`, `additive_symbol`, `escalation` and
+    `growth_conflict`, and plan metrics `import_merges`, `additive_symbols`,
+    `escalations_requested`, `escalations_granted` and `escalation_restarts`.
+  - The planner prompt no longer has tasks target module headers or whole
+    files just to make room for imports and helpers (`oneshot` is unchanged).
+- Semantic corpus shapes 11–13: the same import twice, one name bound to two
+  imports, and two helpers of one name. All three end correct, with zero false
+  positives. `benchmark/growth_bench.py` measures the header bottleneck: 8 tasks
+  each needing an import in one file ran 1 at a time with header grants and 8 at
+  once with the import channel (2.71 s → 0.59 s wall at 0.3 s per agent call;
+  16 tasks: 8.65 s → 1.10 s). No import was lost in either arm.
+
+### Changed
+- `map_returned_sources` returns a third bucket, `additive`, and the CLI bridge
+  now forwards out-of-grant ids to the session instead of failing the reply, so
+  they can be escalated or refused with a logged reason.
+
 ## [Official Release]
 
 Nothing yet.

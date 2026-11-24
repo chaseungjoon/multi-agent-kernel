@@ -163,6 +163,12 @@ def run_mak(
     agent = ScriptedAgent(
         {e.task_id: e.first for e in edits},
         {e.task_id: (e.retry or e.first) for e in edits},
+        {
+            e.task_id: (
+                e.imports, e.imports if e.retry_imports is None else e.retry_imports
+            )
+            for e in edits
+        },
     )
     if len(edits) == 2:
         agent.hold(edits[1].task_id, wait_for_peer(logger, edits[0].task_id))
@@ -238,7 +244,18 @@ def _commit_signals(log: list[LogEntry]) -> set[str]:
             payload.get("outcome", "")
         ).startswith("refused"):
             signals.add("api_lock")
+        elif entry.event_type is EventType.GROWTH_CONFLICT:
+            signals.add(str(payload.get("kind")))
+        elif _costly_escalation(entry):
+            signals.add("escalation")
     return signals
+
+
+def _costly_escalation(entry: LogEntry) -> bool:
+    """Tell whether an escalation cost the agent another call (resent, restarted)."""
+    return entry.event_type is EventType.ESCALATION and entry.payload.get(
+        "outcome"
+    ) in ("granted_resend", "restarted")
 
 
 def _signal_count(log: list[LogEntry]) -> int:
@@ -250,6 +267,8 @@ def _signal_count(log: list[LogEntry]) -> int:
             and entry.payload.get("verdict") != "accept")
         or (entry.event_type is EventType.CONFLICT_DETECTED and "task_id" in entry.payload)
         or entry.event_type is EventType.CONTRACT_VIOLATION
+        or entry.event_type is EventType.GROWTH_CONFLICT
+        or _costly_escalation(entry)
     )
 
 
@@ -342,7 +361,28 @@ def worktree_state(scenario: Scenario, edit: Edit) -> dict[str, str]:
         files[file_path] = _splice(
             files.get(file_path, ""), rest.split("::", 1)[1], text
         )
+    for entry in edit.imports:
+        file_path, _, statement = entry.rpartition("::")
+        file_path = file_path or edit.targets[0].split("::", 1)[0]
+        files[file_path] = _add_import(files.get(file_path, ""), statement)
     return files
+
+
+def _add_import(source: str, statement: str) -> str:
+    """Add an import line under the file's last import, as a developer would."""
+    tree = ast.parse(source)
+    anchor = 0
+    for i, stmt in enumerate(tree.body):
+        is_doc = (
+            i == 0
+            and isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        )
+        if is_doc or isinstance(stmt, ast.Import | ast.ImportFrom):
+            anchor = cast(int, stmt.end_lineno)
+    lines = source.splitlines(keepends=True)
+    return "".join(lines[:anchor]) + statement.strip() + "\n" + "".join(lines[anchor:])
 
 
 def _span(tree: ast.Module, qualname: str) -> tuple[ast.stmt, int] | None:
@@ -423,7 +463,7 @@ def validate(scenario: Scenario, a_only: dict[str, str], b_only: dict[str, str])
         if not run_oracle(files, scenario.oracle):
             problems.append(f"oracle fails on {label}")
     merged, _ = merge_states(base, a_only, b_only)
-    if run_oracle(merged, scenario.oracle):
+    if scenario.naive_breaks and run_oracle(merged, scenario.oracle):
         problems.append("oracle passes on the naive A+B combination")
     return problems
 

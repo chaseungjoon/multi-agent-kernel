@@ -49,6 +49,8 @@ from mak.agent_runner.adapters.base_adapter import AgentAdapter
 from mak.agent_runner.adapters.repair import Messages, ResponseMeta, repair_loop
 from mak.agent_runner.adapters.result_schema import result_schema
 from mak.agent_runner.protocol import (
+    GROWTH_CONTRACT,
+    IMPORTS_CONTRACT,
     NEW_TARGET_CONTRACT,
     NO_CHANGE_CONTRACT,
     NODE_ID_CONTRACT,
@@ -127,9 +129,12 @@ _SYSTEM_PROMPT = (
     "task_id), 'success' (boolean), 'modified_fragments' (array of objects, each "
     "with 'node_id' and the FULL rewritten 'new_source' of that node — complete "
     "source, never a diff, only for nodes you may modify), "
+    "'imports' (array of import statements, may be empty), 'needs_nodes' "
+    "(array of {node_id, mode, reason}, may be empty), "
     "'no_changes_required' (boolean), and 'error' (string reason when success is "
     f"false, otherwise null). {NODE_ID_CONTRACT} {NEW_TARGET_CONTRACT} "
-    f"{NO_CHANGE_CONTRACT} "
+    f"{NO_CHANGE_CONTRACT} {IMPORTS_CONTRACT} "
+    f"{GROWTH_CONTRACT} "
     f"{RETRY_NOTE_CONTRACT} Respond with only that JSON object."
 )
 

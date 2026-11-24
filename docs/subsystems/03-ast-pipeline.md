@@ -103,18 +103,39 @@ captured on the dispatching thread right after enrichment ([§5.3](05-conflict-d
 
 1. **Map returned ids onto the grant** (`protocol.map_returned_sources`). Granted
    ids pass through; a symbol id inside a whole-file grant is **folded** into that
-   grant; anything else is refused and logged as `SOURCE_DROPPED`. Folded
-   fragments are ordered: a `module_header` first, then the store's recorded
-   `order`, then emission order.
+   grant; a top-level `function` or `class` id in a file where the task holds a
+   fragment target goes to the **additive** bucket; anything else is returned as
+   dropped. Folded fragments are ordered: a `module_header` first, then the
+   store's recorded `order`, then emission order.
+2. **Sort what is beyond the grant** (`mak/session/growth.py`,
+   `GrowthClassifier`). The protocol only knows ids; the classifier asks the
+   store. Every id ends up in exactly one place:
+   - an additive id that does not exist (live or retired) is a **new symbol**,
+     placed after the agent's `insert_after`, else after the helper it returned
+     just before in that file, else after the task's last target there.
+     `session.max_additive_symbols` (default 5) caps them per reply; they need
+     `semantic.intention_locks`. A method or class body is never additive: it
+     lives inside a class another task may be writing.
+   - an additive id that exists by now is an **escalation**. If the task never
+     read it, another task created that name after this one started, and the
+     note says to rename the helper if it is a different one.
+   - an ungranted `module_header` whose only change is added imports joins the
+     reply's **imports**, so an agent that edited the header text directly is
+     treated like one that used the `imports` field.
+   - an existing node outside the grant, or one listed in `needs_nodes`, is an
+     **escalation** ([§5](05-conflict-detection.md#detection-at-commit)).
+   - everything else is refused and logged as `SOURCE_DROPPED` with the reason.
+     `imports` entries naming a file the task does not target are refused the
+     same way.
    If **every** staged source equals its committed source, the reply carries no
    work: the fragments are rolled back, each logged as `SOURCE_DROPPED`
    ("identical to the committed source"), and the attempt is judged as an empty
    reply ([§11 Run](11-session-lifecycle.md#run), no-op acceptance). An unchanged
    node beside a changed one commits with it.
-2. **`compile()` each fragment** — not `ast.parse()`, because `compile()`
+3. **`compile()` each fragment** — not `ast.parse()`, because `compile()`
    enforces every compile-time rule, including `from __future__` placement.
-3. **The commit pipeline** ([§5](05-conflict-detection.md), [§11](11-session-lifecycle.md)).
-4. **Transactional commit and reconstruction** ([§11](11-session-lifecycle.md)). On success, release the
+4. **The commit pipeline** ([§5](05-conflict-detection.md), [§11](11-session-lifecycle.md)).
+5. **Transactional commit and reconstruction** ([§11](11-session-lifecycle.md)). On success, release the
    task's locks and write an audit commit; on failure the whole transaction rolls
    back.
 

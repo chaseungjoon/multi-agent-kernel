@@ -150,6 +150,7 @@ class _StoreSnapshot:
     """
 
     nodes: dict[NodeId, NodeFragment]
+    placements: dict[NodeId, NodeId | None]
     pending: dict[NodeId, NodeFragment]
     metadata: dict[NodeId, dict[str, object]]
     generation: int
@@ -191,6 +192,9 @@ class NodeStore:
 
         self._nodes: dict[NodeId, NodeFragment] = {}
         self._pending: dict[NodeId, NodeFragment] = {}
+        # Where a staged *new* node goes in its file: the id it follows, or None
+        # for "first". A node absent here and from metadata appends at the end.
+        self._placements: dict[NodeId, NodeId | None] = {}
         self._metadata: dict[NodeId, dict[str, object]] = {}
         self._lock = threading.RLock()
         self._retention = normalize_retention(version_retention)
@@ -407,6 +411,7 @@ class NodeStore:
         """Capture the in-memory index. Call under the lock."""
         return _StoreSnapshot(
             nodes=dict(self._nodes),
+            placements=dict(self._placements),
             pending=dict(self._pending),
             metadata={nid: dict(meta) for nid, meta in self._metadata.items()},
             generation=self._generation,
@@ -415,6 +420,7 @@ class NodeStore:
     def _restore(self, snapshot: _StoreSnapshot) -> None:
         """Put a snapshot back. Call under the lock."""
         self._nodes = snapshot.nodes
+        self._placements = snapshot.placements
         self._pending = snapshot.pending
         self._metadata = snapshot.metadata
         self._generation = snapshot.generation
@@ -599,6 +605,52 @@ class NodeStore:
             self._write_fragment_to_disk(staged)
             return staged
 
+    def insert_node(
+        self, node_id: NodeId, fragment: NodeFragment, *, after: NodeId | None
+    ) -> NodeFragment:
+        """Stage a brand-new node to land right after ``after`` in its file.
+
+        ``after=None`` places it first. :meth:`put_node` gives a new node no
+        position, so it appends at the end of its file — wrong for a module
+        header, and for a helper that should sit beside the function using it.
+        An id the store already knows keeps its position; ``after`` only
+        applies to a node that has none yet.
+        """
+        with self._lock:
+            staged = self.put_node(node_id, fragment)
+            if self._metadata.get(node_id, {}).get("order") is None:
+                self._placements[node_id] = after
+            return staged
+
+    def staged_placement(self, node_id: NodeId) -> tuple[bool, NodeId | None]:
+        """Return ``(placed, after)`` for a staged node (see :meth:`insert_node`)."""
+        with self._lock:
+            if node_id not in self._placements:
+                return False, None
+            return True, self._placements[node_id]
+
+    def _place(self, node_id: NodeId, after: NodeId | None) -> int:
+        """Open a slot after ``after`` in the node's file and return it.
+
+        Every later node in the file shifts down one. Call under the lock.
+        """
+        prefix = f"{str(node_id).split('::', 1)[0]}::"
+        same_file: dict[NodeId, int] = {}
+        for nid, meta in self._metadata.items():
+            order = meta.get("order")
+            if str(nid).startswith(prefix) and isinstance(order, int):
+                same_file[nid] = order
+        if after is None:
+            slot = min(same_file.values(), default=0)
+        elif after in same_file:
+            slot = same_file[after] + 1
+        else:
+            return len(self._metadata)
+        for nid, order in same_file.items():
+            if order >= slot:
+                self._metadata[nid]["order"] = order + 1
+        return slot
+
     def commit_node(self, node_id: NodeId) -> None:
         """Promote a pending fragment to committed.
 
@@ -625,7 +677,12 @@ class NodeStore:
             fragment = self._pending.pop(node_id)
             self._nodes[node_id] = fragment
             existing = self._metadata.get(node_id, {})
-            order = existing.get("order", len(self._metadata))
+            order = existing.get("order")
+            if order is None and node_id in self._placements:
+                order = self._place(node_id, self._placements[node_id])
+            elif order is None:
+                order = len(self._metadata)
+            self._placements.pop(node_id, None)
             self._metadata[node_id] = {
                 "kind": fragment.kind,
                 "version": fragment.version,
@@ -711,6 +768,7 @@ class NodeStore:
             if node_id not in self._pending:
                 return
             frag = self._pending.pop(node_id)
+            self._placements.pop(node_id, None)
             frag_file = self._fragment_dir(node_id) / f"v{frag.version}.py"
             # Only delete the file if this version was never committed.
             committed = self._nodes.get(node_id)
@@ -763,6 +821,7 @@ class NodeStore:
                 return False
             fragment = self._nodes.pop(node_id, None)
             self._pending.pop(node_id, None)
+            self._placements.pop(node_id, None)
             meta = dict(self._metadata.get(node_id, {}))
             meta["retired"] = True
             if fragment is not None:
@@ -1210,14 +1269,51 @@ class NodeStore:
                         frag, source=textwrap.indent(frag.source, prefix)
                     )
                 result.append(frag)
-            # Brand-new staged nodes have no committed slot yet — append as-is.
-            # Skip when a whole-file node owns the file: staged fragments would
-            # be appended after the whole-file content and corrupt the preview.
+            # Brand-new staged nodes have no committed slot yet: a placed one goes
+            # where commit_node will put it, the rest append as-is. Skip when a
+            # whole-file node owns the file: staged fragments would be appended
+            # after the whole-file content and corrupt the preview.
             if NodeId(file_path) not in self._nodes:
-                for nid, frag in staged_overrides.items():
-                    if nid not in seen and str(nid).split("::", 1)[0] == file_path:
-                        result.append(frag)
+                fresh = [
+                    (nid, frag)
+                    for nid, frag in staged_overrides.items()
+                    if nid not in seen and str(nid).split("::", 1)[0] == file_path
+                ]
+                result = self._splice_placed(result, fresh)
             return result
+
+    def _splice_placed(
+        self,
+        ordered: list[NodeFragment],
+        fresh: list[tuple[NodeId, NodeFragment]],
+    ) -> list[NodeFragment]:
+        """Append unplaced new fragments, then insert placed ones after anchors.
+
+        Repeats until nothing moves, so a node placed after another new node
+        (several helpers chained in one commit) lands once its anchor has.
+        Call under the lock.
+        """
+        # Unplaced new nodes append, as commit_node appends them; a placed node
+        # may then name one of them as its anchor.
+        result = list(ordered)
+        result += [frag for nid, frag in fresh if nid not in self._placements]
+        waiting = [(nid, frag) for nid, frag in fresh if nid in self._placements]
+        moved = True
+        while waiting and moved:
+            moved = False
+            for item in list(waiting):
+                nid, frag = item
+                after = self._placements[nid]
+                ids = [f.node_id for f in result]
+                if after is None:
+                    result.insert(0, frag)
+                elif after in ids:
+                    result.insert(ids.index(after) + 1, frag)
+                else:
+                    continue
+                waiting.remove(item)
+                moved = True
+        return result + [frag for _nid, frag in waiting]
 
     def get_staged(self, node_id: NodeId) -> NodeFragment | None:
         """Return the pending (staged, uncommitted) fragment for a node, if any.

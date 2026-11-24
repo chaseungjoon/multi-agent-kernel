@@ -91,6 +91,17 @@ class EventType(StrEnum):
     # Durations use a monotonic performance clock; the event timestamp remains
     # wall time so it composes with the rest of the audit stream.
     PHASE_SPAN = "phase_span"
+    # Wave 28, growing a write set at commit. IMPORT_MERGED: statements from a
+    # reply's ``imports`` were merged into a module header. ADDITIVE_SYMBOL: a
+    # new top-level function or class was committed beside a target without a
+    # prior grant. ESCALATION: a task asked for nodes it was not granted, with
+    # the outcome (granted, resent, restarted, or refused and why).
+    # GROWTH_CONFLICT: a reply's growth collided with another task's and was
+    # sent back (``kind``: ``import_conflict`` or ``name_collision``).
+    IMPORT_MERGED = "import_merged"
+    ADDITIVE_SYMBOL = "additive_symbol"
+    ESCALATION = "escalation"
+    GROWTH_CONFLICT = "growth_conflict"
 
 
 @dataclass(frozen=True, slots=True)

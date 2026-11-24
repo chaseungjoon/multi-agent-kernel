@@ -160,7 +160,29 @@ reordering is a reviewed change:
 
 1. **`ProvidersCommitted`** — a task dispatched against a contract (soft edge)
    is deferred until its providers commit, and fails if one of them failed.
-2. **`RegistrarMerge`** (`registrar.py`, `registry_merge.py`). Two appenders
+2. **`LockEscalation`** (`escalation.py`, Wave 28). The reply wrote an existing
+   node outside its grant, or listed one in `needs_nodes`. The extra locks are
+   tried once, without blocking:
+   - **free, and the agent saw the node's current source** — granted and staged;
+     the commit goes on (`ESCALATION`, outcome `granted`).
+   - **free, but not seen** — granted, and the task is sent back with the node in
+     its bundle (`granted_resend`).
+   - **busy, or a whole file or class shell** — the task gives back every lock
+     and is re-queued with the node in its targets (`restarted`). Coarse nodes
+     cover other tasks' fragments, so they are never taken mid-flight.
+   - **`session.max_escalations` rounds used** (default 2; 0 turns escalation
+     off) — the extra output is dropped and the commit goes on (`refused`).
+
+   Escalated targets are *optional*: the grant allows a write, it does not
+   require one, so a retry that leaves the node out still completes. The widened
+   task keeps its own `changes_api`; with `changes_api=True` the new targets
+   join `api_targets`, so the grant matches what `record_grant` recomputes.
+3. **`AdditiveSymbols`** (`growth.py`, Wave 28). New top-level helpers from the
+   classifier ([§3.4](03-ast-pipeline.md#34-collection-agent-output--node-store))
+   are staged as extras after their anchor, under transient locks. A name that
+   another task took in the meantime is sent back to be renamed
+   (`GROWTH_CONFLICT`, `name_collision`); a busy file intention lock defers.
+4. **`RegistrarMerge`** (`registrar.py`, `registry_merge.py`). Two appenders
    each return the table as they read it plus their lines. `plan_merge` extracts
    what an agent **appended** to the version it read (`appended_entries`) and
    replays exactly those entries onto the table as it is **now**
@@ -168,7 +190,15 @@ reordering is a reviewed change:
    is not a pure keyed append takes the node's plain WRITE lock instead (or is
    deferred until it can), or is sent back with a fresh read when the table
    moved.
-3. **`ReadSetCurrent`** (`stale.py`). Every read-set node is compared by
+5. **`ImportMerge`** (`growth.py`, `mak/semantic/import_merge.py`, Wave 28).
+   Each file's `imports` are merged into its header as it is *now*: a statement
+   already present is skipped, `__future__` imports go right after the
+   docstring, a file with no header gets one. A name already bound to something
+   else, by an import or a top-level `def`/`class`, is sent back with a note
+   naming it (`GROWTH_CONFLICT`, `import_conflict`). A task that holds the header
+   itself merges into its own staged source. Merges are logged as
+   `IMPORT_MERGED` once the commit is durable.
+6. **`ReadSetCurrent`** (`stale.py`). Every read-set node is compared by
    digest against what is committed now. A stale node is classified
    `body_only`, `api_change`, `deleted`, or `created` — where "interface" is
    binding-level (`interface.py::changed_bindings`: gaining a name breaks nobody)
@@ -187,20 +217,20 @@ reordering is a reviewed change:
    stale read is logged (`STALE_READ`). A re-dispatch carries a bounded unified
    diff of each blocking node in `retry_note` and counts against `max_attempts`
    with `error_kind="stale_read"`.
-4. **`StructuralConflicts`** ([§5.1](#51-structural-checks-makconflict_detector)), over this edit, the batch's earlier
+7. **`StructuralConflicts`** ([§5.1](#51-structural-checks-makconflict_detector)), over this edit, the batch's earlier
    commits, and the contract stubs the task builds against.
-5. **`ContractsHold`** — a contracted node must match its declared contract.
-6. **`InterfaceGranted`** (`resources.py`). A task that declared
+8. **`ContractsHold`** — a contracted node must match its declared contract.
+9. **`InterfaceGranted`** (`resources.py`). A task that declared
    `changes_api=False` and changed an existing binding is sent back. Any other
    undeclared interface change needs `#api` WRITE: taken on the spot if free
    (`API_ESCALATED`), otherwise the commit is deferred until concurrent readers
    finish.
-7. **`PreviewCompiles`** — every touched file, assembled with the staged
+10. **`PreviewCompiles`** — every touched file, assembled with the staged
    fragments, must `compile()`.
-8. **`ProspectiveSemantics`** — the whole-repository checks rerun with the staged
+11. **`ProspectiveSemantics`** — the whole-repository checks rerun with the staged
    files substituted; a newly introduced defect, or a repair obligation still
    unresolved, rejects the edit before anything is durable ([§11](11-session-lifecycle.md)).
-9. **`LeaseStillHeld`** — the task must still hold every lease it is about to
+12. **`LeaseStillHeld`** — the task must still hold every lease it is about to
    commit through; a lease that lapsed during a long agent call is never
    committed through.
 

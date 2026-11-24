@@ -40,7 +40,19 @@ class TestDialectsAgree:
         # never reach the node store.
         items = result_schema(dialect)["properties"]["modified_fragments"]["items"]
         assert items["properties"]["new_source"]["type"] == "string"
-        assert set(items["required"]) == {"node_id", "new_source"}
+        # openai's strict mode requires every property, so the optional
+        # insert_after is required there (and may be null).
+        assert {"node_id", "new_source"} <= set(items["required"])
+        assert set(items["required"]) <= {"node_id", "new_source", "insert_after"}
+
+    @pytest.mark.parametrize("dialect", DIALECTS)
+    def test_every_dialect_carries_the_growth_channels(self, dialect: str) -> None:
+        props = result_schema(dialect)["properties"]
+        assert {"imports", "needs_nodes"} <= set(props)
+        fragment = props["modified_fragments"]["items"]["properties"]
+        assert "insert_after" in fragment
+        need = props["needs_nodes"]["items"]["properties"]
+        assert {"node_id", "mode", "reason"} <= set(need)
 
     def test_descriptions_are_shared_across_dialects(self) -> None:
         descriptions = {

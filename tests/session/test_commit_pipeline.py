@@ -22,7 +22,10 @@ from tests.semantic.helpers import ScriptRunner, events, make_session, task
 
 _ORDER = [
     "providers_committed",
+    "lock_escalation",
+    "additive_symbols",
     "registrar_merge",
+    "import_merge",
     "read_set_current",
     "structural_conflicts",
     "contracts_hold",
@@ -108,7 +111,8 @@ class TestInsertedCheck:
         ])
         result = session.run()
 
-        expected = _ORDER[:6] + ["veto"] + _ORDER[6:]
+        at = _ORDER.index(PreviewCompiles.name)
+        expected = _ORDER[:at] + ["veto"] + _ORDER[at:]
         assert seen[: len(expected)] == expected
         assert result.completed == ("fine",)
         assert result.failed == ("vetoed",)

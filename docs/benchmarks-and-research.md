@@ -74,6 +74,14 @@ alone, and on B alone, and **fail** on the naive combination
 | 8 | new required field vs. new construction | detected (wave end) | missed |
 | 9 | duplicate implementation | detected (wave end) | missed |
 | 10 | out-of-store artifacts (config, SQL, docs) | not representable | not representable |
+| 11 | same import twice | clean (side by side, one entry) | clean |
+| 12 | one name, two imports | detected (commit) | detected (textual) |
+| 13 | same helper name | detected (commit) | detected (textual) |
+
+Shapes 11–13 (Wave 28) grow past the grant at commit: an import in the module
+header, or a new helper beside the target. Shape 11's naive merge is harmless
+(git folds two identical lines into one), so its contract only requires that
+MAK neither duplicates the import nor serializes the two tasks.
 
 Zero false positives across single-edit runs, and at most one extra agent call
 per detected shape. `tests/test_semantic_corpus.py` gates both the table and the

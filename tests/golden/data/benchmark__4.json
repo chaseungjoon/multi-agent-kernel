@@ -155,10 +155,15 @@
    [
     "plan_metrics",
     {
+     "additive_symbols": 0.0,
      "adjudicated_accepts": 0.0,
      "conflict_rejections": 0.0,
      "context_bytes_total": 75026.0,
      "dispatches": 24.0,
+     "escalation_restarts": 0.0,
+     "escalations_granted": 0.0,
+     "escalations_requested": 0.0,
+     "import_merges": 0.0,
      "mean_context_bytes": 3126.08,
      "planner_cached_tokens": 0.0,
      "planner_calls": 0.0,

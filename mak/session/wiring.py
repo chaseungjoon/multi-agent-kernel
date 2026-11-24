@@ -22,6 +22,7 @@ from mak.session.dispatch import DispatchEnricher
 from mak.session.events import EventLog
 from mak.session.finalize import Finalizer
 from mak.session.fixups import FixupBuilder
+from mak.session.growth import GrowthClassifier
 from mak.session.outcomes import NoopPolicy, RetryPolicy
 from mak.session.parking import ParkedCommits
 from mak.session.planning import PlanPreparer
@@ -157,6 +158,7 @@ def _commit_path(
             detector=inputs.conflict_detector or ConflictDetector(),
             # The only model call on the commit path, and only when configured.
             adjudicator=adjudicator if adjudicator.configured else None,
+            session=config.session,
         ),
         applier=applier,
         view=view,
@@ -186,6 +188,9 @@ def _commit_path(
         retry=retry,
         collect_timeout_s=inputs.collect_timeout_s,
         log=log,
+        growth=GrowthClassifier(
+            view, log, max_additive=config.session.max_additive_symbols
+        ),
     )
     return pipeline, retry, batches
 

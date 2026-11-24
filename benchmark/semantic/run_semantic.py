@@ -1,4 +1,7 @@
-"""Run the Wave 20 semantic-conflict corpus and print the comparison table.
+"""Run the semantic-conflict corpus and print the comparison table.
+
+Shapes 1-9 are Wave 20's; 11-13 are the Wave 28 growth scenarios (imports and
+new helpers added at commit).
 
 python benchmark/semantic/run_semantic.py            # markdown table
 python benchmark/semantic/run_semantic.py --json     # one JSON object per shape
@@ -15,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from semantic.evaluate import ScenarioResult, evaluate  # noqa: E402
-from semantic.scenarios import SCENARIOS  # noqa: E402
+from semantic.scenarios import GROWTH_SCENARIOS, SCENARIOS  # noqa: E402
 
 _SHAPE_10 = (
     "| 10 | out-of-store artifacts | not representable | not representable | — | — |"
@@ -40,7 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="emit JSON lines")
     parser.add_argument("--no-gates", action="store_true", help="skip gated runs")
     args = parser.parse_args(argv)
-    results = [evaluate(s, with_gates=not args.no_gates) for s in SCENARIOS]
+    results = [
+        evaluate(s, with_gates=not args.no_gates)
+        for s in (*SCENARIOS, *GROWTH_SCENARIOS)
+    ]
     if args.json:
         for r in results:
             print(json.dumps({
@@ -58,8 +64,9 @@ def main(argv: list[str] | None = None) -> int:
     print("| shape | scenario | MAK | worktrees | false positives | extra calls |")
     print("|---|---|---|---|---|---|")
     for r in results:
+        if r.scenario.shape == 11:
+            print(_SHAPE_10)
         print(_row(r))
-    print(_SHAPE_10)
     return 0
 
 

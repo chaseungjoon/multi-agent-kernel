@@ -8,16 +8,18 @@ single canonical schema). ``decode_task_bundle`` rebuilds nested ``LockEntry`` /
 
 from __future__ import annotations
 
+import ast
 import json
 from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any
+from typing import Any, NamedTuple
 
 from mak.core.exceptions import AgentProtocolError
 from mak.core.types import (
     LockEntry,
     LockMode,
     NodeId,
+    NodeNeed,
     ResourceKind,
     ResourceRef,
     TaskBundle,
@@ -50,6 +52,29 @@ NEW_TARGET_CONTRACT = (
     "its complete source from scratch under that exact id."
 )
 
+# The header half. Every task that needed an import used to have to WRITE-lock
+# the file's one ``module_header`` node, so tasks in one file serialized on it —
+# or, when the planner left the header out, the import was dropped. Imports now
+# travel on their own channel and the kernel merges them.
+IMPORTS_CONTRACT = (
+    "Never edit a file's module header just to add an import: list each import "
+    "statement you need in 'imports' instead (one statement per entry, e.g. "
+    "'from typing import Any'), and the kernel merges it into the header. When "
+    "your targets span several files, prefix the entry with its file and '::' "
+    "('pkg/mod.py::import os')."
+)
+
+# The rest of the write-set growth contract: a new helper beside a target, and
+# a node the plan did not predict.
+GROWTH_CONTRACT = (
+    "You may add a new top-level function or class next to a target in the "
+    "same file: return it under a new id ('<file>::function::<name>' or "
+    "'<file>::class::<name>') and, optionally, set its fragment's "
+    "'insert_after' to the id it should follow. If you need to read or change "
+    "a node you were not given, list it in 'needs_nodes' as {node_id, mode "
+    "('read' or 'write'), reason} instead of guessing at its source."
+)
+
 # The no-op half of the contract. MAK used to accept *any* successful result with
 # no fragments as "the agent audited this and found nothing to change" — which is
 # also exactly what a reply cut off at the output-token limit looks like, so
@@ -76,7 +101,9 @@ REPAIR_INSTRUCTION = (
     "bundle's task_id), 'success' (boolean), 'modified_fragments' (array of "
     "objects, each with 'node_id' and the node's FULL rewritten 'new_source'), "
     "'no_changes_required' (boolean), and 'error' (string when success is "
-    "false, otherwise null). Do not change the work you did — only its shape."
+    "false, otherwise null). 'imports' (array of import statements) and "
+    "'needs_nodes' (array of {{node_id, mode, reason}}) are optional. Do not "
+    "change the work you did — only its shape."
 )
 
 # The retry half. Populated by the session on a re-dispatch; absent on attempt 1.
@@ -115,12 +142,40 @@ def _fold_order(
     return (2, 0, index)
 
 
+class ReturnedSources(NamedTuple):
+    """Where each id an agent returned landed; see :func:`map_returned_sources`."""
+
+    accepted: dict[NodeId, str]
+    dropped: list[tuple[NodeId, str]]
+    additive: dict[NodeId, str]
+
+
+# Kinds an agent may create beside a target without a grant. Methods and class
+# bodies live inside a class another task may be writing; module-level
+# statements have placement semantics a function does not (Wave 28 scope).
+ADDITIVE_KINDS = frozenset({"function", "class"})
+
+
+def additive_candidate(node_id: NodeId, grant: list[NodeId]) -> bool:
+    """Whether an out-of-grant id *looks* like a new helper beside a target.
+
+    Syntax only — the id names a top-level function or class in a file where
+    the task holds a fragment target. Whether the symbol is really new is the
+    store's question, and the session asks it.
+    """
+    parts = str(node_id).split("::")
+    if len(parts) != 3 or parts[1] not in ADDITIVE_KINDS or not parts[2]:
+        return False
+    fragment_files = {str(n).split("::", 1)[0] for n in grant if "::" in str(n)}
+    return parts[0] in fragment_files
+
+
 def map_returned_sources(
     grant: list[NodeId],
     new_sources: dict[NodeId, str],
     *,
     order_key: Callable[[NodeId], int | None] | None = None,
-) -> tuple[dict[NodeId, str], list[tuple[NodeId, str]]]:
+) -> ReturnedSources:
     """Map returned node ids onto nodes the task may write; report the rest.
 
     This is the enforcement half of :data:`NODE_ID_CONTRACT`, shared by every
@@ -137,6 +192,9 @@ def map_returned_sources(
       disagreement. Several fragments for one grant are concatenated in the order
       the agent returned them, and an explicit whole-file source always wins over
       folded fragments;
+    - it names a new-looking top-level function or class in a file where the
+      task holds a fragment target — ``additive`` (:func:`additive_candidate`),
+      for the session to accept, escalate or refuse;
     - anything else — dropped, with the reason, for the caller to report. A
       source for a file the task was never granted must not be applied: those
       nodes belong to other tasks and are not write-locked here.
@@ -146,6 +204,7 @@ def map_returned_sources(
     accepted: dict[NodeId, str] = {}
     folded: dict[NodeId, list[tuple[tuple[int, int, int], str]]] = {}
     dropped: list[tuple[NodeId, str]] = []
+    additive: dict[NodeId, str] = {}
     for index, (node_id, source) in enumerate(new_sources.items()):
         if node_id in in_scope:
             accepted[node_id] = source
@@ -155,6 +214,9 @@ def map_returned_sources(
             folded.setdefault(NodeId(file_path), []).append(
                 (_fold_order(node_id, index, order_key), source)
             )
+            continue
+        if additive_candidate(node_id, grant):
+            additive[node_id] = source
             continue
         dropped.append(
             (node_id, "returned node id is outside the task's granted nodes")
@@ -166,7 +228,7 @@ def map_returned_sources(
         accepted[whole_file_id] = (
             "\n\n".join(p.strip("\n") for p in ordered) + "\n"
         )
-    return accepted, dropped
+    return ReturnedSources(accepted, dropped, additive)
 
 
 def _check_version(data: dict[str, Any]) -> None:
@@ -422,8 +484,13 @@ def _decode_result_body(data: dict[str, Any]) -> TaskResult:
     for node_id in raw_modified:
         _record(NodeId(str(node_id)), None)
 
+    placements: dict[NodeId, NodeId] = {}
     for index, fragment in enumerate(_as_fragment_list(data.get("modified_fragments"))):
-        _record(_fragment_node_id(fragment, index), _fragment_source(fragment, index))
+        node_id = _fragment_node_id(fragment, index)
+        _record(node_id, _fragment_source(fragment, index))
+        after = fragment.get("insert_after")
+        if isinstance(after, str) and after.strip():
+            placements[node_id] = NodeId(after.strip())
 
     raw_sources = data.get("new_sources") or {}
     for node_id_str, source in _require_mapping(raw_sources, "new_sources").items():
@@ -452,4 +519,96 @@ def _decode_result_body(data: dict[str, Any]) -> TaskResult:
         usage=_decode_usage(data.get("usage")),
         retryable=bool(data.get("retryable", True)),
         repairs=_decode_repairs(data.get("repairs")),
+        imports=decode_imports(data.get("imports")),
+        needs_nodes=decode_needs(data.get("needs_nodes")),
+        placements={**_decode_placements(data.get("placements")), **placements},
     )
+
+
+def split_import_entry(entry: str) -> tuple[str | None, str]:
+    """Split ``"pkg/m.py::import os"`` into its file and statement.
+
+    An entry with no ``<file>.py::`` prefix belongs to whichever file the
+    task's targets are in; the session decides which.
+    """
+    head, sep, rest = entry.partition("::")
+    if sep and head.strip().endswith(".py") and " " not in head.strip():
+        return head.strip(), rest.strip()
+    return None, entry.strip()
+
+
+def import_statement_error(statement: str) -> str | None:
+    """Return why ``statement`` is not one module-level import, or None."""
+    try:
+        tree = ast.parse(statement)
+    except SyntaxError as exc:
+        return f"is not valid Python ({exc.msg})"
+    if len(tree.body) != 1:
+        return f"holds {len(tree.body)} statements, not exactly one import"
+    if not isinstance(tree.body[0], ast.Import | ast.ImportFrom):
+        return f"is a {type(tree.body[0]).__name__}, not an import statement"
+    return None
+
+
+def decode_imports(raw: object) -> list[str]:
+    """Validate the ``imports`` channel: each entry exactly one import statement.
+
+    A malformed entry is a protocol error, not a silent drop, so the adapter's
+    repair turn can name it and the model can fix it.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise AgentProtocolError(
+            f"'imports' must be an array of import statements, got {_type_name(raw)}"
+        )
+    entries: list[str] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, str):
+            raise AgentProtocolError(
+                f"'imports[{index}]' must be a string, got {_type_name(entry)}"
+            )
+        _file, statement = split_import_entry(entry)
+        problem = import_statement_error(statement)
+        if problem is not None:
+            raise AgentProtocolError(f"'imports[{index}]' ({entry!r}) {problem}")
+        if entry.strip() not in entries:
+            entries.append(entry.strip())
+    return entries
+
+
+def decode_needs(raw: object) -> list[NodeNeed]:
+    """Validate ``needs_nodes``: objects with a node id, a mode and a reason."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise AgentProtocolError(
+            f"'needs_nodes' must be an array of objects, got {_type_name(raw)}"
+        )
+    needs: list[NodeNeed] = []
+    for index, item in enumerate(raw):
+        entry = _require_mapping(item, f"needs_nodes[{index}]")
+        node_id = entry.get("node_id")
+        if not isinstance(node_id, str) or not node_id.strip():
+            raise AgentProtocolError(
+                f"'needs_nodes[{index}].node_id' must be a non-empty string"
+            )
+        mode = str(entry.get("mode") or "write").lower()
+        if mode not in ("read", "write"):
+            raise AgentProtocolError(
+                f"'needs_nodes[{index}].mode' must be 'read' or 'write', got {mode!r}"
+            )
+        reason = entry.get("reason")
+        needs.append(NodeNeed(
+            NodeId(node_id.strip()), mode, reason if isinstance(reason, str) else ""
+        ))
+    return needs
+
+
+def _decode_placements(raw: object) -> dict[NodeId, NodeId]:
+    """Read a re-encoded ``placements`` map (id -> the id it follows)."""
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        NodeId(str(k)): NodeId(v) for k, v in raw.items() if isinstance(v, str)
+    }

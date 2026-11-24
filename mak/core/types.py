@@ -72,6 +72,20 @@ class TaskBundle:
 
 
 @dataclass(frozen=True, slots=True)
+class NodeNeed:
+    """A node an agent asks for that its grant does not include.
+
+    ``mode`` is ``"read"`` (show me its source) or ``"write"`` (let me change
+    it). The kernel tries to take the lock at once; it never waits for it while
+    the task holds others.
+    """
+
+    node_id: NodeId
+    mode: str
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class TaskResult:
     """Result of an agent task execution.
 
@@ -111,6 +125,16 @@ class TaskResult:
       and logged with the result: a run whose replies routinely need a second
       turn is a run whose local model is too weak, or one that wants
       ``structured_output: json_schema`` — and neither is visible otherwise.
+
+    Three fields let a reply reach past its grant without the session dropping
+    it (Wave 28):
+
+    - ``imports`` — import statements to merge into a file's header. Each is
+      one ``import``/``from … import`` statement, optionally prefixed with the
+      file it belongs to (``"pkg/m.py::import os"``).
+    - ``needs_nodes`` — nodes the agent needs but was not granted.
+    - ``placements`` — for a new symbol, the id it should follow in its file
+      (the fragment's ``insert_after``).
     """
 
     task_id: str
@@ -124,6 +148,9 @@ class TaskResult:
     retryable: bool = True
     error_kind: str | None = None
     repairs: int = 0
+    imports: list[str] = field(default_factory=list)
+    needs_nodes: list[NodeNeed] = field(default_factory=list)
+    placements: dict[NodeId, NodeId] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,7 +6,7 @@ import dataclasses
 import queue
 from collections import Counter
 
-from mak.agent_runner.protocol import map_returned_sources
+from mak.agent_runner.protocol import ReturnedSources, map_returned_sources
 from mak.core.logging import EventType
 from mak.core.types import NodeFragment, NodeId, TaskBundle, TaskResult
 from mak.scheduler.scheduler import Scheduler
@@ -15,6 +15,7 @@ from mak.session.concurrency import Completion
 from mak.session.events import EventLog
 from mak.session.failures import record_failure
 from mak.session.grants import release_lock
+from mak.session.growth import GrowthClassifier
 from mak.session.outcomes import NoopPolicy, RetryPolicy
 from mak.session.parking import ParkedCommits, Settle
 from mak.session.store_view import StoreView
@@ -40,6 +41,7 @@ class BatchProcessor:
         retry: RetryPolicy,
         collect_timeout_s: float,
         log: EventLog,
+        growth: GrowthClassifier | None = None,
     ) -> None:
         self._view = view
         self._lock_table = lock_table
@@ -49,6 +51,7 @@ class BatchProcessor:
         self._retry = retry
         self.collect_timeout_s = collect_timeout_s
         self._log = log
+        self._growth = growth or GrowthClassifier(view, log, max_additive=5)
         self.completions: queue.Queue[Completion] = queue.Queue()
         # Agent tokens spent, summed from what each provider reported on its own
         # response. Read off ``TaskResult.usage`` rather than by patching the SDK:
@@ -143,11 +146,17 @@ class BatchProcessor:
         reported = dict.fromkeys([*result.modified_nodes, *result.new_sources])
         self._log_agent_result(progress, result, reported)
         accepted: list[NodeId] = []
+        wave.growth.pop(task_id, None)
         if result.success:
-            accepted = self._stage_returned_sources(
-                task_id, progress.target_nodes, result.new_sources
+            accepted, mapped = self._stage_returned_sources(
+                progress.target_nodes, result.new_sources
             )
-            if accepted and self._drop_if_all_unchanged(progress, accepted):
+            growth = self._growth.classify(
+                wave, task_id, progress.target_nodes, mapped, result
+            )
+            if not growth.empty:
+                wave.growth[task_id] = growth
+            elif accepted and self._drop_if_all_unchanged(progress, accepted):
                 # Nothing came back but the current source: the reply carries no
                 # work, so it is judged like one that returned nothing at all.
                 accepted = []
@@ -193,12 +202,21 @@ class BatchProcessor:
             if result.success
             else []
         )
+        if task_id in wave.restarted:
+            # Escalated through a restart: every lock is back and the task is
+            # queued again with a wider grant, so this attempt settles nothing.
+            wave.restarted.discard(task_id)
+            wave.growth.pop(task_id, None)
+            return {}
         if task_id in wave.deferring:
             self._parking.park(wave, bundle, result, staged)
             return {}
+        wave.growth.pop(task_id, None)
         committed_sources: dict[str, str] = {}
+        targets = set(progress.target_nodes)
         for node_id in committed:
-            progress.completed_nodes.add(node_id)
+            if node_id in targets:
+                progress.completed_nodes.add(node_id)
             release_lock(self._lock_table, wave, task_id, node_id)
             source = self._view.source(node_id)
             if source is not None:
@@ -303,18 +321,18 @@ class BatchProcessor:
         return True
 
     def _stage_returned_sources(
-        self, task_id: str, grant: list[NodeId], new_sources: dict[NodeId, str]
-    ) -> list[NodeId]:
-        """Stage each rewritten source the agent returned; return the ids staged.
+        self, grant: list[NodeId], new_sources: dict[NodeId, str]
+    ) -> tuple[list[NodeId], ReturnedSources]:
+        """Stage each granted source the agent returned; return ids and mapping.
 
         This is the agent→store transport: an API/CLI agent reports the full new
         source of each node it changed, and the session ``put_node``s it (as a new
         pending version) so the normal validate→commit path applies it.
 
-        An agent may not edit beyond the nodes it was authorized to modify, so a
-        source outside the grant is refused — but *loudly*: every refusal is
-        logged with the id, the grant, and the reason, so a granularity mismatch
-        is diagnosable from the log rather than surfacing as unexplained retries.
+        Only granted sources are staged here. What lies outside the grant — new
+        helpers, an edited header, an existing node the task was not given — is
+        left in the mapping for :class:`GrowthClassifier`, which either turns it
+        into growth the commit acts on or logs why it was refused.
         """
         store = self._view.store
         # order_key: when several fragments fold into one whole-file grant they
@@ -322,23 +340,12 @@ class BatchProcessor:
         # happened to emit puts imports after code. That still compiles, so every
         # downstream gate passes it — the store's own source order is the
         # authority, and the header leads regardless.
-        accepted, dropped = map_returned_sources(
-            grant, new_sources, order_key=store.node_order
-        )
-        for node_id, source in accepted.items():
+        mapped = map_returned_sources(grant, new_sources, order_key=store.node_order)
+        for node_id, source in mapped.accepted.items():
             store.put_node(
                 node_id, NodeFragment(node_id, self._view.kind(node_id), source, 1)
             )
-        for node_id, reason in dropped:
-            self._log(
-                EventType.SOURCE_DROPPED,
-                task_id=task_id,
-                node_id=str(node_id),
-                granted=[str(n) for n in grant],
-                source_length=len(new_sources[node_id]),
-                reason=reason,
-            )
-        return list(accepted)
+        return list(mapped.accepted), mapped
 
 
 def _batch_order(wave: WaveState, task_ids: list[str]) -> list[str]:

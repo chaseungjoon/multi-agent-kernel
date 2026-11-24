@@ -100,6 +100,10 @@ class SubTaskProgress:
     # the last attempt: no work, so the attempt is judged as an empty reply and
     # the failure reason names what came back.
     unchanged_returns: list[NodeId] = field(default_factory=list)
+    # Targets the task gained by escalation. The agent asked for them, so they
+    # are granted and in its bundle, but leaving one unchanged on the next
+    # attempt is a choice, not a missed target: the task can finish without it.
+    optional_nodes: set[NodeId] = field(default_factory=set)
 
     @property
     def remaining(self) -> list[NodeId]:
@@ -108,8 +112,61 @@ class SubTaskProgress:
 
     @property
     def is_complete(self) -> bool:
-        """True once every target node has been committed."""
-        return all(n in self.completed_nodes for n in self.target_nodes)
+        """True once every required target node has been committed."""
+        return all(
+            n in self.completed_nodes
+            for n in self.target_nodes
+            if n not in self.optional_nodes
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NewSymbol:
+    """A top-level function or class an agent created beside its target.
+
+    ``after`` is the node it should follow; ``anchored`` says the agent chose
+    it. Unanchored symbols are placed after the target they sit beside.
+    """
+
+    node_id: NodeId
+    source: str
+    after: NodeId | None = None
+    anchored: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Escalation:
+    """A node an agent asked for at commit time, beyond what it was granted.
+
+    ``source`` is the agent's proposed source for a write it already made, if
+    it made one. ``coarse`` marks a whole file or a class shell: those cover
+    nodes other tasks write, so they are never granted mid-flight.
+    """
+
+    node_id: NodeId
+    mode: LockMode
+    source: str | None
+    reason: str
+    coarse: bool = False
+
+
+@dataclass
+class Growth:
+    """What a task's reply asks for beyond its grant (Wave 28).
+
+    Built once from the reply and kept until the attempt commits, is sent
+    back, or is restarted — a parked result resumes with the same growth.
+    ``imports`` maps a file to the import statements to merge into its header.
+    """
+
+    additive: list[NewSymbol] = field(default_factory=list)
+    escalations: list[Escalation] = field(default_factory=list)
+    imports: dict[str, list[str]] = field(default_factory=dict)
+
+    @property
+    def empty(self) -> bool:
+        """Whether the reply asks for nothing beyond its grant."""
+        return not (self.additive or self.escalations or self.imports)
 
 
 @dataclass(frozen=True, slots=True)

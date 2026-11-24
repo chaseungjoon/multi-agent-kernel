@@ -175,6 +175,18 @@ dispatch (getattr, registries, callbacks), or code that other tasks in this plan
 create. Set "changes_api": true and give the "contract" for every signature you \
 change; when a task only changes function bodies, set "changes_api": false."""
 
+# Wave 28: the kernel grows a task's write set at commit, so a plan no longer
+# has to over-claim headers and whole files to leave room for imports and
+# helpers. Not in ``oneshot``, which keeps its prompt byte-for-byte.
+_GROWTH = """\
+IMPORTS AND HELPERS: do not target a file's module header ("::module_header::\
+__header__") just to add imports — agents list new imports separately and MAK \
+merges them, so tasks adding imports to one file still run in parallel. Target \
+the header only to change other module-level code (constants, __all__, setup). \
+A task may also add new top-level helper functions or classes beside its targets \
+in the same file without listing them. Never target a whole file just to leave \
+room for either: target the symbols the task changes."""
+
 _INVENTORY_FORMAT = """\
 READING THE INVENTORY: a file is a header line ("path/to/file.py  (N nodes · used \
 by M other files)") followed by one line per node. Each node line starts with the \
@@ -387,7 +399,7 @@ class Planner:
     def _view_head(self, strategy: str) -> str:
         """Instructions and roster: the part of S1 before the inventory."""
         callers = _CALLERS_AUTO if self._auto_caller_tasks else _CALLERS_MANUAL
-        parts = [_PLAN_CORE, callers, _INVENTORY_FORMAT]
+        parts = [_PLAN_CORE, callers, _GROWTH, _INVENTORY_FORMAT]
         if strategy == "retrieval":
             parts.append(
                 _RETRIEVAL_PROTOCOL.format(rounds=self._max_expansions)

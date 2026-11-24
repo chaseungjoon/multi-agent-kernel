@@ -31,6 +31,13 @@ session:
   # test_command set, auto_push never fires, because "no tests ran" is not "the
   # tests passed". "allow_skip" is the opt-out for a project with no suite.
   # test_policy: "require_pass"
+  # How many new top-level functions or classes one reply may add beside its
+  # targets without asking. 0 refuses them all.
+  # max_additive_symbols: 5
+  # How many times one task may ask, at commit, for nodes it was not granted.
+  # A free node is granted; a busy one restarts the task with it in its targets.
+  # 0 turns escalation off.
+  # max_escalations: 2
 
 planner:
   model: "claude-opus-5"

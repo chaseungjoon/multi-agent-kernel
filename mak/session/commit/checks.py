@@ -173,17 +173,22 @@ class LeaseStillHeld:
 
     A lease may have expired during a long agent call and the node been
     reclaimed by another holder; the store is never advanced through a lock
-    the task no longer owns.
+    the task no longer owns. A node the kernel added to the commit (a merged
+    header, a new helper) is covered by the transient locks taken for it
+    instead, which must still be held too.
     """
 
     name = "lease_still_held"
 
     def check(self, ctx: CommitContext) -> Verdict:
-        """Reject when any granted lease has lapsed."""
-        held = ctx.lock_table.holds_all(
-            [(node_id, ctx.granted_mode(node_id)) for node_id in ctx.staged],
-            ctx.task_id,
-        )
+        """Reject when any granted or transient lease has lapsed."""
+        granted = ctx.wave.granted.get(ctx.task_id, {})
+        requests = [
+            (node_id, ctx.granted_mode(node_id))
+            for node_id in ctx.staged
+            if node_id not in ctx.extras or node_id in granted
+        ]
+        held = ctx.lock_table.holds_all([*requests, *ctx.transient], ctx.task_id)
         if held:
             return ACCEPT
         return reject(["write lock lost before commit (lease expired)"])

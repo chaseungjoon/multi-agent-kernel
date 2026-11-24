@@ -87,6 +87,28 @@ code graph.
   when every entry is keyed. An appender takes INTENT_WRITE on the node and WRITE
   on `<id>#key=<literal>` for each declared key (`SubTask.registry_keys`). An
   unkeyed list is order-dependent and keeps the plain node lock.
+- **Import locks (Wave 28, commit time only).** Merging a reply's `imports` into
+  header `H` takes READ on `H` (so nobody rewrites the header under the merge),
+  INTENT_WRITE on `H#imports` (shared by every importer of the file),
+  INTENT_WRITE on the file, and WRITE on `H#import=<name>` for each name the
+  statements bind. Importers of different names commit side by side; two
+  imports of one name serialize, and the second is merged as a no-op or sent
+  back as a conflict. These locks are transient: taken for the one commit and
+  given back when it ends.
+- **New symbols (Wave 28, commit time only).** A new helper takes the same
+  locks a fragment write on its id would (WRITE on the id, INTENT_WRITE on its
+  file), transiently. A busy WRITE on an id nobody has yet means another task
+  is creating that name, which is a collision, not a wait.
+
+**Growing a grant.** A task's grant is still acquired atomically at dispatch.
+When a reply needs more (`LockEscalation`, [§5](05-conflict-detection.md#detection-at-commit)),
+the extra locks are tried once, without blocking: `Scheduler.widen_task` adds
+them to the task's held set if free; otherwise `requeue_with_targets` releases
+everything the task holds and puts it back in the ready queue with the wider
+target list. No task ever waits while holding locks, so escalation adds no
+deadlock edge. Both persist the wider task, so `--recover` keeps the grown
+grant; `scheduler.annotations["escalations"]` records each round, which is how
+recovery knows which targets are optional.
 
 `Scheduler` accepts an optional `lock_policy` (`use_lock_policy` rebuilds it after
 recovery), and `WaveState.granted` records the mode each task actually holds per

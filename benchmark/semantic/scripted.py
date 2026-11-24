@@ -27,9 +27,11 @@ class ScriptedAgent:
         self,
         first: Mapping[str, Mapping[str, Response]],
         retry: Mapping[str, Mapping[str, Response]],
+        imports: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]] | None = None,
     ) -> None:
         self._first = first
         self._retry = retry
+        self._imports = imports or {}
         self._lock = threading.Lock()
         self.calls: dict[str, int] = {}
         self._holds: dict[str, Callable[[], None]] = {}
@@ -49,16 +51,20 @@ class ScriptedAgent:
             self._holds[bundle.task_id]()
         script = self._first if attempt == 0 else self._retry
         answers = script.get(bundle.task_id) or self._first.get(bundle.task_id, {})
+        # Everything scripted is returned, a new helper beside the targets
+        # included: what the reply may grow by is the kernel's call.
         sources = {
             NodeId(node): (answer(bundle) if callable(answer) else answer)
             for node, answer in answers.items()
-            if NodeId(node) in bundle.target_nodes
         }
+        first_imports, retry_imports = self._imports.get(bundle.task_id, ((), ()))
+        imports = list(first_imports if attempt == 0 else retry_imports)
         return TaskResult(
             task_id=bundle.task_id,
-            success=bool(sources),
+            success=bool(sources or imports),
             modified_nodes=list(sources),
             new_sources=sources,
+            imports=imports,
         )
 
     def shutdown(self) -> None:  # parity with mak.AgentRunner
